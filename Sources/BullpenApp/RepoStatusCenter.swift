@@ -39,9 +39,15 @@ final class RepoStatusCenter {
                 let report = await repo.overlapReport(office.worktrees.map {
                     (branch: $0.branch, path: URL(fileURLWithPath: $0.path), baseRef: $0.baseRef)
                 })
+                // Agents of the same comparison run are expected to touch the same files: not a warning.
+                let runOf = Dictionary(office.worktrees.map { ($0.branch, $0.runID) }, uniquingKeysWith: { a, _ in a })
                 for worktree in office.worktrees {
+                    func unrelated(_ others: [String: [String]]) -> [String: [String]] {
+                        others.filter { worktree.runID == nil || runOf[$0.key] ?? nil != worktree.runID }
+                    }
                     nextWarnings[worktree.id] = WorktreeWarning(
-                        conflicts: report.conflicts[worktree.branch] ?? [:], overlaps: report.overlaps[worktree.branch] ?? [:]
+                        conflicts: unrelated(report.conflicts[worktree.branch] ?? [:]),
+                        overlaps: unrelated(report.overlaps[worktree.branch] ?? [:])
                     )
                 }
             }

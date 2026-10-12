@@ -58,6 +58,16 @@ public final class AppDatabase: Sendable {
         migrator.registerMigration("v3-ports") { db in
             try db.alter(table: "worktree") { t in t.add(column: "ports", .text) }
         }
+        migrator.registerMigration("v4-runs") { db in
+            try db.create(table: "run") { t in
+                t.primaryKey("id", .blob)
+                t.column("projectID", .blob).notNull().indexed().references("project", onDelete: .cascade)
+                t.column("task", .text).notNull()
+                t.column("createdAt", .datetime).notNull()
+                t.column("verdict", .text)
+            }
+            try db.alter(table: "worktree") { t in t.add(column: "runID", .blob) }
+        }
         return migrator
     }
 }
@@ -66,6 +76,10 @@ public final class AppDatabase: Sendable {
 
 extension Project: FetchableRecord, PersistableRecord {
     public static let databaseTableName = "project"
+}
+
+extension Run: FetchableRecord, PersistableRecord {
+    public static let databaseTableName = "run"
 }
 
 extension Worktree: FetchableRecord, PersistableRecord {
@@ -87,6 +101,19 @@ public extension AppDatabase {
 
     func save(_ worktree: Worktree) throws {
         try writer.write { try worktree.save($0) }
+    }
+
+    func save(_ run: Run) throws {
+        try writer.write { try run.save($0) }
+    }
+
+    func run(id: UUID) throws -> Run? {
+        try writer.read { try Run.fetchOne($0, key: id) }
+    }
+
+    /// Every worktree of a run, archived ones included (the losers stay listed after a pick).
+    func worktrees(inRun id: UUID) throws -> [Worktree] {
+        try writer.read { try Worktree.filter(Column("runID") == id).order(Column("createdAt")).fetchAll($0) }
     }
 
     func deleteProject(id: UUID) throws {

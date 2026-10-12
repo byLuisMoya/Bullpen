@@ -177,10 +177,14 @@ private struct WorktreeDetail: View {
     let worktree: Worktree
     let project: Project
     // BULLPEN_SNAPSHOT_TAB=changes opens the review tab (for DebugSnapshots).
-    @State private var tab = ProcessInfo.processInfo.environment["BULLPEN_SNAPSHOT_TAB"] == "changes" ? Tab.changes : .terminal
+    @State private var tab: Tab = switch ProcessInfo.processInfo.environment["BULLPEN_SNAPSHOT_TAB"] {
+    case "changes": .changes
+    case "compare": .compare
+    default: .terminal
+    }
     @Environment(ReviewNotes.self) private var notes
 
-    enum Tab: Hashable { case terminal, changes }
+    enum Tab: Hashable { case terminal, changes, compare }
 
     var body: some View {
         ZStack {
@@ -190,12 +194,17 @@ private struct WorktreeDetail: View {
             if tab == .changes {
                 ReviewView(worktree: worktree, project: project)
             }
+            if tab == .compare, let runID = worktree.runID {
+                RunCompareView(runID: runID, project: project)
+                    .background(Color(nsColor: .windowBackgroundColor))
+            }
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Picker("Vista", selection: $tab) {
                     Text("Terminal").tag(Tab.terminal)
                     Text(changesLabel).tag(Tab.changes)
+                    if worktree.runID != nil { Text("Comparar").tag(Tab.compare) }
                 }
                 .pickerStyle(.segmented)
                 .fixedSize()

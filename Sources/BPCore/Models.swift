@@ -47,6 +47,8 @@ public struct Worktree: Identifiable, Hashable, Codable, Sendable {
     public var taskDescription: String?
     /// Ports reserved for `{{port:name}}` in `.bullpen.toml` (PLAN §6.2).
     public var ports: [String: Int]?
+    /// Set when this worktree is one of several agents working on the same task (a fan-out run).
+    public var runID: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -59,7 +61,8 @@ public struct Worktree: Identifiable, Hashable, Codable, Sendable {
         agentProfileID: String? = nil,
         agentModel: String? = nil,
         taskDescription: String? = nil,
-        ports: [String: Int]? = nil
+        ports: [String: Int]? = nil,
+        runID: UUID? = nil
     ) {
         self.id = id
         self.projectID = projectID
@@ -72,7 +75,26 @@ public struct Worktree: Identifiable, Hashable, Codable, Sendable {
         self.agentModel = agentModel
         self.taskDescription = taskDescription
         self.ports = ports
+        self.runID = runID
     }
 
     public var isActive: Bool { archivedAt == nil }
+}
+
+/// One task given to several agents at once, each in its own worktree, to compare (PLAN §11.2).
+public struct Run: Identifiable, Hashable, Codable, Sendable {
+    public var id: UUID
+    public var projectID: UUID
+    public var task: String
+    public var createdAt: Date
+    /// The judge model's comparison, if asked for.
+    public var verdict: String?
+
+    public init(id: UUID = UUID(), projectID: UUID, task: String, createdAt: Date = Date(), verdict: String? = nil) {
+        self.id = id
+        self.projectID = projectID
+        self.task = task
+        self.createdAt = createdAt
+        self.verdict = verdict
+    }
 }

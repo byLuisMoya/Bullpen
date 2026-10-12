@@ -84,6 +84,26 @@ final class BuildingStore {
         }
     }
 
+    /// Fan-out: same task to several agents (PLAN §11.2).
+    func createRun(_ request: WorktreeRequest, variants: [Workspace.Variant]) async -> [Worktree]? {
+        guard let workspace else { return nil }
+        do {
+            return try await workspace.createRun(request, variants: variants).1
+        } catch {
+            report(error, "Create run failed")
+            return nil
+        }
+    }
+
+    func run(id: UUID) -> Run? { try? database?.run(id: id) }
+    func runMembers(_ id: UUID) -> [Worktree] { (try? database?.worktrees(inRun: id)) ?? [] }
+
+    func saveVerdict(_ verdict: String, for run: Run) {
+        var updated = run
+        updated.verdict = verdict
+        try? database?.save(updated)
+    }
+
     /// What would be lost by removing this worktree; empty means it is safe.
     func removalGuards(for worktree: Worktree, in project: Project) async -> [RemovalGuard] {
         do {

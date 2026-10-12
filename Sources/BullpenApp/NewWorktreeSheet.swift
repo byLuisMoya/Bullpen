@@ -23,6 +23,8 @@ struct NewWorktreeSheet: View {
     @State private var installed: [String: Bool] = [:]
     @State private var config: Result<BullpenConfig, Error> = .success(BullpenConfig())
     @State private var suggesting = false
+    @State private var compare = false
+    @State private var variants: [VariantRow] = [VariantRow(agentID: AgentProfile.claude.id), VariantRow(agentID: AgentProfile.codex.id)]
 
     private var profile: AgentProfile? { AgentProfile.named(agentID) }
     private var path: String { WorktreeLocation.path(project: project.name, branch: branch).path }
@@ -53,6 +55,30 @@ struct NewWorktreeSheet: View {
                 }
             }
             ConfigSummary(config: config)
+            Section {
+                Toggle("Comparar varios agentes con la misma tarea", isOn: $compare)
+                if compare {
+                    ForEach($variants) { $row in
+                        HStack {
+                            Picker("Agente", selection: $row.agentID) {
+                                ForEach(AgentProfile.all) { Text($0.name).tag($0.id) }
+                            }
+                            .labelsHidden()
+                            .fixedSize()
+                            TextField("Modelo", text: $row.model, prompt: Text("por defecto"))
+                            Button {
+                                variants.removeAll { $0.id == row.id }
+                            } label: { Image(systemName: "minus.circle") }
+                                .buttonStyle(.borderless)
+                                .disabled(variants.count <= 2)
+                        }
+                    }
+                    Button("Añadir agente", systemImage: "plus") { variants.append(VariantRow(agentID: AgentProfile.claude.id)) }
+                        .disabled(variants.count >= 5)
+                    Text("Ramas: " + Workspace.branchNames(base: branch.isEmpty ? "rama" : branch, variants: workspaceVariants).joined(separator: ", "))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             Section("Agente") {
                 Picker("Agente", selection: $agentID) {
                     ForEach(AgentProfile.all) { profile in
@@ -110,7 +136,8 @@ struct NewWorktreeSheet: View {
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Crear") { Task { await create() } }
-                    .disabled(branch.isEmpty || baseRef.isEmpty || isCreating || isPromptInvalid || isConfigInvalid)
+                    .disabled(branch.isEmpty || baseRef.isEmpty || isCreating || isPromptInvalid || isConfigInvalid
+                              || (compare && task.nilIfBlank == nil))
             }
         }
         .onAppear {
@@ -141,11 +168,20 @@ struct NewWorktreeSheet: View {
         }
     }
 
+    private var workspaceVariants: [Workspace.Variant] {
+        variants.compactMap { row in AgentProfile.named(row.agentID).map { Workspace.Variant(agent: $0, model: row.model.nilIfBlank) } }
+    }
+
     private func create() async {
         isCreating = true
         defer { isCreating = false }
-        guard let worktree = await store.createWorktree(request) else { return }
-        onCreated(worktree)
+        if compare {
+            guard let worktrees = await store.createRun(request, variants: workspaceVariants), let first = worktrees.first else { return }
+            onCreated(first)
+        } else {
+            guard let worktree = await store.createWorktree(request) else { return }
+            onCreated(worktree)
+        }
         dismiss()
     }
 
@@ -189,4 +225,10 @@ private struct ConfigSummary: View {
             EmptyView()
         }
     }
+}
+
+struct VariantRow: Identifiable {
+    let id = UUID()
+    var agentID: String
+    var model = ""
 }

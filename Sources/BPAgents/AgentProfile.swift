@@ -11,6 +11,14 @@ public struct AgentProfile: Identifiable, Hashable, Sendable {
     /// Names of the foreground process while the agent runs (to tell it apart from the shell).
     public var processNames: [String]
 
+    public init(id: String, name: String, executable: String, models: [String] = [], processNames: [String] = []) {
+        self.id = id
+        self.name = name
+        self.executable = executable
+        self.models = models
+        self.processNames = processNames
+    }
+
     public static let claude = AgentProfile(
         id: "claude", name: "Claude Code", executable: "claude",
         models: ["opus", "sonnet", "haiku", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],

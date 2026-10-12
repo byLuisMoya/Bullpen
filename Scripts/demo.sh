@@ -52,6 +52,15 @@ start() {
     git -C "$DEMO/demo-web" remote add origin "$DEMO/remote.git"
     git -C "$DEMO/demo-web" push -q -u origin main
 
+    # The app migrates the database: open it once if this build's tables aren't there yet.
+    if ! sqlite3 "$DB" "select runID from worktree limit 0" >/dev/null 2>&1; then
+        open -g build/Bullpen.app
+        for _ in $(seq 1 40); do
+            sqlite3 "$DB" "select runID from worktree limit 0" >/dev/null 2>&1 && break
+            sleep 0.25
+        done
+    fi
+
     # Make sure the daemon is up (the app also starts it).
     "$BP" sessions >/dev/null 2>&1 || { ("$APP/bpd" >/dev/null 2>&1 &); sleep 0.5; }
 
@@ -63,12 +72,13 @@ start() {
         (X'$(hex "$p2")','demo-api','$DEMO/demo-api','main',101,$now),
         (X'$(hex "$p3")','demo-docs','$DEMO/demo-docs','main',102,$now);"
 
-    wt() { # project-uuid repo branch agent(claude|"") -> prints worktree uuid
+    wt() { # project-uuid repo branch agent(claude|codex|"") [run-uuid] -> prints worktree uuid
         local id path; id=$(uuidgen); path="$WT/$2/$(echo "$3" | tr '/' '-')"
         git -C "$DEMO/$2" worktree add -q -b "$3" "$path" main
         local agent="NULL"; [[ -n "$4" ]] && agent="'$4'"
-        sqlite3 "$DB" "insert into worktree(id,projectID,branch,path,baseRef,createdAt,agentProfileID) values
-            (X'$(hex "$id")',X'$(hex "$1")','$3','$path','main',$now,$agent);"
+        local run="NULL"; [[ -n "${5:-}" ]] && run="X'$(hex "$5")'"
+        sqlite3 "$DB" "insert into worktree(id,projectID,branch,path,baseRef,createdAt,agentProfileID,runID) values
+            (X'$(hex "$id")',X'$(hex "$1")','$3','$path','main',$now,$agent,$run);"
         if [[ -n "$4" ]]; then
             "$BP" sessions start "wt-$id" --cwd "$path" --command "exec -a claude sleep 86400" >/dev/null
         else
@@ -83,6 +93,16 @@ start() {
     c=$(wt "$p1" demo-web docs/changelog claude)
     d=$(wt "$p1" demo-web chore/deps "")
     e=$(wt "$p2" demo-api feature/rate-limit claude)
+
+    # A comparison: the same task given to two agents.
+    local run; run=$(uuidgen)
+    sqlite3 "$DB" "insert into run(id,projectID,task,createdAt) values
+        (X'$(hex "$run")',X'$(hex "$p2")','Añade un endpoint /health que devuelva {\"ok\": true}',$now);"
+    local r1 r2
+    r1=$(wt "$p2" demo-api feature/health-claude claude "$run")
+    r2=$(wt "$p2" demo-api feature/health-codex codex "$run")
+    printf 'app.get("/health", (req, res) => res.json({ ok: true }))\n' > "$WT/demo-api/feature-health-claude/health.js"
+    printf 'app.get("/health", (req, res) => {\n  res.status(200).send("ok")\n})\n// TODO tests\n' > "$WT/demo-api/feature-health-codex/health.js"
     git -C "$WT/demo-web/docs-changelog" push -q -u origin docs/changelog
     git -C "$WT/demo-web/docs-changelog" -c user.email=demo@example.com -c user.name=Demo commit -q --allow-empty -m wip
 
@@ -105,6 +125,8 @@ start() {
     event "$b" UserPromptSubmit         # thinking
     event "$c" Stop                     # done
     event "$e" PermissionRequest Write  # needs you
+    event "$r1" Stop                    # done
+    event "$r2" PreToolUse Edit         # still working
     echo "Demo ready: open the app (make run). Remove it with: Scripts/demo.sh stop"
 }
 

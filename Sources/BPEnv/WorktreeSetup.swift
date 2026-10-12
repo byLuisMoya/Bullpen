@@ -77,6 +77,12 @@ public struct CommandResult: Equatable, Sendable {
     public var exitCode: Int32
     public var output: String
     public var succeeded: Bool { exitCode == 0 }
+
+    public init(command: String, exitCode: Int32, output: String) {
+        self.command = command
+        self.exitCode = exitCode
+        self.output = output
+    }
 }
 
 /// Runs config commands (teardown, verify) through the user's login shell, outside any terminal.

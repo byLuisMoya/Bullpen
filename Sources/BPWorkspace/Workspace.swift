@@ -22,6 +22,7 @@ public struct WorktreeRequest: Sendable {
     public var task: String?
     public var globalPrompt: String?
     public var sendInitialPrompt: Bool
+    public var runID: UUID?
 
     public init(project: Project, branch: String, baseRef: String, agent: AgentProfile? = nil, model: String? = nil,
                 task: String? = nil, globalPrompt: String? = nil, sendInitialPrompt: Bool = true) {
@@ -102,7 +103,7 @@ public struct Workspace: Sendable {
         let worktree = Worktree(
             projectID: request.project.id, branch: request.branch, path: path.path, baseRef: request.baseRef,
             agentProfileID: request.agent?.id, agentModel: request.model?.nilIfBlank,
-            taskDescription: request.task?.nilIfBlank, ports: ports.isEmpty ? nil : ports
+            taskDescription: request.task?.nilIfBlank, ports: ports.isEmpty ? nil : ports, runID: request.runID
         )
         let report = try WorktreeSetup.prepare(config: config, from: projectURL, to: path)
         if !report.missing.isEmpty {
@@ -126,6 +127,47 @@ public struct Workspace: Sendable {
             ))
         }
         return worktree
+    }
+
+    /// One agent variant of a run.
+    public struct Variant: Sendable {
+        public var agent: AgentProfile
+        public var model: String?
+        public init(agent: AgentProfile, model: String? = nil) {
+            self.agent = agent
+            self.model = model
+        }
+    }
+
+    /// Branch for each variant: `<base>-<agent>`, numbered when an agent appears more than once.
+    public static func branchNames(base: String, variants: [Variant]) -> [String] {
+        var seen: [String: Int] = [:]
+        let totals = Dictionary(grouping: variants, by: \.agent.id).mapValues(\.count)
+        return variants.map { variant in
+            let id = variant.agent.id
+            seen[id, default: 0] += 1
+            return totals[id, default: 0] > 1 ? "\(base)-\(id)-\(seen[id]!)" : "\(base)-\(id)"
+        }
+    }
+
+    /// Fan-out (PLAN §11.2): the same task to several agents, each in its own worktree.
+    /// Validates everything first; if a later worktree fails, the earlier ones stay (and are reported).
+    @discardableResult
+    public func createRun(_ base: WorktreeRequest, variants: [Variant]) async throws -> (Run, [Worktree]) {
+        guard variants.count >= 2 else { throw WorkspaceError(message: "Una comparación necesita al menos dos agentes.") }
+        guard let task = base.task?.nilIfBlank else { throw WorkspaceError(message: "Escribe la tarea que harán todos.") }
+        let run = Run(projectID: base.project.id, task: task)
+        try database.save(run)
+        var created: [Worktree] = []
+        for (variant, branch) in zip(variants, Self.branchNames(base: base.branch, variants: variants)) {
+            var request = base
+            request.branch = branch
+            request.agent = variant.agent
+            request.model = variant.model
+            request.runID = run.id
+            created.append(try await createWorktree(request))
+        }
+        return (run, created)
     }
 
     /// Hangs up the terminal, runs `[teardown]`, removes the folder (the branch stays) and archives it.

@@ -151,3 +151,55 @@ struct Fixture {
         #expect(prompt == "Global.\n\nRepo: rama b.\n\nSolo para Claude.\n\nProyecto web.\n\nHaz X")
     }
 }
+
+/// Stand-ins for real agents: tests must never launch the user's Claude Code or Codex.
+let fakeA = AgentProfile(id: "fake-a", name: "Fake A", executable: "/bin/echo")
+let fakeB = AgentProfile(id: "fake-b", name: "Fake B", executable: "/bin/echo")
+
+@Suite(.serialized) struct RunTests {
+    @Test func branchNamesPerVariant() {
+        let names = Workspace.branchNames(base: "fix/login", variants: [
+            .init(agent: .claude, model: "opus"), .init(agent: .codex), .init(agent: .claude, model: "sonnet"),
+        ])
+        #expect(names == ["fix/login-claude-1", "fix/login-codex", "fix/login-claude-2"])
+    }
+
+    @Test func fanOutCreatesOneWorktreePerAgentInTheSameRun() async throws {
+        let f = try await Fixture.make(config: "")
+        defer { f.server.stop() }
+        let base = WorktreeRequest(project: f.project, branch: "feat", baseRef: "main", task: "Añade un saludo", sendInitialPrompt: false)
+        let (run, worktrees) = try await f.workspace.createRun(base, variants: [.init(agent: fakeA), .init(agent: fakeB)])
+        #expect(worktrees.map(\.branch) == ["feat-fake-a", "feat-fake-b"])
+        #expect(worktrees.allSatisfy { $0.runID == run.id })
+        #expect(try f.workspace.database.worktrees(inRun: run.id).count == 2)
+        #expect(try f.workspace.database.run(id: run.id)?.task == "Añade un saludo")
+        let sessions = try await f.workspace.connect().list()
+        #expect(sessions.count == 2, "each agent got its own terminal")
+    }
+
+    @Test func fanOutNeedsTwoAgentsAndATask() async throws {
+        let f = try await Fixture.make(config: "")
+        defer { f.server.stop() }
+        let base = WorktreeRequest(project: f.project, branch: "x", baseRef: "main", task: "t")
+        await #expect(throws: WorkspaceError.self) { try await f.workspace.createRun(base, variants: [.init(agent: fakeA)]) }
+        var noTask = base
+        noTask.task = " "
+        await #expect(throws: WorkspaceError.self) {
+            try await f.workspace.createRun(noTask, variants: [.init(agent: fakeA), .init(agent: fakeB)])
+        }
+    }
+
+    @Test func judgePromptIncludesVerificationAndFlagsTruncation() {
+        let ok = CommandResult(command: "make test", exitCode: 0, output: "")
+        let bad = CommandResult(command: "make test", exitCode: 1, output: "1 failure")
+        let prompt = RunJudge.prompt(task: "Arregla X", candidates: [
+            Candidate(branch: "a", agent: "Claude Code", diff: "+x", verify: [ok]),
+            Candidate(branch: "b", agent: "Codex", diff: String(repeating: "y", count: RunJudge.diffBudget + 10), verify: [bad]),
+            Candidate(branch: "c", agent: "Codex", diff: "", verify: nil),
+        ])
+        #expect(prompt.contains("`make test` → OK"))
+        #expect(prompt.contains("FALLA (1)") && prompt.contains("1 failure"))
+        #expect(prompt.contains("MUY LARGO"))
+        #expect(prompt.contains("Verificación: no ejecutada.") && prompt.contains("Sin cambios."))
+    }
+}
