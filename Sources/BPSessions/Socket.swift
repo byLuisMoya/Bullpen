@@ -16,11 +16,17 @@ enum UnixSocket {
         return addr
     }
 
-    static func listen(at path: String) throws -> Int32 {
+    /// Binds and listens on `path`. Fails with EADDRINUSE if a live daemon already answers there;
+    /// a stale socket file from a dead daemon is replaced.
+    static func listen(at path: String) throws -> (fd: Int32, inode: ino_t) {
         try FileManager.default.createDirectory(
             atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
+        if let probe = try? connect(to: path) {
+            close(probe)
+            throw POSIXError(.EADDRINUSE)
+        }
         unlink(path)
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw POSIXError.current }
@@ -37,7 +43,17 @@ enum UnixSocket {
         }
         chmod(path, 0o600)
         configure(fd)
-        return fd
+        return (fd, inode(of: path) ?? 0)
+    }
+
+    static func inode(of path: String) -> ino_t? {
+        var st = stat()
+        return stat(path, &st) == 0 ? st.st_ino : nil
+    }
+
+    /// Removes the socket file only if it is still the one we created (a newer daemon may own the path now).
+    static func unlinkIfOurs(_ path: String, inode: ino_t) {
+        if self.inode(of: path) == inode { unlink(path) }
     }
 
     static func connect(to path: String) throws -> Int32 {

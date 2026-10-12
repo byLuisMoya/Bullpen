@@ -131,3 +131,67 @@ func collect(_ client: SessionClient, session: String, timeout: Double = 5, unti
         #expect(buffer.append(Data("c\n\n".utf8)).map { String(decoding: $0, as: UTF8.self) } == ["bc", ""])
     }
 }
+
+@Suite(.serialized) struct AgentActivityTests {
+    @Test func agentEventsAreStoredAndBroadcast() async throws {
+        let (server, watcher) = try startServer()
+        defer { watcher.close(); server.stop() }
+        _ = try await watcher.create(SessionSpec(id: "a1", cwd: NSTemporaryDirectory(), command: "sleep 30"))
+
+        // Like `bp hook`: a separate short-lived connection reports the event.
+        let hook = try SessionClient.connect(socketPath: server.socketPath)
+        try await hook.reportAgentEvent("a1", AgentActivity(agent: "claude", event: "PreToolUse", detail: "Bash"))
+        hook.close()
+
+        var broadcast: SessionInfo?
+        for await event in watcher.events {
+            if case let .activity(info) = event { broadcast = info; break }
+        }
+        #expect(broadcast?.agentActivity?.event == "PreToolUse")
+        let listed = try await watcher.list().first
+        #expect(listed?.agentActivity?.detail == "Bash")
+        // The login shell runs its profile first, then execs the command.
+        var foreground: String?
+        for _ in 0..<40 {
+            foreground = try await watcher.list().first?.foregroundProcess
+            if foreground == "sleep" { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(foreground == "sleep")
+        try await watcher.kill("a1", signal: SIGKILL)
+    }
+
+    @Test func sessionsGetBullpenEnvironment() async throws {
+        let (server, client) = try startServer()
+        defer { client.close(); server.stop() }
+        _ = try await client.create(SessionSpec(id: "env1", cwd: NSTemporaryDirectory(), command: "echo \"id=$BULLPEN_SESSION_ID sock=$BULLPEN_SOCKET\""))
+        try await client.attach("env1")
+        let (text, _) = await collect(client, session: "env1") { _, status in status != nil }
+        #expect(text.contains("id=env1 sock=\(server.socketPath)"))
+    }
+}
+
+@Suite(.serialized) struct DaemonLifecycleTests {
+    @Test func secondDaemonCannotStealALiveSocket() throws {
+        let (server, client) = try startServer()
+        defer { client.close(); server.stop() }
+        let intruder = SessionServer(socketPath: server.socketPath, logDirectory: server.logDirectory, build: "x")
+        #expect(throws: POSIXError.self) { try intruder.start() }
+    }
+
+    @Test func oldDaemonDoesNotRemoveNewDaemonsSocket() async throws {
+        let (old, oldClient) = try startServer()
+        oldClient.close()
+        // The new daemon takes over the path (e.g. after an update)...
+        unlink(old.socketPath)
+        let new = SessionServer(socketPath: old.socketPath, logDirectory: old.logDirectory, build: "new")
+        new.idleExit = nil
+        try new.start()
+        defer { new.stop() }
+        // ...and the old one shutting down must leave it alone.
+        old.stop()
+        let client = try SessionClient.connect(socketPath: new.socketPath)
+        defer { client.close() }
+        #expect(try await client.hello().build == "new")
+    }
+}

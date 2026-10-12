@@ -26,18 +26,20 @@ let package = Package(
         ),
         .target(name: "BPGit"),
         .target(name: "BPSessions"),
+        .target(name: "BPAgents", dependencies: ["BPCore", "BPSessions"]),
         .executableTarget(name: "bpd", dependencies: ["BPCore", "BPSessions"]),
         .executableTarget(
             name: "BullpenApp",
-            dependencies: ["BPCore", "BPPersistence", "BPGit", "BPSessions", "SwiftTerm"]
+            dependencies: ["BPCore", "BPPersistence", "BPGit", "BPSessions", "BPAgents", "SwiftTerm"]
         ),
         .executableTarget(
             name: "bp",
-            dependencies: ["BPCore", "BPSessions", .product(name: "ArgumentParser", package: "swift-argument-parser")]
+            dependencies: ["BPCore", "BPSessions", "BPAgents", .product(name: "ArgumentParser", package: "swift-argument-parser")]
         ),
         .testTarget(name: "BPCoreTests", dependencies: ["BPCore"]),
         .testTarget(name: "BPPersistenceTests", dependencies: ["BPPersistence"]),
         .testTarget(name: "BPGitTests", dependencies: ["BPGit"]),
         .testTarget(name: "BPSessionsTests", dependencies: ["BPSessions"]),
+        .testTarget(name: "BPAgentsTests", dependencies: ["BPAgents"]),
     ]
 )

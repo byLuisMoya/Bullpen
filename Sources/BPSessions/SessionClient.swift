@@ -75,6 +75,10 @@ public final class SessionClient: @unchecked Sendable {
         _ = try await request { .remove(request: $0, session: session) }
     }
 
+    public func reportAgentEvent(_ session: String, _ activity: AgentActivity) async throws {
+        _ = try await request { .agentEvent(request: $0, session: session, activity: activity) }
+    }
+
     public func shutdown() async throws {
         _ = try await request { .shutdown(request: $0) }
     }
@@ -140,7 +144,7 @@ public final class SessionClient: @unchecked Sendable {
     private func deliver(_ message: ServerMessage) {
         let request: Int? = switch message {
         case let .hello(r, _, _, _), let .created(r, _), let .sessions(r, _), let .ok(r), let .error(r, _): r
-        case .snapshot, .output, .exited: nil
+        case .snapshot, .output, .exited, .activity: nil
         }
         if let request {
             pending.removeValue(forKey: request)?.resume(returning: message)

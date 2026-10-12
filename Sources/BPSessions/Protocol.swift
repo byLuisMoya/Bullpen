@@ -4,7 +4,7 @@ import Foundation
 /// Newline-delimited JSON over a Unix socket; terminal bytes travel base64-encoded.
 public enum SessionProtocol {
     /// Bump on any incompatible change. A daemon with another version is replaced when it has no live sessions.
-    public static let version = 1
+    public static let version = 2
 
     public static var defaultSocketPath: String {
         let base = FileManager.default.homeDirectoryForCurrentUser
@@ -38,6 +38,24 @@ public struct SessionSpec: Codable, Sendable, Equatable {
     }
 }
 
+/// Last lifecycle event reported by an agent's hooks (`bp hook`), e.g. Claude Code `PreToolUse`.
+public struct AgentActivity: Codable, Sendable, Equatable {
+    /// Agent profile id (`claude`, `codex`).
+    public var agent: String
+    /// Hook event name (`UserPromptSubmit`, `PreToolUse`, `Notification`, `Stop`, `agent-turn-complete`…).
+    public var event: String
+    /// Tool name, notification type or short message.
+    public var detail: String?
+    public var at: Date
+
+    public init(agent: String, event: String, detail: String? = nil, at: Date = Date()) {
+        self.agent = agent
+        self.event = event
+        self.detail = detail
+        self.at = at
+    }
+}
+
 public struct SessionInfo: Codable, Sendable, Equatable {
     public var id: String
     public var cwd: String
@@ -48,8 +66,27 @@ public struct SessionInfo: Codable, Sendable, Equatable {
     public var startedAt: Date
     /// Exit code (128 + signal when killed by a signal); nil while running.
     public var exitStatus: Int32?
+    public var lastOutputAt: Date?
+    public var agentActivity: AgentActivity?
+    /// Name of the terminal's foreground process (`claude`, `zsh`…), filled in by `list`.
+    public var foregroundProcess: String?
 
     public var isRunning: Bool { exitStatus == nil }
+
+    public init(id: String, cwd: String, command: String?, pid: Int32, cols: UInt16, rows: UInt16, startedAt: Date,
+                exitStatus: Int32? = nil, lastOutputAt: Date? = nil, agentActivity: AgentActivity? = nil, foregroundProcess: String? = nil) {
+        self.id = id
+        self.cwd = cwd
+        self.command = command
+        self.pid = pid
+        self.cols = cols
+        self.rows = rows
+        self.startedAt = startedAt
+        self.exitStatus = exitStatus
+        self.lastOutputAt = lastOutputAt
+        self.agentActivity = agentActivity
+        self.foregroundProcess = foregroundProcess
+    }
 }
 
 public enum ClientMessage: Codable, Sendable {
@@ -65,6 +102,8 @@ public enum ClientMessage: Codable, Sendable {
     /// Forget an exited session.
     case remove(request: Int, session: String)
     case shutdown(request: Int)
+    /// Sent by `bp hook` from inside an agent's session.
+    case agentEvent(request: Int, session: String, activity: AgentActivity)
 }
 
 public enum ServerMessage: Codable, Sendable {
@@ -76,6 +115,8 @@ public enum ServerMessage: Codable, Sendable {
     case snapshot(session: String, data: Data)
     case output(session: String, data: Data)
     case exited(session: String, status: Int32)
+    /// Broadcast to every client when a session's agent reports activity.
+    case activity(session: SessionInfo)
 }
 
 enum Wire {

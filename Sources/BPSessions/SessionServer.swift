@@ -16,6 +16,7 @@ public final class SessionServer: @unchecked Sendable {
     let queue = DispatchQueue(label: "bpd.server")
     private let log = Logger(subsystem: "com.byluismoya.Bullpen", category: "bpd")
     private var listenFD: Int32 = -1
+    private var socketInode: ino_t = 0
     private var acceptSource: DispatchSourceRead?
     private var clients: [ObjectIdentifier: Client] = [:]
     private var sessions: [String: Session] = [:]
@@ -31,7 +32,7 @@ public final class SessionServer: @unchecked Sendable {
 
     public func start() throws {
         try FileManager.default.createDirectory(at: logDirectory, withIntermediateDirectories: true)
-        listenFD = try UnixSocket.listen(at: socketPath)
+        (listenFD, socketInode) = try UnixSocket.listen(at: socketPath)
         let source = DispatchSource.makeReadSource(fileDescriptor: listenFD, queue: queue)
         source.setEventHandler { [weak self] in self?.acceptClients() }
         source.resume()
@@ -51,7 +52,7 @@ public final class SessionServer: @unchecked Sendable {
             acceptSource?.cancel()
             idleTimer?.cancel()
             if listenFD >= 0 { close(listenFD); listenFD = -1 }
-            unlink(socketPath)
+            UnixSocket.unlinkIfOurs(socketPath, inode: socketInode)
             clients.values.forEach { $0.close() }
             clients.removeAll()
             for session in sessions.values where session.info.isRunning {
@@ -103,7 +104,12 @@ public final class SessionServer: @unchecked Sendable {
             }
 
         case let .list(request):
-            client.send(.sessions(request: request, sessions: sessions.values.map(\.info).sorted { $0.startedAt < $1.startedAt }))
+            let infos = sessions.values.map { session in
+                var info = session.info
+                if info.isRunning { info.foregroundProcess = Self.foregroundProcess(leader: info.pid) }
+                return info
+            }
+            client.send(.sessions(request: request, sessions: infos.sorted { $0.startedAt < $1.startedAt }))
 
         case let .attach(request, id):
             guard let session = sessions[id] else {
@@ -151,6 +157,13 @@ public final class SessionServer: @unchecked Sendable {
             sessions[id] = nil
             client.send(.ok(request: request))
 
+        case let .agentEvent(request, id, activity):
+            client.send(.ok(request: request))
+            guard let session = sessions[id] else { return }
+            session.info.agentActivity = activity
+            let message = ServerMessage.activity(session: session.info)
+            clients.values.forEach { $0.send(message) }
+
         case let .shutdown(request):
             client.send(.ok(request: request))
             queue.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.exitDaemon() }
@@ -168,11 +181,15 @@ public final class SessionServer: @unchecked Sendable {
     private func makeSession(_ spec: SessionSpec) throws -> Session {
         let shell = Self.loginShell()
         let argv = spec.command.map { [shell, "-l", "-c", $0] } ?? [shell, "-l"]
-        var env = ProcessInfo.processInfo.environment
+        // Don't leak markers from whatever launched bpd (e.g. a Claude Code session) into the agents.
+        var env = ProcessInfo.processInfo.environment.filter { key, _ in
+            !(key == "CLAUDECODE" || key.hasPrefix("CLAUDE_CODE_") || key.hasPrefix("CODEX_") || key == "BULLPEN_SESSION_ID")
+        }
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         env["TERM_PROGRAM"] = "Bullpen"
         env["BULLPEN_SESSION_ID"] = spec.id
+        env["BULLPEN_SOCKET"] = socketPath
         if env["LANG"] == nil { env["LANG"] = "en_US.UTF-8" }
         env.merge(spec.environment) { _, new in new }
 
@@ -213,6 +230,7 @@ public final class SessionServer: @unchecked Sendable {
             if n > 0 {
                 let data = Data(buffer[0..<n])
                 session.record(data, keep: replayBytes)
+                session.info.lastOutputAt = Date()
                 broadcast(.output(session: session.info.id, data: data), to: session)
             } else if n < 0 && (errno == EAGAIN || errno == EINTR) {
                 return
@@ -270,9 +288,50 @@ public final class SessionServer: @unchecked Sendable {
     private func exitDaemon() {
         acceptSource?.cancel()
         if listenFD >= 0 { close(listenFD); listenFD = -1 }
-        unlink(socketPath)
+        UnixSocket.unlinkIfOurs(socketPath, inode: socketInode)
         onExit?()
     }
+
+    /// What the user is running in the terminal right now (`claude`, `vim`, `zsh`…).
+    /// A non-interactive shell (`zsh -c "claude; exec zsh"`) keeps its children in its own process
+    /// group, so the group leader is the shell: pick the oldest member that is not a shell or a helper.
+    static func foregroundProcess(leader: pid_t) -> String? {
+        // Same source as `ps -o tpgid`: the terminal's foreground group, read from the session leader.
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(leader, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        let group = pid_t(bitPattern: info.e_tpgid)
+        guard group > 0 else { return nil }
+
+        var pids = [pid_t](repeating: 0, count: 256)
+        // Returns the number of pids (not bytes).
+        let count = Int(proc_listpgrppids(group, &pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
+        let members = count > 0 ? pids.prefix(min(count, pids.count)).filter { $0 > 0 } : [group]
+        let names = members.sorted().compactMap(commandName)
+        return names.first { !shellNames.contains($0) && !helperNames.contains($0) } ?? names.first
+    }
+
+    /// Basename of argv[0], like `ps -o comm`. The executable name can differ: Claude Code's
+    /// binary is a versioned file (`2.1.296`) launched as `claude`.
+    static func commandName(_ pid: pid_t) -> String? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0 else { return nil }
+        // Layout: argc (Int32), exec path, NUL padding, argv[0], ...
+        var i = MemoryLayout<Int32>.size
+        while i < size, buffer[i] != 0 { i += 1 }
+        while i < size, buffer[i] == 0 { i += 1 }
+        var end = i
+        while end < size, buffer[end] != 0 { end += 1 }
+        guard end > i else { return nil }
+        let argv0 = String(decoding: buffer[i..<end], as: UTF8.self)
+        return (argv0 as NSString).lastPathComponent
+    }
+
+    static let helperNames: Set<String> = ["caffeinate"]
+    static let shellNames: Set<String> = ["zsh", "bash", "fish", "sh", "dash", "tcsh", "csh", "nu", "-zsh", "-bash"]
 
     /// `$SHELL`, or the account's shell when launched from Finder (GUI apps may not have `$SHELL`).
     static func loginShell() -> String {
