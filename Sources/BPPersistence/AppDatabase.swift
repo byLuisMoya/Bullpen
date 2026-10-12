@@ -22,10 +22,8 @@ public final class AppDatabase: Sendable {
     }
 
     static var migrator: DatabaseMigrator {
+        // Never erase on schema changes: the app and `bp` share this database.
         var migrator = DatabaseMigrator()
-        #if DEBUG
-        migrator.eraseDatabaseOnSchemaChange = true
-        #endif
 
         migrator.registerMigration("v1") { db in
             try db.create(table: "project") { t in

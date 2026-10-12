@@ -31,6 +31,7 @@ let package = Package(
         .target(name: "BPEnv"),
         .target(name: "BPProviders"),
         .target(name: "BPIntegrations", dependencies: ["BPCore"]),
+        .target(name: "BPControl", dependencies: ["BPCore", "BPGit", "BPPersistence", "BPSessions", "BPWorkspace", "BPAgents"]),
         .target(name: "BPWorkspace", dependencies: ["BPCore", "BPGit", "BPEnv", "BPAgents", "BPPersistence", "BPSessions"]),
         .executableTarget(name: "bpd", dependencies: ["BPCore", "BPSessions"]),
         .executableTarget(
@@ -39,7 +40,8 @@ let package = Package(
         ),
         .executableTarget(
             name: "bp",
-            dependencies: ["BPCore", "BPSessions", "BPAgents", .product(name: "ArgumentParser", package: "swift-argument-parser")]
+            dependencies: ["BPCore", "BPSessions", "BPAgents", "BPControl", "BPWorkspace", "BPPersistence",
+                           .product(name: "ArgumentParser", package: "swift-argument-parser")]
         ),
         .testTarget(name: "BPCoreTests", dependencies: ["BPCore"]),
         .testTarget(name: "BPPersistenceTests", dependencies: ["BPPersistence"]),
@@ -50,6 +52,7 @@ let package = Package(
         .testTarget(name: "BPEnvTests", dependencies: ["BPEnv"]),
         .testTarget(name: "BPProvidersTests", dependencies: ["BPProviders"]),
         .testTarget(name: "BPIntegrationsTests", dependencies: ["BPIntegrations"]),
+        .testTarget(name: "BPControlTests", dependencies: ["BPControl", "BPWorkspace", "BPPersistence", "BPSessions", "BPAgents", "BPGit", "BPCore"]),
         .testTarget(name: "BPWorkspaceTests", dependencies: ["BPWorkspace", "BPGit", "BPSessions", "BPPersistence", "BPAgents", "BPEnv"]),
     ]
 )

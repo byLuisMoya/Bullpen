@@ -63,6 +63,21 @@ public struct Workspace: Sendable {
 
     public static func sessionID(for worktree: Worktree) -> String { "wt-\(worktree.id.uuidString)" }
 
+    /// Registers the git repository containing `url` as a project (an office).
+    public func addProject(at url: URL) async throws -> Project {
+        let repo = try await Repository.open(at: url)
+        let offices = try database.offices()
+        if offices.contains(where: { $0.project.path == repo.root.path }) {
+            throw WorkspaceError(message: "\(repo.name) ya está en el edificio.")
+        }
+        let project = Project(
+            name: repo.name, path: repo.root.path, defaultBaseRef: try await repo.currentBranch(),
+            sortIndex: (offices.map(\.project.sortIndex).max() ?? -1) + 1
+        )
+        try database.save(project)
+        return project
+    }
+
     /// Global → `.bullpen.toml` (plus per-agent append) → project → task, with variables filled.
     public static func composePrompt(_ request: WorktreeRequest, config: BullpenConfig, path: String) throws -> String? {
         let repository = [config.prompt, request.agent.flatMap { config.agentPrompts[$0.id] }]

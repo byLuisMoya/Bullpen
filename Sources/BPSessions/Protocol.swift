@@ -14,8 +14,16 @@ public enum SessionProtocol {
 
     /// Agent events of a session, one JSON `AgentActivity` per line (the worktree's log).
     public static func eventsFile(session: String, logDirectory: URL = defaultLogDirectory) -> URL {
-        let safe = String(session.map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "_" })
-        return logDirectory.appendingPathComponent("\(safe).events.jsonl")
+        logDirectory.appendingPathComponent("\(safeName(session)).events.jsonl")
+    }
+
+    /// Everything the session's terminal printed.
+    public static func outputFile(session: String, logDirectory: URL = defaultLogDirectory) -> URL {
+        logDirectory.appendingPathComponent("\(safeName(session)).log")
+    }
+
+    static func safeName(_ s: String) -> String {
+        String(s.map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "_" })
     }
 
     public static var defaultLogDirectory: URL {

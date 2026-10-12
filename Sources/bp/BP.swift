@@ -9,7 +9,7 @@ struct BP: AsyncParsableCommand {
         commandName: "bp",
         abstract: "Bullpen command line: manage projects, worktrees and agents.",
         version: Bullpen.version,
-        subcommands: [Sessions.self, Agent.self, Hook.self]
+        subcommands: [ProjectCommand.self, WorktreeCommand.self, Sessions.self, Agent.self, MCPCommand.self, Hook.self]
     )
 }
 

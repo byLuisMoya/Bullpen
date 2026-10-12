@@ -27,6 +27,14 @@ final class BuildingStore {
             let database = try AppDatabase.onDisk()
             self.database = database
             workspace = Workspace(database: database, connect: connectToDaemon, hooks: hooks)
+            // GRDB observes this process's writes; `bp` writes from another process, so re-read now and then.
+            Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(3))
+                    guard let self, let fresh = try? database.offices(), fresh != self.offices else { continue }
+                    self.offices = fresh
+                }
+            }
             for try await offices in database.observeOffices() {
                 self.offices = offices
             }

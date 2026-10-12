@@ -83,43 +83,8 @@ final class SessionManager {
     }
 
     private func connectOrLaunch() async throws -> SessionClient {
-        if let client = try? SessionClient.connect() { return client }
-        try launchDaemon()
-        for _ in 0..<30 {
-            try await Task.sleep(for: .milliseconds(100))
-            if let client = try? SessionClient.connect() { return client }
-        }
-        throw SessionError(message: "No se pudo arrancar bpd")
-    }
-
-    /// Starts `bpd` (next to the app executable) in its own session so it outlives the app.
-    private func launchDaemon() throws {
-        guard let path = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("bpd").path,
-              FileManager.default.isExecutableFile(atPath: path) else {
-            throw SessionError(message: "bpd no está junto a la app")
-        }
-        var attr: posix_spawnattr_t?
-        posix_spawnattr_init(&attr)
-        defer { posix_spawnattr_destroy(&attr) }
-        posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID))
-        var actions: posix_spawn_file_actions_t?
-        posix_spawn_file_actions_init(&actions)
-        defer { posix_spawn_file_actions_destroy(&actions) }
-        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
-        posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0)
-        posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
-
-        var pid: pid_t = 0
-        let argv: [UnsafeMutablePointer<CChar>?] = [strdup(path), nil]
-        defer { argv.forEach { free($0) } }
-        let result = posix_spawn(&pid, path, &actions, &attr, argv, environ)
-        guard result == 0 else { throw POSIXError(POSIXErrorCode(rawValue: result) ?? .EIO) }
-        log.info("Launched bpd pid \(pid)")
-        // Reap it if it exits while the app is running, so it never lingers as a zombie.
-        DispatchQueue.global(qos: .utility).async {
-            var status: Int32 = 0
-            waitpid(pid, &status, 0)
-        }
+        let bpd = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("bpd").path ?? "bpd"
+        return try await DaemonLauncher.connect(bpdPath: bpd)
     }
 
     private func disconnected() {
