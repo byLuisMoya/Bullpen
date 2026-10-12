@@ -12,6 +12,12 @@ public enum SessionProtocol {
         return base.appendingPathComponent("bpd.sock").path
     }
 
+    /// Agent events of a session, one JSON `AgentActivity` per line (the worktree's log).
+    public static func eventsFile(session: String, logDirectory: URL = defaultLogDirectory) -> URL {
+        let safe = String(session.map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "_" })
+        return logDirectory.appendingPathComponent("\(safe).events.jsonl")
+    }
+
     public static var defaultLogDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Bullpen/sessions", isDirectory: true)
@@ -47,12 +53,19 @@ public struct AgentActivity: Codable, Sendable, Equatable {
     /// Tool name, notification type or short message.
     public var detail: String?
     public var at: Date
+    /// Human summary for the log: the prompt, the command run, the file edited, the final answer…
+    public var summary: String?
+    /// Claude Code's transcript (JSONL), used to add up token usage.
+    public var transcriptPath: String?
 
-    public init(agent: String, event: String, detail: String? = nil, at: Date = Date()) {
+    public init(agent: String, event: String, detail: String? = nil, at: Date = Date(),
+                summary: String? = nil, transcriptPath: String? = nil) {
         self.agent = agent
         self.event = event
         self.detail = detail
         self.at = at
+        self.summary = summary
+        self.transcriptPath = transcriptPath
     }
 }
 
@@ -121,14 +134,14 @@ public enum ServerMessage: Codable, Sendable {
     case activity(session: SessionInfo)
 }
 
-enum Wire {
-    static let encoder: JSONEncoder = {
+public enum Wire {
+    public static let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.dateEncodingStrategy = .iso8601
         return e
     }()
 
-    static let decoder: JSONDecoder = {
+    public static let decoder: JSONDecoder = {
         let d = JSONDecoder()
         d.dateDecodingStrategy = .iso8601
         return d

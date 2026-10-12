@@ -13,6 +13,7 @@ struct CreatePRSheet: View {
     @State private var base = ""
     @State private var bodyText = ""
     @State private var draft = false
+    @State private var includeLog = true
     @State private var working = false
     @State private var error: String?
 
@@ -22,6 +23,9 @@ struct CreatePRSheet: View {
                 LabeledContent("Título", value: worktree.branch)
                 TextField("Base", text: $base)
                 Toggle("Borrador", isOn: $draft)
+                if SessionLog.markdown(for: worktree) != nil {
+                    Toggle("Añadir la bitácora del agente (plegada)", isOn: $includeLog)
+                }
             }
             Section("Descripción") {
                 TextEditor(text: $bodyText)
@@ -68,7 +72,8 @@ struct CreatePRSheet: View {
             let path = URL(fileURLWithPath: worktree.path)
             try await repo.push(branch: worktree.branch, from: path)
             let url = try await gh.createPullRequest(
-                in: path, base: base, head: worktree.branch, title: worktree.branch, body: bodyText, draft: draft
+                in: path, base: base, head: worktree.branch, title: worktree.branch,
+                body: includeLog ? bodyText + "\n" + (SessionLog.markdown(for: worktree) ?? "") : bodyText, draft: draft
             )
             await repoStatus.refresh(store: store, includePRs: true)
             if let url { NSWorkspace.shared.open(url) }

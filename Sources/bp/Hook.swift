@@ -45,6 +45,34 @@ struct Hook: AsyncParsableCommand {
               let json = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else { return nil }
         guard let event = (json["hook_event_name"] ?? json["hookEventName"] ?? json["type"]) as? String else { return nil }
         let detail = (json["tool_name"] ?? json["toolName"] ?? json["notification_type"] ?? json["error_type"]) as? String
-        return AgentActivity(agent: agent, event: event, detail: detail)
+        return AgentActivity(
+            agent: agent, event: event, detail: detail,
+            summary: summary(event: event, json: json),
+            transcriptPath: json["transcript_path"] as? String
+        )
+    }
+
+    /// One readable line for the worktree's log.
+    static func summary(event: String, json: [String: Any]) -> String? {
+        func clip(_ s: String?, _ n: Int = 400) -> String? {
+            guard let s = s?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty else { return nil }
+            return s.count > n ? String(s.prefix(n)) + "…" : s
+        }
+        switch event {
+        case "UserPromptSubmit":
+            return clip(json["prompt"] as? String, 2000)
+        case "PreToolUse", "PermissionRequest":
+            let input = (json["tool_input"] ?? json["toolInput"]) as? [String: Any] ?? [:]
+            for key in ["command", "file_path", "path", "pattern", "url", "query", "description"] {
+                if let value = input[key] as? String { return clip(value) }
+            }
+            return nil
+        case "Stop", "agent-turn-complete":
+            return clip((json["last_assistant_message"] ?? json["last-assistant-message"]) as? String, 1500)
+        case "Notification":
+            return clip(json["message"] as? String)
+        default:
+            return nil
+        }
     }
 }

@@ -6,6 +6,7 @@ struct SettingsView: View {
         TabView {
             PromptSettings().tabItem { Label("Prompt", systemImage: "text.bubble") }
             ModelSettings().tabItem { Label("Modelos", systemImage: "cpu") }
+            LimitSettings().tabItem { Label("Límites", systemImage: "gauge.with.dots.needle.33percent") }
         }
         .frame(width: 600, height: 460)
     }
@@ -112,5 +113,22 @@ private struct ChoiceEditor: View {
                 }
             }
         }
+    }
+}
+
+private struct LimitSettings: View {
+    @AppStorage("limits.maxAgents") private var maxAgents = 0
+    @AppStorage("limits.dailyBudget") private var dailyBudget = 0.0
+
+    var body: some View {
+        Form {
+            Section {
+                Stepper(maxAgents == 0 ? "Agentes a la vez: sin límite" : "Agentes a la vez: \(maxAgents)", value: $maxAgents, in: 0...30)
+                TextField("Presupuesto diario (USD, 0 = sin límite)", value: $dailyBudget, format: .number)
+            } footer: {
+                Text("Al crear worktrees con agente, Bullpen avisa si se supera alguno de estos límites. El gasto es una estimación a precios de API (ventana Uso, ⌘⇧U).")
+            }
+        }
+        .formStyle(.grouped)
     }
 }

@@ -10,6 +10,7 @@ struct BullpenApp: App {
     @State private var repoStatus = RepoStatusCenter()
     @State private var navigation = Navigation()
     @State private var reviewNotes = ReviewNotes()
+    @State private var usage = UsageCenter()
 
     var body: some Scene {
         WindowGroup("Bullpen", id: "main") {
@@ -20,6 +21,8 @@ struct BullpenApp: App {
                 .environment(repoStatus)
                 .environment(navigation)
                 .environment(reviewNotes)
+                .environment(usage)
+                .task { await usage.start(store: store, sessions: sessions) }
                 .task {
                     store.connectToDaemon = { [sessions] in try await sessions.connection() }
                     store.hooks = sessions.hooks
@@ -37,6 +40,16 @@ struct BullpenApp: App {
                 }
                 .frame(minWidth: 900, minHeight: 560)
         }
+        .commands {
+            CommandGroup(after: .windowArrangement) {
+                OpenUsageButton()
+            }
+        }
+        Window("Uso", id: "usage") {
+            UsageWindow()
+                .environment(store)
+                .environment(usage)
+        }
         Settings {
             SettingsView()
         }
@@ -50,5 +63,13 @@ struct BullpenApp: App {
                 .environment(store)
                 .environment(attention)
         }
+    }
+}
+
+private struct OpenUsageButton: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Button("Uso y coste") { openWindow(id: "usage") }
+            .keyboardShortcut("u", modifiers: [.command, .shift])
     }
 }

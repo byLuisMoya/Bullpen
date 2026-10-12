@@ -18,6 +18,7 @@ stop() {
             "$BP" sessions kill "wt-$id" --signal 9 2>/dev/null || true
             sleep 0.2
             "$BP" sessions rm "wt-$id" 2>/dev/null || true
+            rm -f "$HOME/Library/Application Support/Bullpen/sessions/wt-$id".*
         done < "$DEMO/ids"
     fi
     if [[ -f "$DB" ]]; then
@@ -33,9 +34,11 @@ stop() {
     echo "Demo removed."
 }
 
-event() { # session-uuid event [detail]
+event() { # session-uuid event [tool] [command or prompt]
     local json="{\"hook_event_name\":\"$2\""
     [[ -n "${3:-}" ]] && json+=",\"tool_name\":\"$3\""
+    [[ -n "${4:-}" && "$2" == "UserPromptSubmit" ]] && json+=",\"prompt\":\"$4\""
+    [[ -n "${4:-}" && "$2" != "UserPromptSubmit" ]] && json+=",\"tool_input\":{\"command\":\"$4\"}"
     echo "$json}" | BULLPEN_SESSION_ID="wt-$1" "$BP" hook claude
 }
 
@@ -121,7 +124,11 @@ start() {
     git -C "$F" -c user.email=demo@example.com -c user.name=Demo commit -q -m "Stub login"
 
     sleep 1
+    event "$a" UserPromptSubmit "" "Arregla el login: exige contraseña y añade la opción recordarme"
+    event "$a" PreToolUse Read "login.js"
+    event "$a" PreToolUse Edit "login.js"
     event "$a" PreToolUse Bash          # working
+    event "$a" PreToolUse Bash "pnpm test login"
     event "$b" UserPromptSubmit         # thinking
     event "$c" Stop                     # done
     event "$e" PermissionRequest Write  # needs you

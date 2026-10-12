@@ -180,11 +180,12 @@ private struct WorktreeDetail: View {
     @State private var tab: Tab = switch ProcessInfo.processInfo.environment["BULLPEN_SNAPSHOT_TAB"] {
     case "changes": .changes
     case "compare": .compare
+    case "log": .log
     default: .terminal
     }
     @Environment(ReviewNotes.self) private var notes
 
-    enum Tab: Hashable { case terminal, changes, compare }
+    enum Tab: Hashable { case terminal, changes, compare, log }
 
     var body: some View {
         ZStack {
@@ -193,6 +194,9 @@ private struct WorktreeDetail: View {
                 .allowsHitTesting(tab == .terminal)
             if tab == .changes {
                 ReviewView(worktree: worktree, project: project)
+            }
+            if tab == .log {
+                SessionLogView(worktree: worktree).background(Color(nsColor: .windowBackgroundColor))
             }
             if tab == .compare, let runID = worktree.runID {
                 RunCompareView(runID: runID, project: project)
@@ -204,6 +208,7 @@ private struct WorktreeDetail: View {
                 Picker("Vista", selection: $tab) {
                     Text("Terminal").tag(Tab.terminal)
                     Text(changesLabel).tag(Tab.changes)
+                    Text("Bitácora").tag(Tab.log)
                     if worktree.runID != nil { Text("Comparar").tag(Tab.compare) }
                 }
                 .pickerStyle(.segmented)

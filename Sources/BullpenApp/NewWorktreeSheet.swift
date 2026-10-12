@@ -24,6 +24,9 @@ struct NewWorktreeSheet: View {
     @State private var config: Result<BullpenConfig, Error> = .success(BullpenConfig())
     @State private var suggesting = false
     @State private var compare = false
+    @State private var overrideLimits = false
+    @Environment(AttentionCenter.self) private var attention
+    @Environment(UsageCenter.self) private var usage
     @State private var variants: [VariantRow] = [VariantRow(agentID: AgentProfile.claude.id), VariantRow(agentID: AgentProfile.codex.id)]
 
     private var profile: AgentProfile? { AgentProfile.named(agentID) }
@@ -55,6 +58,12 @@ struct NewWorktreeSheet: View {
                 }
             }
             ConfigSummary(config: config)
+            if let warning = limitWarning {
+                Section {
+                    Label(warning, systemImage: "gauge.with.dots.needle.100percent").foregroundStyle(.orange)
+                    Toggle("Crear igualmente", isOn: $overrideLimits)
+                }
+            }
             Section {
                 Toggle("Comparar varios agentes con la misma tarea", isOn: $compare)
                 if compare {
@@ -137,7 +146,7 @@ struct NewWorktreeSheet: View {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Crear") { Task { await create() } }
                     .disabled(branch.isEmpty || baseRef.isEmpty || isCreating || isPromptInvalid || isConfigInvalid
-                              || (compare && task.nilIfBlank == nil))
+                              || (compare && task.nilIfBlank == nil) || (limitWarning != nil && !overrideLimits))
             }
         }
         .onAppear {
@@ -145,6 +154,23 @@ struct NewWorktreeSheet: View {
             config = Result { try BullpenConfig.load(from: URL(fileURLWithPath: project.path)) }
         }
         .task { await detectInstalledAgents() }
+    }
+
+    /// Max agents at once and daily budget from Settings › Límites.
+    private var limitWarning: String? {
+        let newAgents = profile == nil ? 0 : (compare ? variants.count : 1)
+        guard newAgents > 0 else { return nil }
+        // Agents still alive: worktrees with an agent whose status isn't "stopped".
+        let running = store.offices.flatMap(\.worktrees)
+            .filter { $0.agentProfileID != nil && attention.statuses[$0.id]?.state != .dead }
+            .count
+        if Limits.maxAgents > 0, running + newAgents > Limits.maxAgents {
+            return "Superarías el límite de \(Limits.maxAgents) agentes a la vez (hay \(running))."
+        }
+        if Limits.dailyBudget > 0, usage.today.costUSD >= Limits.dailyBudget {
+            return "Hoy ya se ha alcanzado el presupuesto diario (\(UsageWindow.money(usage.today.costUSD)))."
+        }
+        return nil
     }
 
     private var isConfigInvalid: Bool {

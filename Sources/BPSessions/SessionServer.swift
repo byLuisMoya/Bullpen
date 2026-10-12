@@ -160,13 +160,30 @@ public final class SessionServer: @unchecked Sendable {
         case let .agentEvent(request, id, activity):
             client.send(.ok(request: request))
             guard let session = sessions[id] else { return }
-            session.info.agentActivity = activity
+            var latest = activity
+            // Keep the transcript path even when an event doesn't carry it.
+            if latest.transcriptPath == nil { latest.transcriptPath = session.info.agentActivity?.transcriptPath }
+            session.info.agentActivity = latest
+            appendEvent(activity, session: id)
             let message = ServerMessage.activity(session: session.info)
             clients.values.forEach { $0.send(message) }
 
         case let .shutdown(request):
             client.send(.ok(request: request))
             queue.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.exitDaemon() }
+        }
+    }
+
+    private func appendEvent(_ activity: AgentActivity, session id: String) {
+        guard var line = try? Wire.encoder.encode(activity) else { return }
+        line.append(0x0A)
+        let url = SessionProtocol.eventsFile(session: id, logDirectory: logDirectory)
+        if let handle = try? FileHandle(forWritingTo: url) {
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: line)
+            try? handle.close()
+        } else {
+            try? line.write(to: url)
         }
     }
 

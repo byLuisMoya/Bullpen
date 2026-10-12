@@ -154,3 +154,34 @@ import Testing
         #expect(loaded.first?.arguments == ["--no-git"])
     }
 }
+
+@Suite struct UsageTests {
+    @Test func pricesKnownModels() {
+        // Opus 5.5: $4 in, $20 out, $0.20 cache read, cache write 1.25×.
+        let cost = Pricing.cost(model: "claude-opus-5-5", input: 1_000_000, output: 1_000_000, cacheWrite: 1_000_000, cacheRead: 1_000_000)
+        #expect(abs(cost - (4 + 20 + 5 + 0.20)) < 0.0001)
+        #expect(Pricing.cost(model: "gpt-x", input: 10, output: 10, cacheWrite: 0, cacheRead: 0) == 0)
+    }
+
+    @Test func readsTranscriptsIncrementallyAndDedupesMessages() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("t-\(UUID().uuidString).jsonl")
+        func line(_ id: String, _ out: Int, _ ts: String = "2026-10-12T10:00:00.000Z") -> String {
+            #"{"type":"assistant","timestamp":"\#(ts)","message":{"id":"\#(id)","model":"claude-haiku-5-5","usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":1000,"output_tokens":\#(out)}}}"#
+        }
+        try ([line("a", 1), line("a", 5), #"{"type":"user","message":{"role":"user"}}"#].joined(separator: "\n") + "\n")
+            .write(to: url, atomically: true, encoding: .utf8)
+        let reader = TranscriptUsageReader()
+        var t = reader.totals(for: url.path)
+        #expect(t.messages == 1 && t.output == 5 && t.input == 10 && t.cacheRead == 1000)
+
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((line("b", 7, "2026-10-13T09:00:00.000Z") + "\n" + #"{"partial":"#).utf8))
+        try handle.close()
+        t = reader.totals(for: url.path)
+        #expect(t.messages == 2 && t.output == 12)
+        let since = ISO8601DateFormatter().date(from: "2026-10-13T00:00:00Z")!
+        #expect(reader.totals(for: url.path, since: since).messages == 1)
+        #expect(t.costUSD > 0)
+    }
+}
