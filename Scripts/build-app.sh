@@ -14,7 +14,7 @@ rm -rf "$OUT" && mkdir -p "$OUT"
 BIN_DIRS=()
 for arch in "${ARCHS[@]}"; do
     args=(-c "$CONFIG" --triple "$arch-apple-macosx14.0" --scratch-path ".build/$arch")
-    swift build "${args[@]}" "${SWIFT_EXTRA_FLAGS[@]}"
+    swift build "${args[@]}" ${SWIFT_EXTRA_FLAGS[@]+"${SWIFT_EXTRA_FLAGS[@]}"}
     BIN_DIRS+=("$(swift build "${args[@]}" --show-bin-path)")
 done
 
