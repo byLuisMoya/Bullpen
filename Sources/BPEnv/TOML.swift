@@ -17,6 +17,11 @@ public struct TOMLError: Error, LocalizedError, Equatable {
     public var line: Int
     public var message: String
     public var errorDescription: String? { "Línea \(line): \(message)" }
+
+    public init(line: Int, message: String) {
+        self.line = line
+        self.message = message
+    }
 }
 
 /// Parses the TOML subset needed for Bullpen's config: `[tables]` and `[a.b]` headers,

@@ -70,6 +70,8 @@ public struct SessionInfo: Codable, Sendable, Equatable {
     public var agentActivity: AgentActivity?
     /// Name of the terminal's foreground process (`claude`, `zsh`…), filled in by `list`.
     public var foregroundProcess: String?
+    /// The program turned on bracketed paste (`ESC[?2004h`), so multi-line text can be pasted safely.
+    public var bracketedPaste: Bool?
 
     public var isRunning: Bool { exitStatus == nil }
 

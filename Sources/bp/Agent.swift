@@ -37,7 +37,11 @@ struct Agent: ParsableCommand {
             let bpPath = Bundle.main.executableURL?.resolvingSymlinksInPath().path ?? CommandLine.arguments[0]
             let hooks = AgentHooks.standard(bpPath: bpPath)
             try hooks.writeClaudeSettings()
-            print(profile.command(model: model, prompt: prompt, hooks: hooks))
+            let launch = profile.launch(model: model, prompt: prompt, hooks: hooks)
+            print(launch.command)
+            if launch.typedPrompt != nil {
+                FileHandle.standardError.write(Data("(\(profile.name) no acepta prompt inicial: escríbelo cuando arranque)\n".utf8))
+            }
         }
     }
 }

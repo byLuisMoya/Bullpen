@@ -195,3 +195,28 @@ func collect(_ client: SessionClient, session: String, timeout: Double = 5, unti
         #expect(try await client.hello().build == "new")
     }
 }
+
+@Suite(.serialized) struct SendMessageTests {
+    @Test func detectsBracketedPasteSwitches() {
+        #expect(SessionServer.bracketedPasteChange(in: Data("hi\u{1B}[?2004h".utf8)) == true)
+        #expect(SessionServer.bracketedPasteChange(in: Data("\u{1B}[?2004h…\u{1B}[?2004l".utf8)) == false)
+        #expect(SessionServer.bracketedPasteChange(in: Data("plain".utf8)) == nil)
+    }
+
+    @Test func plainProgramsGetASingleLine() async throws {
+        let (server, client) = try startServer()
+        defer { client.close(); server.stop() }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("bp-send-\(UUID().uuidString.prefix(6))")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        _ = try await client.create(SessionSpec(id: "plain", cwd: dir.path, command: "IFS= read -r line; printf '%s' \"$line\" > got.txt"))
+        try await Task.sleep(for: .milliseconds(500))
+        try await client.sendMessage("plain", "uno\ndos\n\ntres")
+        var text = ""
+        for _ in 0..<40 {
+            text = (try? String(contentsOf: dir.appendingPathComponent("got.txt"), encoding: .utf8)) ?? ""
+            if !text.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(text == "uno dos tres")
+    }
+}

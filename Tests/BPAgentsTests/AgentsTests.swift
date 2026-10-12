@@ -1,6 +1,7 @@
 @testable import BPAgents
 import BPCore
 import BPSessions
+import BPEnv
 import Foundation
 import Testing
 
@@ -111,5 +112,45 @@ import Testing
     @Test func plainTerminal() {
         #expect(state(session(output: 1, fg: "zsh"), nil) == .working)
         #expect(state(session(output: 30, fg: "zsh"), nil) == .idle)
+    }
+}
+
+@Suite struct MoreAgentsTests {
+    let hooks = AgentHooks(bpPath: "/bp", claudeSettingsPath: "/s.json")
+
+    @Test func promptDeliveryPerAgent() {
+        #expect(AgentProfile.gemini.launch(model: "pro", prompt: "hola", hooks: hooks).command
+                == #"gemini -m 'pro' -i 'hola'; exec "$SHELL" -l"#)
+        #expect(AgentProfile.opencode.launch(model: nil, prompt: "hola", hooks: hooks).command
+                == #"opencode --prompt 'hola'; exec "$SHELL" -l"#)
+        let goose = AgentProfile.goose.launch(model: "x", prompt: "hola", hooks: hooks)
+        #expect(goose.command == #"goose session; exec "$SHELL" -l"#, "no model flag, prompt typed later")
+        #expect(goose.typedPrompt == "hola")
+        #expect(AgentProfile.claude.launch(model: nil, prompt: "p", hooks: hooks).typedPrompt == nil)
+    }
+
+    @Test func customAgentsFromTOML() throws {
+        let profile = try AgentProfile.custom(toml: """
+        id = "mine"
+        name = "Mi agente"
+        command = "/opt/bin/mine --fast"
+        prompt = "flag:--task"
+        model_flag = "-M"
+        """)
+        #expect(profile.isCustom && profile.name == "Mi agente")
+        #expect(profile.launch(model: "big", prompt: "hazlo", hooks: hooks).command
+                == #"/opt/bin/mine --fast -M 'big' --task 'hazlo'; exec "$SHELL" -l"#)
+        #expect(profile.processNames == ["mine"])
+        #expect(throws: TOMLError.self) { try AgentProfile.custom(toml: "name = 'sin id'") }
+    }
+
+    @Test func customDirectoryOverridesBuiltIns() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("agents-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try "id = 'aider'\ncommand = 'aider --no-git'\nprompt = 'type'".write(to: dir.appendingPathComponent("a.toml"), atomically: true, encoding: .utf8)
+        try "not toml {".write(to: dir.appendingPathComponent("broken.toml"), atomically: true, encoding: .utf8)
+        let loaded = AgentProfile.loadCustom(from: dir)
+        #expect(loaded.map(\.id) == ["aider"])
+        #expect(loaded.first?.arguments == ["--no-git"])
     }
 }

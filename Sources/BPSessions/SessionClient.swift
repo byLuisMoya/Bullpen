@@ -83,10 +83,16 @@ public final class SessionClient: @unchecked Sendable {
         _ = try await request { .shutdown(request: $0) }
     }
 
-    /// Types `text` into a terminal app as one message: bracketed paste keeps newlines from
-    /// submitting early (agents' TUIs support it), then Enter sends it.
+    /// Types `text` into a terminal app as one message, then Enter. If the program enabled bracketed
+    /// paste, newlines are kept inside the paste; otherwise the text goes as a single line so an
+    /// early newline can't submit half of it.
     public func sendMessage(_ session: String, _ text: String) async throws {
-        input(session, Data(("\u{1B}[200~" + text + "\u{1B}[201~").utf8))
+        let bracketed = try await list().first { $0.id == session }?.bracketedPaste == true
+        if bracketed {
+            input(session, Data(("\u{1B}[200~" + text + "\u{1B}[201~").utf8))
+        } else {
+            input(session, Data(text.components(separatedBy: .newlines).filter { !$0.isEmpty }.joined(separator: " ").utf8))
+        }
         try await Task.sleep(for: .milliseconds(150))
         input(session, Data("\r".utf8))
         // Round-trip so both writes are flushed before the caller moves on (or exits).

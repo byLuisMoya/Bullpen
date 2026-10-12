@@ -231,6 +231,7 @@ public final class SessionServer: @unchecked Sendable {
                 let data = Data(buffer[0..<n])
                 session.record(data, keep: replayBytes)
                 session.info.lastOutputAt = Date()
+                if let mode = Self.bracketedPasteChange(in: data) { session.info.bracketedPaste = mode }
                 broadcast(.output(session: session.info.id, data: data), to: session)
             } else if n < 0 && (errno == EAGAIN || errno == EINTR) {
                 return
@@ -331,6 +332,19 @@ public final class SessionServer: @unchecked Sendable {
     }
 
     static let helperNames: Set<String> = ["caffeinate"]
+
+    private static let pasteOn = Data("\u{1B}[?2004h".utf8), pasteOff = Data("\u{1B}[?2004l".utf8)
+
+    /// The last bracketed-paste switch in a chunk of output, if any.
+    static func bracketedPasteChange(in data: Data) -> Bool? {
+        let on = data.lastRange(of: pasteOn)?.lowerBound, off = data.lastRange(of: pasteOff)?.lowerBound
+        switch (on, off) {
+        case let (on?, off?): return on > off
+        case (_?, nil): return true
+        case (nil, _?): return false
+        default: return nil
+        }
+    }
     static let shellNames: Set<String> = ["zsh", "bash", "fish", "sh", "dash", "tcsh", "csh", "nu", "-zsh", "-bash"]
 
     /// `$SHELL`, or the account's shell when launched from Finder (GUI apps may not have `$SHELL`).

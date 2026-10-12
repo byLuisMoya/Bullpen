@@ -23,6 +23,8 @@ public struct WorktreeRequest: Sendable {
     public var globalPrompt: String?
     public var sendInitialPrompt: Bool
     public var runID: UUID?
+    /// For agents that need their prompt typed in: wait for it (the CLI) or do it in the background (the app).
+    public var awaitTypedPrompt = false
 
     public init(project: Project, branch: String, baseRef: String, agent: AgentProfile? = nil, model: String? = nil,
                 task: String? = nil, globalPrompt: String? = nil, sendInitialPrompt: Bool = true) {
@@ -118,15 +120,35 @@ public struct Workspace: Sendable {
         }
 
         // [setup] runs first in the worktree's terminal; the agent starts only if it succeeds.
-        let agentCommand = request.agent?.command(model: request.model?.nilIfBlank, prompt: prompt, hooks: hooks)
-        if let command = WorktreeSetup.command(setup: config.setup, then: agentCommand) {
+        let launch = request.agent?.launch(model: request.model?.nilIfBlank, prompt: prompt, hooks: hooks)
+        if let command = WorktreeSetup.command(setup: config.setup, then: launch?.command) {
             let env = try WorktreeEnvironment.load(project: request.project, worktree: worktree)
             let client = try await connect()
-            _ = try await client.create(SessionSpec(
-                id: Self.sessionID(for: worktree), cwd: path.path, command: command, environment: env.environment
-            ))
+            let id = Self.sessionID(for: worktree)
+            _ = try await client.create(SessionSpec(id: id, cwd: path.path, command: command, environment: env.environment))
+            if let typed = launch?.typedPrompt {
+                if request.awaitTypedPrompt {
+                    try await Self.typeWhenReady(typed, session: id, client: client)
+                } else {
+                    Task.detached { try? await Self.typeWhenReady(typed, session: id, client: client) }
+                }
+            }
         }
         return worktree
+    }
+
+    /// Waits until the agent has drawn its interface and gone quiet, then types the prompt.
+    static func typeWhenReady(_ prompt: String, session: String, client: SessionClient,
+                              quiet: TimeInterval = 1.5, timeout: TimeInterval = 45) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            guard let info = try await client.list().first(where: { $0.id == session }), info.isRunning else { return }
+            if let last = info.lastOutputAt, Date().timeIntervalSince(info.startedAt) > 2, Date().timeIntervalSince(last) > quiet {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(300))
+        }
+        try await client.sendMessage(session, prompt)
     }
 
     /// One agent variant of a run.
