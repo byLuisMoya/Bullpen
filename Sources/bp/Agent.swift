@@ -5,8 +5,22 @@ import Foundation
 struct Agent: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Coding agents (Claude Code, Codex).",
-        subcommands: [Command.self]
+        subcommands: [Command.self, Trust.self]
     )
+
+    struct Trust: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Mark a folder as trusted in Claude Code (skips its trust dialog)."
+        )
+        @Argument var path: String = FileManager.default.currentDirectoryPath
+        @Flag(help: "Remove the folder's entry instead.") var forget = false
+
+        func run() throws {
+            let trust = ClaudeTrust()
+            let outcome = forget ? try trust.forget(path) : try trust.trust(path)
+            print("\(outcome)")
+        }
+    }
 
     struct Command: ParsableCommand {
         static let configuration = CommandConfiguration(

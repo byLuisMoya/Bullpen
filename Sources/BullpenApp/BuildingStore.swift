@@ -1,3 +1,4 @@
+import BPAgents
 import BPCore
 import BPGit
 import BPPersistence
@@ -79,6 +80,12 @@ final class BuildingStore {
                 agentProfileID: agent, agentModel: model?.nilIfBlank, taskDescription: task?.nilIfBlank
             )
             try database.save(worktree)
+            // Claude Code asks to trust every new folder; worktrees are ours, so pre-trust them.
+            do {
+                try ClaudeTrust().trust(path.path)
+            } catch {
+                log.warning("Cannot pre-trust worktree for Claude: \(error.localizedDescription, privacy: .public)")
+            }
             return worktree
         } catch {
             report(error, "Create worktree failed")
@@ -107,6 +114,7 @@ final class BuildingStore {
             if FileManager.default.fileExists(atPath: path.path) {
                 try await repo.removeWorktree(at: path, force: force)
             }
+            try? ClaudeTrust().forget(worktree.path)
             var archived = worktree
             archived.archivedAt = Date()
             try database.save(archived)
