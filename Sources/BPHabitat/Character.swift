@@ -148,6 +148,16 @@ public enum CharacterSprite {
         }
     }
 
+    /// Just the head (12×11 px), for the menu bar strip.
+    public static func head(look: CharacterLook, eyesClosed: Bool = false) -> CGImage? {
+        let full = canvas(eyesClosed ? .chinBlink : .rest, look: look)
+        var c = PixelCanvas(width: 12, height: 11)
+        for y in 0..<11 { for x in 0..<12 { c[x, y] = full[x + 3, y + 1] } }
+        // chinBlink raises a hand to the chin; keep the face clean.
+        if eyesClosed { c.rect(8, 10, 2, 1, 0) }
+        return c.image(palette: look.palette)
+    }
+
     /// A jacket hanging on the empty chair: the person has left (agent not running).
     public static func jacket(look: CharacterLook) -> PixelCanvas {
         var c = PixelCanvas(width: width, height: height)

@@ -8,14 +8,16 @@ struct BullpenApp: App {
     @State private var sessions = SessionManager()
     @State private var attention = AttentionCenter()
     @State private var repoStatus = RepoStatusCenter()
+    @State private var navigation = Navigation()
 
     var body: some Scene {
-        WindowGroup("Bullpen") {
+        WindowGroup("Bullpen", id: "main") {
             ContentView()
                 .environment(store)
                 .environment(sessions)
                 .environment(attention)
                 .environment(repoStatus)
+                .environment(navigation)
                 .task { await store.start() }
                 .task { await sessions.startPolling() }
                 .task { await attention.start(store: store, sessions: sessions) }
@@ -27,6 +29,16 @@ struct BullpenApp: App {
         }
         Settings {
             SettingsView()
+        }
+        MenuBarExtra {
+            MenuBarContent()
+                .environment(store)
+                .environment(attention)
+                .environment(navigation)
+        } label: {
+            MenuBarLabel()
+                .environment(store)
+                .environment(attention)
         }
     }
 }

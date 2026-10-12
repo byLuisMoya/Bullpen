@@ -8,18 +8,27 @@ struct ContentView: View {
     @Environment(SessionManager.self) private var sessions
     @Environment(AttentionCenter.self) private var attention
     @Environment(RepoStatusCenter.self) private var repoStatus
-    @State private var selection: UUID?
+    @Environment(Navigation.self) private var navigation
     @State private var editingPromptFor: Project?
     @State private var isImporting = false
     @State private var newWorktreeFor: Project?
     @State private var pendingRemoval: PendingRemoval?
 
+    private var selection: UUID? {
+        get { navigation.selection }
+        nonmutating set { navigation.selection = newValue }
+    }
+
     var body: some View {
         @Bindable var store = store
+        @Bindable var navigation = navigation
         NavigationSplitView {
-            List(selection: $selection) {
+            List(selection: $navigation.selection) {
                 ForEach(store.offices) { office in
                     Section {
+                        MiniOffice(office: office) { selection = $0 }
+                            .selectionDisabled()
+                            .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
                         ForEach(office.worktrees) { worktree in
                             WorktreeRow(
                                 worktree: worktree, status: attention.statuses[worktree.id],

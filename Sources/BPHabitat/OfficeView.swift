@@ -6,42 +6,75 @@ import QuartzCore
 public final class OfficeView: NSView, NSViewToolTipOwner {
     public var onSelect: ((UUID) -> Void)?
     private let office = OfficeLayer()
+    private let host = CALayer()
     private var occlusionObserver: NSObjectProtocol?
+    /// 1 for the building, 1/3 for the sidebar strip (exactly one point per art pixel).
+    public let zoom: CGFloat
 
-    public override init(frame: NSRect) {
+    public init(frame: NSRect = .zero, compact: Bool = false) {
+        zoom = compact ? 1 / OfficeLayer.scale : 1
         super.init(frame: frame)
-        layer = office
+        host.isGeometryFlipped = true
+        layer = host
         wantsLayer = true
         office.contentsScale = 2
+        office.isCompact = compact
+        office.anchorPoint = .zero
+        office.setAffineTransform(CGAffineTransform(scaleX: zoom, y: zoom))
+        host.addSublayer(office)
+    }
+
+    public override convenience init(frame: NSRect) { self.init(frame: frame, compact: false) }
+
+    /// Size the view needs for `desks` people.
+    public static func size(desks: Int, compact: Bool) -> CGSize {
+        let zoom = compact ? 1 / OfficeLayer.scale : 1
+        return CGSize(
+            width: OfficeLayer.preferredWidth(desks: desks) * zoom,
+            height: (compact ? OfficeLayer.openHeight : OfficeLayer.preferredHeight(desks: desks)) * zoom
+        )
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     public override var isFlipped: Bool { true }
 
+    private var unzoomedBounds: CGRect {
+        CGRect(x: 0, y: 0, width: bounds.width / zoom, height: bounds.height / zoom)
+    }
+
     public func update(_ model: OfficeModel) {
-        office.frame = bounds
+        layoutOffice()
         office.update(model, reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         removeAllToolTips()
         for index in model.desks.indices {
-            addToolTip(office.deskRect(at: index), owner: self, userData: nil)
+            let r = office.deskRect(at: index)
+            addToolTip(CGRect(x: r.minX * zoom, y: r.minY * zoom, width: r.width * zoom, height: r.height * zoom), owner: self, userData: nil)
         }
         updatePause()
     }
 
     public override func layout() {
         super.layout()
-        if office.frame != bounds { office.frame = bounds; office.update(office.model) }
+        if office.bounds.size != unzoomedBounds.size { layoutOffice(); office.update(office.model) }
+    }
+
+    private func layoutOffice() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        office.bounds = unzoomedBounds
+        office.position = .zero
+        CATransaction.commit()
     }
 
     public func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
-        guard let id = office.deskID(at: point), let desk = office.model.desks.first(where: { $0.id == id }) else { return "" }
+        guard let id = office.deskID(at: CGPoint(x: point.x / zoom, y: point.y / zoom)), let desk = office.model.desks.first(where: { $0.id == id }) else { return "" }
         return [desk.name, desk.detail].compactMap { $0 }.joined(separator: " — ")
     }
 
     public override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if let id = office.deskID(at: point) { onSelect?(id) }
+        if let id = office.deskID(at: CGPoint(x: point.x / zoom, y: point.y / zoom)) { onSelect?(id) }
     }
 
     public override func viewDidMoveToWindow() {

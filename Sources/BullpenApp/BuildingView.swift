@@ -21,7 +21,7 @@ struct BuildingView: View {
                             Text(office.project.name).font(.headline)
                             Text(summary(office)).font(.caption).foregroundStyle(.secondary)
                         }
-                        OfficeFloor(model: model(for: office), onSelect: onSelect)
+                        OfficeFloor(model: officeModel(office, statuses: attention.statuses), compact: false, onSelect: onSelect)
                             .frame(
                                 width: OfficeLayer.preferredWidth(desks: max(office.worktrees.count, 4)),
                                 height: OfficeLayer.preferredHeight(desks: office.worktrees.count)
@@ -35,19 +35,6 @@ struct BuildingView: View {
         .background(Color(nsColor: .underPageBackgroundColor))
     }
 
-    private func model(for office: Office) -> OfficeModel {
-        OfficeModel(desks: office.worktrees.map { worktree in
-            let status = attention.statuses[worktree.id]
-            return DeskModel(
-                id: worktree.id,
-                name: worktree.branch,
-                state: status?.state ?? .unknown,
-                detail: status.map { $0.detail ?? $0.state.label },
-                look: .make(worktreeID: worktree.id, agent: worktree.agentProfileID)
-            )
-        })
-    }
-
     private func summary(_ office: Office) -> String {
         let states = office.worktrees.compactMap { attention.statuses[$0.id]?.state }
         var parts = ["\(office.worktrees.count) worktree\(office.worktrees.count == 1 ? "" : "s")"]
@@ -59,12 +46,41 @@ struct BuildingView: View {
     }
 }
 
-private struct OfficeFloor: NSViewRepresentable {
+func officeModel(_ office: Office, statuses: [UUID: AgentStatus]) -> OfficeModel {
+    OfficeModel(desks: office.worktrees.map { worktree in
+        let status = statuses[worktree.id]
+        return DeskModel(
+            id: worktree.id,
+            name: worktree.branch,
+            state: status?.state ?? .unknown,
+            detail: status.map { $0.detail ?? $0.state.label },
+            look: .make(worktreeID: worktree.id, agent: worktree.agentProfileID)
+        )
+    })
+}
+
+/// The office strip shown above each project's worktrees in the sidebar.
+struct MiniOffice: View {
+    let office: Office
+    let onSelect: (UUID) -> Void
+    @Environment(AttentionCenter.self) private var attention
+
+    var body: some View {
+        let size = OfficeView.size(desks: max(office.worktrees.count, 1), compact: true)
+        OfficeFloor(model: officeModel(office, statuses: attention.statuses), compact: true, onSelect: onSelect)
+            .frame(width: size.width, height: size.height)
+            .clipShape(RoundedRectangle(cornerRadius: 3))
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct OfficeFloor: NSViewRepresentable {
     let model: OfficeModel
+    let compact: Bool
     let onSelect: (UUID) -> Void
 
     func makeNSView(context: Context) -> OfficeView {
-        let view = OfficeView(frame: .zero)
+        let view = OfficeView(frame: .zero, compact: compact)
         view.onSelect = onSelect
         return view
     }

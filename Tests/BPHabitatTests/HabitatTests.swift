@@ -114,3 +114,42 @@ import UniformTypeIdentifiers
         #expect(CGImageDestinationFinalize(dest))
     }
 }
+
+@MainActor
+@Suite struct CompactPreviewTests {
+    /// Sidebar strip and menu bar heads at their real size, magnified 4× for inspection.
+    @Test func renderCompactPreview() throws {
+        guard let dir = ProcessInfo.processInfo.environment["BULLPEN_PREVIEW"] else { return }
+        let states: [AgentState] = [.working, .needsYou, .done, .dead]
+        let models = states.map { state -> DeskModel in
+            let id = UUID()
+            return DeskModel(id: id, name: "x", state: state, look: .make(worktreeID: id, agent: "claude"))
+        }
+        let office = OfficeLayer()
+        office.isCompact = true
+        office.frame = CGRect(x: 0, y: 0, width: OfficeLayer.preferredWidth(desks: 4), height: OfficeLayer.openHeight)
+        office.update(OfficeModel(desks: models))
+        let w = office.bounds.width / OfficeLayer.scale, h = office.bounds.height / OfficeLayer.scale
+        let zoom: CGFloat = 4
+        let ctx = try #require(CGContext(
+            data: nil, width: Int(w * zoom), height: Int((h + 20) * zoom), bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        ctx.interpolationQuality = .none
+        ctx.setFillColor(CGColor(gray: 0.2, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: w * zoom, height: (h + 20) * zoom))
+        ctx.saveGState()
+        ctx.translateBy(x: 0, y: (h + 20) * zoom)
+        ctx.scaleBy(x: zoom / OfficeLayer.scale, y: -zoom / OfficeLayer.scale)
+        office.render(in: ctx)
+        ctx.restoreGState()
+        for (i, model) in models.enumerated() {
+            let head = try #require(CharacterSprite.head(look: model.look))
+            ctx.draw(head, in: CGRect(x: CGFloat(i * 15) * zoom + 4, y: 4, width: 12 * zoom, height: 11 * zoom))
+        }
+        let url = URL(fileURLWithPath: dir).appendingPathComponent("compact.png")
+        let dest = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(dest, try #require(ctx.makeImage()), nil)
+        #expect(CGImageDestinationFinalize(dest))
+    }
+}

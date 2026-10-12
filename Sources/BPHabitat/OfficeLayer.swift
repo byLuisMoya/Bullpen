@@ -71,6 +71,9 @@ public final class OfficeLayer: CALayer {
 
     public static func preferredHeight(desks: Int) -> CGFloat { desks == 0 ? closedHeight : openHeight }
 
+    /// Mini version for the sidebar: drawn at 1 point per art pixel, without names.
+    public var isCompact = false
+
     public func update(_ model: OfficeModel, reduceMotion: Bool = false) {
         self.reduceMotion = reduceMotion
         let old = self.model
@@ -93,6 +96,7 @@ public final class OfficeLayer: CALayer {
             let previous = old.desks.first { $0.id == desk.id }
             node.place(at: CGFloat(Self.margin + index * Self.slot) * s)
             node.apply(desk, previous: previous, lit: model.lighting != .off, reduceMotion: reduceMotion)
+            node.label.isHidden = isCompact
             nodes[desk.id] = node
         }
 
@@ -116,7 +120,7 @@ public final class OfficeLayer: CALayer {
     private func layoutLighting() {
         let s = Self.scale
         darkness.frame = bounds
-        closedSign.isHidden = model.lighting != .off
+        closedSign.isHidden = model.lighting != .off || isCompact
         closedSign.frame = CGRect(x: 12, y: (bounds.height - 16) / 2, width: 120, height: 16)
         switch model.lighting {
         case .allOn:
@@ -174,6 +178,7 @@ func sprite(_ image: CGImage?, x: CGFloat, y: CGFloat, w: Int, h: Int) -> CALaye
     let layer = CALayer()
     layer.contents = image
     layer.magnificationFilter = .nearest
+    layer.minificationFilter = .nearest
     layer.frame = CGRect(x: x, y: y, width: CGFloat(w) * OfficeLayer.scale, height: CGFloat(h) * OfficeLayer.scale)
     return layer
 }
@@ -189,6 +194,7 @@ final class DeskNode {
         let s = OfficeLayer.scale
         func setup(_ l: CALayer, x: Int, y: Int, w: Int, h: Int) {
             l.magnificationFilter = .nearest
+            l.minificationFilter = .nearest
             l.frame = CGRect(x: CGFloat(x) * s, y: CGFloat(y) * s, width: CGFloat(w) * s, height: CGFloat(h) * s)
         }
         glow.type = .radial
