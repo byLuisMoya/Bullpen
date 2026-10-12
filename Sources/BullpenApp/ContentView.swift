@@ -26,7 +26,10 @@ struct ContentView: View {
     var body: some View {
         @Bindable var store = store
         @Bindable var navigation = navigation
-        NavigationSplitView(columnVisibility: $navigation.columnVisibility) {
+        // Our own sidebar column instead of NavigationSplitView: AppKit's split view finished the
+        // expansion with a jump once the sidebar passed the window buttons, whatever the animation.
+        HStack(spacing: 0) {
+            SidebarColumn(visible: navigation.columnVisibility != .detailOnly, width: $sidebarWidth) {
             List(selection: $navigation.selection) {
                 ForEach(store.offices) { office in
                     Section {
@@ -66,16 +69,8 @@ struct ContentView: View {
                     }
                 }
             }
-            // While the sidebar animates, its width passes through every value from 0: without a
-            // minimum the rows re-lay out each frame (names truncate, the count jumps). A fixed
-            // minimum, anchored to the trailing edge, makes the content slide in whole instead.
-            .frame(minWidth: Self.sidebarMinWidth, maxWidth: .infinity)
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .clipped()
-            .navigationSplitViewColumnWidth(min: Self.sidebarMinWidth, ideal: 270)
-            // SwiftUI's own toggle hops between the sidebar's and the window's toolbar while the
-            // sidebar animates (it vanishes and reappears); ours stays put in the detail toolbar.
-            .toolbar(removing: .sidebarToggle)
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 HStack {
                     SettingsLink {
@@ -93,7 +88,8 @@ struct ContentView: View {
                 .background(Color(nsColor: .windowBackgroundColor))
                 .overlay(alignment: .top) { Divider() }
             }
-        } detail: {
+            }
+            Group {
             if let (worktree, project) = selectedWorktree {
                 WorktreeDetail(worktree: worktree, project: project)
                     .id(worktree.id)
@@ -118,11 +114,13 @@ struct ContentView: View {
                 BuildingView { selection = $0 }
                     .navigationTitle(buildingName.isEmpty ? BuildingName.standard : buildingName)
             }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button {
-                    withAnimation { navigation.toggleSidebar() }
+                    withAnimation(Navigation.sidebarAnimation) { navigation.toggleSidebar() }
                 } label: {
                     Label("Barra lateral", systemImage: "sidebar.left")
                 }
@@ -175,7 +173,7 @@ struct ContentView: View {
         }
     }
 
-    static let sidebarMinWidth: CGFloat = 240
+    @AppStorage("sidebarWidth") private var sidebarWidth = 270.0
 
     private func demo(_ action: String) async {
         demoBusy = true
@@ -317,4 +315,60 @@ private struct WorktreeDetail: View {
         let count = notes.comments[worktree.id]?.count ?? 0
         return count > 0 ? "Cambios (\(count))" : "Cambios"
     }
+}
+
+/// The sidebar: a column whose width SwiftUI animates between 0 and `width`. The content keeps
+/// its full width and is clipped from the leading edge, so it slides in and out whole and never
+/// re-lays out mid-animation. The divider can be dragged to resize (220–420 pt).
+struct SidebarColumn<Content: View>: View {
+    let visible: Bool
+    @Binding var width: Double
+    @ViewBuilder var content: Content
+    @State private var dragStart: Double?
+
+    static var range: ClosedRange<Double> { 220...420 }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            content
+                .frame(width: width)
+                .background(SidebarMaterial())
+                .frame(width: visible ? width : 0, alignment: .trailing)
+                .clipped()
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor))
+                .frame(width: visible ? 1 : 0)
+                .overlay {
+                    Color.clear
+                        .frame(width: 8)
+                        .contentShape(Rectangle())
+                        .onHover { inside in
+                            if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                        }
+                        .gesture(
+                            DragGesture(minimumDistance: 1)
+                                .onChanged { value in
+                                    let start = dragStart ?? width
+                                    dragStart = start
+                                    width = min(max(start + value.translation.width, Self.range.lowerBound), Self.range.upperBound)
+                                }
+                                .onEnded { _ in dragStart = nil }
+                        )
+                        .allowsHitTesting(visible)
+                }
+        }
+    }
+}
+
+/// The translucent sidebar background macOS uses.
+private struct SidebarMaterial: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }

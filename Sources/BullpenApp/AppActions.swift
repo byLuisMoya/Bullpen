@@ -84,6 +84,7 @@ enum AppActions {
 enum SeasonalIcon {
     /// Whether we replaced the Dock icon (so we know to put the regular one back).
     private static var replaced = false
+    private static var registered = false
 
     static func apply(now: Date = Date()) {
         let season = ProcessInfo.processInfo.environment["BULLPEN_SEASON"].flatMap(Season.init(rawValue:)) ?? Season.of(now)
@@ -91,10 +92,14 @@ enum SeasonalIcon {
            let image = NSImage(contentsOf: url) {
             NSApp.applicationIconImage = image
             replaced = true
-        } else if replaced {
-            // Setting nil shows macOS's generic icon on recent versions: hand back the bundle's own.
-            NSApp.applicationIconImage = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
+        } else if replaced || !registered {
+            // Always register the bundle's icon explicitly: window previews (Mission Control, App
+            // Exposé) use the icon the running app registers, and without it macOS shows a generic one.
+            if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"), let image = NSImage(contentsOf: url) {
+                NSApp.applicationIconImage = image
+            }
             replaced = false
+            registered = true
         }
     }
 

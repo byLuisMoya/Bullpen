@@ -46,7 +46,7 @@ struct BullpenApp: App {
                 OpenUsageButton()
             }
             CommandGroup(before: .toolbar) {
-                Button("Mostrar u ocultar la barra lateral") { withAnimation { navigation.toggleSidebar() } }
+                Button("Mostrar u ocultar la barra lateral") { withAnimation(Navigation.sidebarAnimation) { navigation.toggleSidebar() } }
                     .keyboardShortcut("s", modifiers: [.control, .command])
                 Divider()
             }

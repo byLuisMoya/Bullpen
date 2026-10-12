@@ -23,7 +23,7 @@ enum DebugSnapshots {
         // BULLPEN_SNAPSHOT_SIDEBAR=1: frames while the sidebar collapses and expands.
         if env["BULLPEN_SNAPSHOT_SIDEBAR"] == "1" {
             for (target, label) in [(NavigationSplitViewVisibility.detailOnly, "collapse"), (.all, "expand")] {
-                withAnimation { navigation.columnVisibility = target }
+                withAnimation(Navigation.sidebarAnimation) { navigation.columnVisibility = target }
                 for frame in 0..<14 {
                     try? await Task.sleep(for: .milliseconds(20))
                     save(to: dir, name: "sidebar-\(label)-\(frame)")
