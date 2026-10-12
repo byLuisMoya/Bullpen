@@ -9,14 +9,21 @@ public struct DeskModel: Equatable, Sendable, Identifiable {
     public var state: AgentState
     public var detail: String?
     public var look: CharacterLook
+    /// ⚡ on the desk: this worktree overlaps (yellow) or conflicts (red) with another one.
+    public var warning: DeskWarning?
 
-    public init(id: UUID, name: String, state: AgentState, detail: String? = nil, look: CharacterLook) {
+    public init(id: UUID, name: String, state: AgentState, detail: String? = nil, look: CharacterLook, warning: DeskWarning? = nil) {
         self.id = id
         self.name = name
         self.state = state
         self.detail = detail
         self.look = look
+        self.warning = warning
     }
+}
+
+public enum DeskWarning: Sendable {
+    case overlap, conflict
 }
 
 /// An office = a project, drawn as one floor of the building (PLAN §9).
@@ -189,6 +196,7 @@ final class DeskNode {
     let glow = CAGradientLayer()
     let lamp = CALayer(), chair = CALayer(), person = CALayer(), desk = CALayer(), bubble = CALayer()
     let label = CATextLayer()
+    let bolt = CALayer()
 
     init(parent: CALayer) {
         let s = OfficeLayer.scale
@@ -207,6 +215,7 @@ final class DeskNode {
         setup(person, x: 8, y: 12, w: CharacterSprite.width, h: CharacterSprite.height)
         setup(desk, x: 3, y: 30, w: Props.deskWidth, h: Props.deskHeight)
         setup(bubble, x: 23, y: 6, w: Props.bubbleSize, h: Props.bubbleSize)
+        setup(bolt, x: 1, y: 24, w: Props.boltWidth, h: Props.boltHeight)
         chair.contents = Props.chair()
         label.fontSize = 9
         label.font = NSFont.monospacedSystemFont(ofSize: 9, weight: .medium)
@@ -215,7 +224,7 @@ final class DeskNode {
         label.truncationMode = .end
         label.contentsScale = 2
         label.frame = CGRect(x: 0, y: CGFloat(OfficeLayer.wallHeight + 1) * s, width: CGFloat(OfficeLayer.slot) * s, height: 14)
-        [glow, lamp, chair, person, desk, bubble, label].forEach(root.addSublayer)
+        [glow, lamp, chair, person, desk, bubble, label, bolt].forEach(root.addSublayer)
         root.frame = CGRect(x: 0, y: 0, width: CGFloat(OfficeLayer.slot) * s, height: OfficeLayer.openHeight)
         parent.addSublayer(root)
         root.opacity = 0
@@ -234,6 +243,8 @@ final class DeskNode {
     func apply(_ model: DeskModel, previous: DeskModel?, lit: Bool, reduceMotion: Bool) {
         label.string = model.name
         lamp.contents = Props.lamp(on: lit)
+        bolt.isHidden = model.warning == nil
+        if let warning = model.warning { bolt.contents = Props.bolt(conflict: warning == .conflict) }
         glow.isHidden = !lit
         guard previous?.state != model.state || previous?.look != model.look || person.contents == nil else { return }
 

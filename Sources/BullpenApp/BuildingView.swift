@@ -8,6 +8,7 @@ import SwiftUI
 struct BuildingView: View {
     @Environment(BuildingStore.self) private var store
     @Environment(AttentionCenter.self) private var attention
+    @Environment(RepoStatusCenter.self) private var repoStatus
     var onSelect: (UUID) -> Void
 
     var body: some View {
@@ -21,7 +22,7 @@ struct BuildingView: View {
                             Text(office.project.name).font(.headline)
                             Text(summary(office)).font(.caption).foregroundStyle(.secondary)
                         }
-                        OfficeFloor(model: officeModel(office, statuses: attention.statuses), compact: false, onSelect: onSelect)
+                        OfficeFloor(model: officeModel(office, statuses: attention.statuses, warnings: repoStatus.warnings), compact: false, onSelect: onSelect)
                             .frame(
                                 width: OfficeLayer.preferredWidth(desks: max(office.worktrees.count, 4)),
                                 height: OfficeLayer.preferredHeight(desks: office.worktrees.count)
@@ -46,7 +47,7 @@ struct BuildingView: View {
     }
 }
 
-func officeModel(_ office: Office, statuses: [UUID: AgentStatus]) -> OfficeModel {
+func officeModel(_ office: Office, statuses: [UUID: AgentStatus], warnings: [UUID: WorktreeWarning] = [:]) -> OfficeModel {
     OfficeModel(desks: office.worktrees.map { worktree in
         let status = statuses[worktree.id]
         return DeskModel(
@@ -54,7 +55,8 @@ func officeModel(_ office: Office, statuses: [UUID: AgentStatus]) -> OfficeModel
             name: worktree.branch,
             state: status?.state ?? .unknown,
             detail: status.map { $0.detail ?? $0.state.label },
-            look: .make(worktreeID: worktree.id, agent: worktree.agentProfileID)
+            look: .make(worktreeID: worktree.id, agent: worktree.agentProfileID),
+            warning: warnings[worktree.id].map { $0.isConflict ? .conflict : .overlap }
         )
     })
 }
@@ -64,10 +66,11 @@ struct MiniOffice: View {
     let office: Office
     let onSelect: (UUID) -> Void
     @Environment(AttentionCenter.self) private var attention
+    @Environment(RepoStatusCenter.self) private var repoStatus
 
     var body: some View {
         let size = OfficeView.size(desks: max(office.worktrees.count, 1), compact: true)
-        OfficeFloor(model: officeModel(office, statuses: attention.statuses), compact: true, onSelect: onSelect)
+        OfficeFloor(model: officeModel(office, statuses: attention.statuses, warnings: repoStatus.warnings), compact: true, onSelect: onSelect)
             .frame(width: size.width, height: size.height)
             .clipShape(RoundedRectangle(cornerRadius: 3))
             .frame(maxWidth: .infinity, alignment: .leading)

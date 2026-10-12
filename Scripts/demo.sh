@@ -94,6 +94,12 @@ start() {
     printf 'export function login(user, password, remember = false) {\n  if (!user || !password) return null\n  return api.post("/login", { user, password, remember })\n}\n' > "$L/login.js"
     printf 'test("login without password fails", () => {\n  expect(login("ana")).toBeNull()\n})\n' > "$L/login.test.js"
 
+    # fix/flaky-tests edits login.js too, differently: a merge conflict with feature/login.
+    local F="$WT/demo-web/fix-flaky-tests"
+    printf 'export function login() { return null }\n' > "$F/login.js"
+    git -C "$F" add login.js
+    git -C "$F" -c user.email=demo@example.com -c user.name=Demo commit -q -m "Stub login"
+
     sleep 1
     event "$a" PreToolUse Bash          # working
     event "$b" UserPromptSubmit         # thinking

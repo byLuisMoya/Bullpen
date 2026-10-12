@@ -8,6 +8,7 @@ struct WorktreeRow: View {
     let status: AgentStatus?
     var sync: BranchSync?
     var pullRequest: PullRequest?
+    var warning: WorktreeWarning?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -20,6 +21,11 @@ struct WorktreeRow: View {
                 Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 4)
+            if let warning {
+                Image(systemName: warning.isConflict ? "bolt.trianglebadge.exclamationmark.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(warning.isConflict ? Color.red : Color.yellow)
+                    .help(warning.tooltip)
+            }
             BranchBadge(sync: sync, pullRequest: pullRequest)
         }
         .help(status.map { "\($0.state.label) · confianza \($0.confidence)" } ?? "")

@@ -12,6 +12,8 @@ import os
 final class RepoStatusCenter {
     private(set) var branches: [UUID: BranchSync] = [:]
     private(set) var pullRequests: [UUID: PullRequest] = [:]
+    /// Files this worktree shares with others (overlap) or that would conflict when merging.
+    private(set) var warnings: [UUID: WorktreeWarning] = [:]
     @ObservationIgnored private let gh = GitHubCLI.locate()
     @ObservationIgnored private var lastPRFetch: Date = .distantPast
     @ObservationIgnored private let log = Logger.bullpen("repo-status")
@@ -26,10 +28,22 @@ final class RepoStatusCenter {
     func refresh(store: BuildingStore, includePRs: Bool) async {
         var nextBranches: [UUID: BranchSync] = [:]
         var nextPRs: [UUID: PullRequest] = includePRs ? [:] : pullRequests
+        var nextWarnings: [UUID: WorktreeWarning] = includePRs ? [:] : warnings
         for office in store.offices where !office.worktrees.isEmpty {
             guard let repo = try? await Repository.open(at: URL(fileURLWithPath: office.project.path)) else { continue }
             for worktree in office.worktrees {
                 nextBranches[worktree.id] = await repo.branchSync(worktree.branch)
+            }
+            if includePRs {
+                // Pairwise merge simulations are the costly part: same cadence as PRs.
+                let report = await repo.overlapReport(office.worktrees.map {
+                    (branch: $0.branch, path: URL(fileURLWithPath: $0.path), baseRef: $0.baseRef)
+                })
+                for worktree in office.worktrees {
+                    nextWarnings[worktree.id] = WorktreeWarning(
+                        conflicts: report.conflicts[worktree.branch] ?? [:], overlaps: report.overlaps[worktree.branch] ?? [:]
+                    )
+                }
             }
             guard includePRs, let gh else { continue }
             do {
@@ -42,8 +56,28 @@ final class RepoStatusCenter {
                 log.debug("gh pr list failed for \(office.project.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
-        if includePRs { lastPRFetch = Date() }
+        // Only count it as a full refresh once there was something to look at.
+        if includePRs, !store.offices.isEmpty { lastPRFetch = Date() }
         branches = nextBranches
         pullRequests = nextPRs
+        warnings = nextWarnings.filter { !$0.value.isEmpty }
+    }
+}
+
+struct WorktreeWarning: Equatable {
+    var conflicts: [String: [String]]
+    var overlaps: [String: [String]]
+    var isEmpty: Bool { conflicts.isEmpty && overlaps.isEmpty }
+    var isConflict: Bool { !conflicts.isEmpty }
+
+    var tooltip: String {
+        var lines: [String] = []
+        for (branch, files) in conflicts.sorted(by: { $0.key < $1.key }) {
+            lines.append("Conflicto al fusionar con \(branch): \(files.joined(separator: ", "))")
+        }
+        for (branch, files) in overlaps.sorted(by: { $0.key < $1.key }) where conflicts[branch] == nil {
+            lines.append("También toca \(files.joined(separator: ", ")) en \(branch)")
+        }
+        return lines.joined(separator: "\n")
     }
 }

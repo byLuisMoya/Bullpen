@@ -41,7 +41,8 @@ import UniformTypeIdentifiers
     func desks(_ states: [AgentState]) -> [DeskModel] {
         states.enumerated().map { i, state in
             let id = UUID()
-            return DeskModel(id: id, name: "wt-\(i)", state: state, look: .make(worktreeID: id, agent: i % 2 == 0 ? "claude" : "codex"))
+            return DeskModel(id: id, name: "wt-\(i)", state: state, look: .make(worktreeID: id, agent: i % 2 == 0 ? "claude" : "codex"),
+                             warning: i == 0 ? .conflict : i == 1 ? .overlap : nil)
         }
     }
 

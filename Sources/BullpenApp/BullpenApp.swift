@@ -29,6 +29,9 @@ struct BullpenApp: App {
                 .task { await attention.start(store: store, sessions: sessions) }
                 .task { await repoStatus.start(store: store) }
                 .task { await DebugSnapshots.run(store: store, navigation: navigation) }
+                .onChange(of: store.offices.flatMap { $0.worktrees.map(\.id) }) { _, _ in
+                    Task { await repoStatus.refresh(store: store, includePRs: true) }
+                }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                     Task { await repoStatus.refresh(store: store, includePRs: true) }
                 }

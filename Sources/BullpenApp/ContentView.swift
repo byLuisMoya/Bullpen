@@ -33,7 +33,8 @@ struct ContentView: View {
                         ForEach(office.worktrees) { worktree in
                             WorktreeRow(
                                 worktree: worktree, status: attention.statuses[worktree.id],
-                                sync: repoStatus.branches[worktree.id], pullRequest: repoStatus.pullRequests[worktree.id]
+                                sync: repoStatus.branches[worktree.id], pullRequest: repoStatus.pullRequests[worktree.id],
+                                warning: repoStatus.warnings[worktree.id]
                             )
                                 .tag(worktree.id)
                                 .contextMenu {

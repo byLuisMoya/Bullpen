@@ -92,6 +92,27 @@ public enum Props {
         return c.image(palette: palette)
     }
 
+    public static let boltWidth = 7, boltHeight = 9
+
+    /// ⚡ next to a desk: yellow when files overlap with another worktree, red on a merge conflict.
+    public static func bolt(conflict: Bool) -> CGImage? {
+        var c = PixelCanvas(width: boltWidth, height: boltHeight)
+        c.stamp([
+            "...XXX.",
+            "..XXX..",
+            ".XXX...",
+            "XXXXXX.",
+            "..XXX..",
+            ".XXX...",
+            ".XX....",
+            "XX.....",
+            "X......",
+        ], at: 0, 0, key: ["X": 18])
+        var palette = Self.palette
+        palette.colors[18] = conflict ? RGBA(0xE5484D) : RGBA(0xF5C842)
+        return c.image(palette: palette)
+    }
+
     // MARK: Bubbles
 
     public enum Bubble: Sendable { case thinking, alert, done, sleep, error, unknown }
