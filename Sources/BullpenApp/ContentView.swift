@@ -12,6 +12,7 @@ struct ContentView: View {
     @Environment(Navigation.self) private var navigation
     @State private var editingPromptFor: Project?
     @State private var demoBusy = false
+    @AppStorage(BuildingName.key) private var buildingName = BuildingName.standard
     @Environment(\.openWindow) private var openWindow
     @State private var isImporting = false
     @State private var newWorktreeFor: Project?
@@ -25,7 +26,7 @@ struct ContentView: View {
     var body: some View {
         @Bindable var store = store
         @Bindable var navigation = navigation
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $navigation.columnVisibility) {
             List(selection: $navigation.selection) {
                 ForEach(store.offices) { office in
                     Section {
@@ -65,15 +66,7 @@ struct ContentView: View {
                     }
                 }
             }
-            .navigationSplitViewColumnWidth(min: 220, ideal: 260)
-            .toolbar {
-                Button("Uso", systemImage: "chart.bar") { openWindow(id: "usage") }
-                    .help("Uso y coste (⌘⇧U)")
-                Button("Edificio", systemImage: "building.2") { selection = nil }
-                    .help("Ver todas las oficinas (⌘0)")
-                    .keyboardShortcut("0", modifiers: .command)
-                Button("Añadir proyecto", systemImage: "plus") { isImporting = true }
-            }
+            .navigationSplitViewColumnWidth(min: 240, ideal: 270)
         } detail: {
             if let (worktree, project) = selectedWorktree {
                 WorktreeDetail(worktree: worktree, project: project)
@@ -82,18 +75,33 @@ struct ContentView: View {
                     .navigationSubtitle(worktree.path)
             } else if store.offices.isEmpty {
                 ContentUnavailableView {
-                    Label("Edificio vacío", systemImage: "building.2")
+                    Label("Aún no hay proyectos", systemImage: "building.2")
                 } description: {
-                    Text("Añade un repositorio git para abrir su oficina, o prueba Bullpen con una demo (agentes simulados, no gasta tokens).")
+                    Text(AppActions.demoAvailable
+                         ? "Añade un repositorio git para abrir su oficina, o prueba Bullpen con una demo (agentes simulados, no gasta tokens)."
+                         : "Añade un repositorio git para abrir su oficina.")
                 } actions: {
                     Button("Añadir proyecto…") { isImporting = true }
                         .buttonStyle(.borderedProminent)
-                    Button(demoBusy ? "Preparando…" : "Probar con una demo") { Task { await demo("start") } }
-                        .disabled(demoBusy)
+                    if AppActions.demoAvailable {
+                        Button(demoBusy ? "Preparando…" : "Probar con una demo") { Task { await demo("start") } }
+                            .disabled(demoBusy)
+                    }
                 }
             } else {
                 BuildingView { selection = $0 }
-                    .navigationTitle("Edificio")
+                    .navigationTitle(buildingName.isEmpty ? BuildingName.standard : buildingName)
+            }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button(buildingName.isEmpty ? BuildingName.standard : buildingName, systemImage: "building.2") { selection = nil }
+                    .help("Ver todas las oficinas (⌘0)")
+                    .keyboardShortcut("0", modifiers: .command)
+                Button("Uso", systemImage: "chart.bar") { openWindow(id: "usage") }
+                    .help("Uso y coste (⌘⇧U)")
+                Button("Añadir proyecto", systemImage: "plus") { isImporting = true }
+                    .help("Añadir un repositorio git")
             }
         }
         .fileImporter(isPresented: $isImporting, allowedContentTypes: [.folder]) { result in

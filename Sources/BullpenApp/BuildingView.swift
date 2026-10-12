@@ -15,7 +15,7 @@ struct BuildingView: View {
     var body: some View {
         ScrollView([.vertical, .horizontal]) {
             VStack(alignment: .leading, spacing: 10) {
-                if store.offices.contains(where: { $0.project.path.hasPrefix("/tmp/bullpen-demo") || $0.project.path.hasPrefix("/private/tmp/bullpen-demo") }) {
+                if AppActions.demoAvailable, store.offices.contains(where: { $0.project.path.hasPrefix("/tmp/bullpen-demo") || $0.project.path.hasPrefix("/private/tmp/bullpen-demo") }) {
                     HStack {
                         Label("Estás viendo la demo: los agentes son simulados.", systemImage: "theatermasks")
                         Spacer()
@@ -90,7 +90,9 @@ struct MiniOffice: View {
         OfficeFloor(model: officeModel(office, statuses: attention.statuses, warnings: repoStatus.warnings), compact: true, onSelect: onSelect)
             .frame(width: size.width, height: size.height)
             .clipShape(RoundedRectangle(cornerRadius: 3))
+            .fixedSize()
             .frame(maxWidth: .infinity, alignment: .leading)
+            .clipped()
     }
 }
 

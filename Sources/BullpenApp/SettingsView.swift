@@ -5,6 +5,7 @@ import SwiftUI
 struct SettingsView: View {
     var body: some View {
         TabView {
+            GeneralSettings().tabItem { Label("General", systemImage: "gearshape") }
             PromptSettings().tabItem { Label("Prompt", systemImage: "text.bubble") }
             ModelSettings().tabItem { Label("Modelos", systemImage: "cpu") }
             LimitSettings().tabItem { Label("Límites", systemImage: "gauge.with.dots.needle.33percent") }
@@ -190,6 +191,25 @@ private struct CommandLineSettings: View {
                 Text("Con esto, un agente puede listar worktrees, crear otros con su tarea, enviarles mensajes y leer sus terminales.")
             }
             if let message { Text(message).foregroundStyle(.secondary) }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private struct GeneralSettings: View {
+    @AppStorage(BuildingName.key) private var buildingName = BuildingName.standard
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Nombre de la vista general", text: $buildingName, prompt: Text(BuildingName.standard))
+                Button("Restablecer") { buildingName = BuildingName.standard }
+                    .disabled(buildingName == BuildingName.standard)
+            } header: {
+                Text("Vista general")
+            } footer: {
+                Text("Cómo se llama la pantalla con todas las oficinas (por ejemplo «Edificio», «Oficinas» o «Campus»).")
+            }
         }
         .formStyle(.grouped)
     }

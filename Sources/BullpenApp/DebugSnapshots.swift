@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 
 /// Development aid: with `BULLPEN_SNAPSHOT_DIR` set, the app saves PNGs of its own main window
 /// (no screen-recording permission needed), first on the building and then on each worktree.
@@ -19,6 +20,19 @@ enum DebugSnapshots {
         }
         try? await Task.sleep(for: .seconds(delay))
         save(to: dir, name: "01-building")
+        // BULLPEN_SNAPSHOT_SIDEBAR=1: frames while the sidebar collapses and expands.
+        if env["BULLPEN_SNAPSHOT_SIDEBAR"] == "1" {
+            for (target, label) in [(NavigationSplitViewVisibility.detailOnly, "collapse"), (.all, "expand")] {
+                withAnimation { navigation.columnVisibility = target }
+                for frame in 0..<6 {
+                    try? await Task.sleep(for: .milliseconds(60))
+                    save(to: dir, name: "sidebar-\(label)-\(frame)")
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
+            if withDemo { try? await AppActions.demo("stop") }
+            return
+        }
         for (index, worktree) in store.offices.flatMap(\.worktrees).enumerated() {
             navigation.selection = worktree.id
             try? await Task.sleep(for: .seconds(delay))

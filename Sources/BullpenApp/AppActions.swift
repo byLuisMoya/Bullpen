@@ -9,7 +9,10 @@ import Foundation
 enum AppActions {
     // MARK: Demo
 
+    /// Only local development builds (`make app` / `make run`) bundle the demo script;
+    /// releases (`make release`) don't, so the demo never shows up in a downloaded app.
     static var demoScript: URL? { Bundle.main.url(forResource: "demo", withExtension: "sh") }
+    static var demoAvailable: Bool { demoScript != nil }
     static var isDemoLoaded: Bool { FileManager.default.fileExists(atPath: "/tmp/bullpen-demo/ids") }
 
     /// Runs the bundled demo script (`start` or `stop`); returns its output on failure.

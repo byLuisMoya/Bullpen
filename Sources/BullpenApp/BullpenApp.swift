@@ -45,8 +45,8 @@ struct BullpenApp: App {
             CommandGroup(after: .windowArrangement) {
                 OpenUsageButton()
             }
-            CommandGroup(replacing: .help) {
-                DemoMenu(store: store)
+            CommandGroup(after: .help) {
+                if AppActions.demoAvailable { DemoMenu(store: store) }
             }
         }
         Window("Uso", id: "usage") {

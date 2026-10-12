@@ -29,8 +29,9 @@ lipo_product bpd "$APP/Contents/MacOS/bpd"
 lipo_product bp "$APP/Contents/MacOS/bp"   # used by agent hooks
 lipo_product bp "$OUT/bp"
 sed "s/__VERSION__/$VERSION/g" Resources/Info.plist > "$APP/Contents/Info.plist"
-cp Scripts/demo.sh "$APP/Contents/Resources/demo.sh"
-cp Resources/AppIcon.icns Resources/AppIcon-halloween.png Resources/AppIcon-christmas.png "$APP/Contents/Resources/"   # the "Probar con una demo" button runs it
+cp Resources/AppIcon.icns Resources/AppIcon-halloween.png Resources/AppIcon-christmas.png "$APP/Contents/Resources/"
+# Local builds get the demo script ("Probar con una demo"); releases (DIST=1) don't.
+if [[ "${DIST:-0}" != "1" ]]; then cp Scripts/demo.sh "$APP/Contents/Resources/demo.sh"; fi
 
 # No Apple Developer ID: ad-hoc locally, stable self-signed certificate in release CI (PLAN §4.4).
 codesign --force --sign - --options runtime "$APP/Contents/MacOS/bpd"
