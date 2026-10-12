@@ -1,10 +1,13 @@
 import BPAgents
 import BPCore
+import BPGit
 import SwiftUI
 
 struct WorktreeRow: View {
     let worktree: Worktree
     let status: AgentStatus?
+    var sync: BranchSync?
+    var pullRequest: PullRequest?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -16,6 +19,8 @@ struct WorktreeRow: View {
                 Text(worktree.branch).lineLimit(1)
                 Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
+            Spacer(minLength: 4)
+            BranchBadge(sync: sync, pullRequest: pullRequest)
         }
         .help(status.map { "\($0.state.label) · confianza \($0.confidence)" } ?? "")
     }

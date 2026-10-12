@@ -7,6 +7,7 @@ struct ContentView: View {
     @Environment(BuildingStore.self) private var store
     @Environment(SessionManager.self) private var sessions
     @Environment(AttentionCenter.self) private var attention
+    @Environment(RepoStatusCenter.self) private var repoStatus
     @State private var selection: UUID?
     @State private var editingPromptFor: Project?
     @State private var isImporting = false
@@ -20,7 +21,10 @@ struct ContentView: View {
                 ForEach(store.offices) { office in
                     Section {
                         ForEach(office.worktrees) { worktree in
-                            WorktreeRow(worktree: worktree, status: attention.statuses[worktree.id])
+                            WorktreeRow(
+                                worktree: worktree, status: attention.statuses[worktree.id],
+                                sync: repoStatus.branches[worktree.id], pullRequest: repoStatus.pullRequests[worktree.id]
+                            )
                                 .tag(worktree.id)
                                 .contextMenu {
                                     Button("Mostrar en Finder") {
