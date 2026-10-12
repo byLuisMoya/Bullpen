@@ -18,13 +18,17 @@ public enum PromptComposer {
     }
 
     /// Order: global (app settings) → repository (`.bullpen.toml`) → project (local) → task.
+    /// Order: global (app settings) → repository (`.bullpen.toml`) → project (local) → task.
+    /// Only the configured prompts are templates; the task is used as written, because it can
+    /// contain ticket text with its own `{{…}}` (Vue, Handlebars…).
     public static func compose(global: String?, repository: String? = nil, project: String?, task: String?,
                                variables: [String: String]) throws -> String? {
-        let parts = [global, repository, project, task]
+        let templates = [global, repository, project]
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-        guard !parts.isEmpty else { return nil }
-        return try render(parts.joined(separator: "\n\n"), variables: variables)
+        var parts = try templates.map { try render($0, variables: variables) }
+        if let task = task?.trimmingCharacters(in: .whitespacesAndNewlines), !task.isEmpty { parts.append(task) }
+        return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
     }
 
     /// Replaces `{{name}}`. Unknown names are an error: a prompt is never sent with silent blanks.

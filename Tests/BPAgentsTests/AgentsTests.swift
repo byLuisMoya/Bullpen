@@ -12,10 +12,11 @@ import Testing
         let prompt = try PromptComposer.compose(
             global: "Responde en español.",
             project: "Proyecto {{project.name}}, rama {{ worktree.branch }} (base {{worktree.baseRef}}).",
-            task: "{{task.description}}",
+            task: "Arregla el login en <div>{{ user.name }}</div>",
             variables: vars
         )
-        #expect(prompt == "Responde en español.\n\nProyecto web-app, rama luis/fix (base pre).\n\nArregla el login")
+        // The task is never treated as a template (ticket text may contain {{…}}).
+        #expect(prompt == "Responde en español.\n\nProyecto web-app, rama luis/fix (base pre).\n\nArregla el login en <div>{{ user.name }}</div>")
     }
 
     @Test func skipsEmptyPartsAndReturnsNilWhenNothing() throws {

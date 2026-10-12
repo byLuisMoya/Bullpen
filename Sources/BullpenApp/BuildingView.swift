@@ -52,7 +52,7 @@ func officeModel(_ office: Office, statuses: [UUID: AgentStatus], warnings: [UUI
         let status = statuses[worktree.id]
         return DeskModel(
             id: worktree.id,
-            name: worktree.branch,
+            name: worktree.ticket?.key ?? worktree.branch,
             state: status?.state ?? .unknown,
             detail: status.map { $0.detail ?? $0.state.label },
             look: .make(worktreeID: worktree.id, agent: worktree.agentProfileID),

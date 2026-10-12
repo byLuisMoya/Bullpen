@@ -23,6 +23,7 @@ public struct WorktreeRequest: Sendable {
     public var globalPrompt: String?
     public var sendInitialPrompt: Bool
     public var runID: UUID?
+    public var ticket: TicketRef?
     /// For agents that need their prompt typed in: wait for it (the CLI) or do it in the background (the app).
     public var awaitTypedPrompt = false
 
@@ -105,7 +106,8 @@ public struct Workspace: Sendable {
         let worktree = Worktree(
             projectID: request.project.id, branch: request.branch, path: path.path, baseRef: request.baseRef,
             agentProfileID: request.agent?.id, agentModel: request.model?.nilIfBlank,
-            taskDescription: request.task?.nilIfBlank, ports: ports.isEmpty ? nil : ports, runID: request.runID
+            taskDescription: request.task?.nilIfBlank, ports: ports.isEmpty ? nil : ports, runID: request.runID,
+            ticket: request.ticket
         )
         let report = try WorktreeSetup.prepare(config: config, from: projectURL, to: path)
         if !report.missing.isEmpty {

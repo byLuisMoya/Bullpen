@@ -49,6 +49,8 @@ public struct Worktree: Identifiable, Hashable, Codable, Sendable {
     public var ports: [String: Int]?
     /// Set when this worktree is one of several agents working on the same task (a fan-out run).
     public var runID: UUID?
+    /// The ticket it was created from (GitHub issue, Linear issue).
+    public var ticket: TicketRef?
 
     public init(
         id: UUID = UUID(),
@@ -62,7 +64,8 @@ public struct Worktree: Identifiable, Hashable, Codable, Sendable {
         agentModel: String? = nil,
         taskDescription: String? = nil,
         ports: [String: Int]? = nil,
-        runID: UUID? = nil
+        runID: UUID? = nil,
+        ticket: TicketRef? = nil
     ) {
         self.id = id
         self.projectID = projectID
@@ -76,6 +79,7 @@ public struct Worktree: Identifiable, Hashable, Codable, Sendable {
         self.taskDescription = taskDescription
         self.ports = ports
         self.runID = runID
+        self.ticket = ticket
     }
 
     public var isActive: Bool { archivedAt == nil }
@@ -96,5 +100,24 @@ public struct Run: Identifiable, Hashable, Codable, Sendable {
         self.task = task
         self.createdAt = createdAt
         self.verdict = verdict
+    }
+}
+
+/// Enough of a tracker ticket to link back and update it (PLAN §11.5).
+public struct TicketRef: Hashable, Codable, Sendable {
+    /// `github` or `linear`.
+    public var source: String
+    public var trackerID: String
+    /// `FKPI-123`, `#45`.
+    public var key: String
+    public var url: URL?
+    public var teamID: String?
+
+    public init(source: String, trackerID: String, key: String, url: URL?, teamID: String? = nil) {
+        self.source = source
+        self.trackerID = trackerID
+        self.key = key
+        self.url = url
+        self.teamID = teamID
     }
 }

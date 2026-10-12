@@ -52,7 +52,9 @@ struct CreatePRSheet: View {
         base = worktree.baseRef
         let repo = try? await Repository.open(at: URL(fileURLWithPath: project.path))
         let commits = (try? await repo?.commitSummaries(in: URL(fileURLWithPath: worktree.path), baseRef: worktree.baseRef)) ?? []
-        var text = "## Qué cambia\n\n\(worktree.taskDescription ?? "")\n"
+        var text = "## Qué cambia\n\n"
+        if let ticket = worktree.ticket { text += "Ticket: [\(ticket.key)](\(ticket.url?.absoluteString ?? ""))\n\n" }
+        else { text += "\(worktree.taskDescription ?? "")\n" }
         if !commits.isEmpty {
             text += "\n## Commits\n\n" + commits.reversed().map { "- \($0)" }.joined(separator: "\n") + "\n"
         }
@@ -73,9 +75,13 @@ struct CreatePRSheet: View {
             try await repo.push(branch: worktree.branch, from: path)
             let url = try await gh.createPullRequest(
                 in: path, base: base, head: worktree.branch, title: worktree.branch,
-                body: includeLog ? bodyText + "\n" + (SessionLog.markdown(for: worktree) ?? "") : bodyText, draft: draft
+                body: bodyText + Tickets.pullRequestBodySuffix(worktree.ticket)
+                    + (includeLog ? "\n" + (SessionLog.markdown(for: worktree) ?? "") : ""), draft: draft
             )
             await repoStatus.refresh(store: store, includePRs: true)
+            if let ref = worktree.ticket {
+                try? await Tickets.pullRequestOpened(ref, url: url)
+            }
             if let url { NSWorkspace.shared.open(url) }
             dismiss()
         } catch {

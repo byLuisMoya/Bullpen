@@ -1,3 +1,4 @@
+import BPGit
 import BPProviders
 import SwiftUI
 
@@ -7,6 +8,7 @@ struct SettingsView: View {
             PromptSettings().tabItem { Label("Prompt", systemImage: "text.bubble") }
             ModelSettings().tabItem { Label("Modelos", systemImage: "cpu") }
             LimitSettings().tabItem { Label("Límites", systemImage: "gauge.with.dots.needle.33percent") }
+            IntegrationSettings().tabItem { Label("Integraciones", systemImage: "link") }
         }
         .frame(width: 600, height: 460)
     }
@@ -130,5 +132,38 @@ private struct LimitSettings: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+private struct IntegrationSettings: View {
+    @State private var linearKey = ""
+    @AppStorage("tickets.updateLinear") private var updateLinear = true
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("GitHub", value: GitHubCLI.locate() == nil ? "instala gh y ejecuta gh auth login" : "usa tu sesión de gh")
+            } header: {
+                Text("GitHub")
+            } footer: {
+                Text("Los issues abiertos del repo aparecen en «Desde ticket…». Las PR incluyen «Closes #n».")
+            }
+            Section {
+                SecureField("Clave personal de Linear", text: $linearKey)
+                    .onSubmit(save)
+                Toggle("Mover a In Progress al crear y a In Review al abrir la PR", isOn: $updateLinear)
+                Button("Guardar", action: save)
+            } header: {
+                Text("Linear")
+            } footer: {
+                Text("Crea la clave en Linear › Settings › API. Se guarda en el Llavero. Para ver solo un equipo, pon [integrations] linear_team = \"FKPI\" en .bullpen.toml.")
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { linearKey = ModelService.keys.secret("linear") ?? "" }
+    }
+
+    private func save() {
+        try? ModelService.keys.setSecret(linearKey.trimmingCharacters(in: .whitespacesAndNewlines), account: "linear", label: "Linear")
     }
 }

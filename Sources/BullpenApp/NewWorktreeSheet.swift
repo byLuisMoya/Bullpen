@@ -2,6 +2,7 @@ import BPAgents
 import BPCore
 import BPEnv
 import BPGit
+import BPIntegrations
 import BPWorkspace
 import SwiftUI
 
@@ -25,6 +26,8 @@ struct NewWorktreeSheet: View {
     @State private var suggesting = false
     @State private var compare = false
     @State private var overrideLimits = false
+    @State private var ticket: Ticket?
+    @State private var pickingTicket = false
     @Environment(AttentionCenter.self) private var attention
     @Environment(UsageCenter.self) private var usage
     @State private var variants: [VariantRow] = [VariantRow(agentID: AgentProfile.claude.id), VariantRow(agentID: AgentProfile.codex.id)]
@@ -33,8 +36,10 @@ struct NewWorktreeSheet: View {
     private var path: String { WorktreeLocation.path(project: project.name, branch: branch).path }
 
     private var request: WorktreeRequest {
-        WorktreeRequest(project: project, branch: branch, baseRef: baseRef, agent: profile, model: model,
-                        task: task, globalPrompt: globalPrompt, sendInitialPrompt: sendInitialPrompt)
+        var request = WorktreeRequest(project: project, branch: branch, baseRef: baseRef, agent: profile, model: model,
+                                      task: task, globalPrompt: globalPrompt, sendInitialPrompt: sendInitialPrompt)
+        request.ticket = ticket?.ref
+        return request
     }
 
     private var composed: Result<String?, Error> {
@@ -43,6 +48,18 @@ struct NewWorktreeSheet: View {
 
     var body: some View {
         Form {
+            Section {
+                HStack {
+                    if let ticket {
+                        Label("\(ticket.key) · \(ticket.title)", systemImage: "ticket").lineLimit(1)
+                        Button("Quitar") { self.ticket = nil }.buttonStyle(.borderless)
+                    } else {
+                        Text("Empieza desde un issue de GitHub o un ticket de Linear").foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Desde ticket…") { pickingTicket = true }
+                }
+            }
             Section("Worktree en \(project.name)") {
                 HStack {
                     TextField("Rama", text: $branch, prompt: Text("fix/login-timeout"))
@@ -149,6 +166,13 @@ struct NewWorktreeSheet: View {
                               || (compare && task.nilIfBlank == nil) || (limitWarning != nil && !overrideLimits))
             }
         }
+        .sheet(isPresented: $pickingTicket) {
+            TicketPicker(project: project) { picked in
+                ticket = picked
+                branch = picked.suggestedBranch
+                task = Tickets.task(for: picked, project: project)
+            }
+        }
         .onAppear {
             baseRef = project.defaultBaseRef ?? "main"
             config = Result { try BullpenConfig.load(from: URL(fileURLWithPath: project.path)) }
@@ -207,6 +231,11 @@ struct NewWorktreeSheet: View {
         } else {
             guard let worktree = await store.createWorktree(request) else { return }
             onCreated(worktree)
+        }
+        if let ref = ticket?.ref {
+            do { try await Tickets.started(ref) } catch {
+                store.errorMessage = "Worktree creado, pero no se pudo mover \(ref.key) en Linear: \(error.localizedDescription)"
+            }
         }
         dismiss()
     }

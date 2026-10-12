@@ -68,6 +68,9 @@ public final class AppDatabase: Sendable {
             }
             try db.alter(table: "worktree") { t in t.add(column: "runID", .blob) }
         }
+        migrator.registerMigration("v5-tickets") { db in
+            try db.alter(table: "worktree") { t in t.add(column: "ticket", .text) }
+        }
         return migrator
     }
 }

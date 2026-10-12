@@ -21,6 +21,10 @@ public struct BullpenConfig: Equatable, Sendable {
     public var prompt: String?
     /// Extra prompt per agent id (`[prompt.agents.claude] append = "…"`).
     public var agentPrompts: [String: String] = [:]
+    /// Prompt template per ticket source (`[prompt.sources.linear] template = "…"`).
+    public var sourceTemplates: [String: String] = [:]
+    /// Only list Linear issues of this team key (`[integrations] linear_team = "FKPI"`).
+    public var linearTeam: String?
 
     public init() {}
 
@@ -45,6 +49,10 @@ public struct BullpenConfig: Equatable, Sendable {
         for (agent, value) in root["prompt"]?["agents"]?.table ?? [:] {
             if let text = value["append"]?.string { agentPrompts[agent] = text }
         }
+        for (source, value) in root["prompt"]?["sources"]?.table ?? [:] {
+            if let text = value["template"]?.string { sourceTemplates[source] = text }
+        }
+        linearTeam = root["integrations"]?["linear_team"]?.string
     }
 
     /// Reads `.bullpen.toml` from `directory`; a missing file is an empty config.
