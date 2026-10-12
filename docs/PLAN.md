@@ -92,7 +92,7 @@ Orca (stablyai/orca, MIT, Electron) es un "ADE" (Agent Development Environment):
 | GPU | Metal (todas las GPUs soportadas: Apple Silicon, Intel Iris/UHD, AMD) | Terminal y escena de personajes |
 | No usar | Neural Engine, MLX, APIs solo-ARM | Intel no los tiene; IA local va vía Ollama/LM Studio (que ya resuelven ambas arquitecturas) |
 | Rendimiento Intel | Modo "bajo consumo" automático: personajes a 15 fps o estáticos, terminal sin efectos, throttle de watchers | Intel con iGPU y 8 GB es el peor caso |
-| Pruebas | CI en runner Apple Silicon + runner Intel (`macos-15-intel` de GitHub mientras exista; si no, un Mac Intel propio como self-hosted) | Validar ambos slices de verdad, no solo compilarlos |
+| Pruebas | **Solo en local**: este Mac (Apple Silicon) y, en momentos concretos (antes de cada release), un Mac Intel con `make test` y `make bench`. **Ninguna prueba en GitHub** | Validar ambos slices de verdad, no solo compilarlos |
 
 Compilación universal: `ARCHS = arm64 x86_64`, `ONLY_ACTIVE_ARCH = NO` en Release. Dependencias binarias (p. ej. libghostty si se usa) deben distribuirse como XCFramework universal; lo verificamos con `lipo -info` en CI.
 
@@ -679,7 +679,7 @@ bp mcp         (servidor MCP stdio con las mismas operaciones)
 
 - **Licencia del código: MIT** (la misma que Orca; máxima adopción y contribuciones). Alternativa: Apache-2.0 si se quiere cláusula de patentes.
 - **Arte: CC BY 4.0** en `Resources/Habitat/` (permite reutilizarlo citando). Nada de assets comerciales no redistribuibles.
-- Repo público en GitHub desde la fase 0: issues con plantillas (bug / feature / agente nuevo), Discussions, `CONTRIBUTING.md`, `SECURITY.md` (reporte privado), CI visible.
+- Repo público en GitHub desde la fase 0: issues con plantillas (bug / feature / agente nuevo), Discussions, `CONTRIBUTING.md`, `SECURITY.md` (reporte privado). Sin tests en GitHub: se ejecutan en local.
 - Los **perfiles de agente** (`.toml`) son la contribución más fácil: cualquiera puede añadir soporte para un CLI nuevo sin tocar Swift.
 - Releases **solo en GitHub**, generadas por CI al crear un tag (§4.4 y §4.5); checksums publicados.
 - Sin telemetría por defecto (coherente con open source y privacidad).
@@ -700,7 +700,7 @@ bp mcp         (servidor MCP stdio con las mismas operaciones)
 
 - Terminales ocultas: no se renderizan; el daemon sigue leyendo el PTY → nunca se "frenan" los agentes de fondo (bug de Orca con timers del renderer).
 - Scrollback limitado en memoria (p. ej. 10k líneas) y resto en disco.
-- Tests de rendimiento en CI con `XCTMetric` (memoria, CPU, tiempo) en ambos runners; regresión > 10 % rompe el build.
+- Benchmarks locales (`make bench`) en Apple Silicon y, antes de cada release, en un Mac Intel; los resultados se guardan en `docs/bench/` para comparar entre versiones (regresión > 10 % se investiga antes de publicar).
 - "Diagnóstico" en la app: procesos, memoria por sesión, sesiones legacy, botón de exportar informe.
 
 ---
@@ -712,7 +712,7 @@ bp mcp         (servidor MCP stdio con las mismas operaciones)
 - **Agentes falsos**: un binario `fake-agent` que simula Claude/Codex (emite hooks, OSC, spinner, pide permiso, muere) para probar todo sin gastar tokens.
 - **UI**: XCUITest de flujos críticos + snapshot tests de vistas y de frames de la oficina.
 - **Rendimiento**: ver §15.
-- **Matriz**: macOS 14 / 15 / 26 × arm64 / x86_64.
+- **Dónde**: todo en local. `make test` en el día a día; antes de cada release, `make test` + `make bench` también en un Mac Intel (y, si hay ocasión, en macOS 14). GitHub no ejecuta pruebas.
 - **Dogfooding** desde la fase 1: desarrollar la propia app con la app.
 
 ---
@@ -722,7 +722,7 @@ bp mcp         (servidor MCP stdio con las mismas operaciones)
 Estimación para 1 persona a tiempo parcial con ayuda de agentes; ajustable.
 
 ### Fase 0 — Cimientos (2 semanas)
-- Proyecto Xcode + Swift Package de módulos, Universal 2, CI (build/test en arm64 e Intel).
+- Swift Package de módulos, Universal 2, `make test` / `make app` / `make bench` en local.
 - `BPCore`, `BPPersistence` (esquema inicial + migraciones), logging.
 - Spike técnico: SwiftTerm vs libghostty en Intel (rendimiento + empaquetado universal) → decisión documentada (ADR).
 
@@ -787,7 +787,7 @@ bullpen/
 ├── docs/
 │   ├── PLAN.md               # este documento
 │   └── adr/                  # decisiones de arquitectura (0001-terminal-engine.md…)
-└── .github/workflows/        # CI arm64 + Intel, release
+└── .github/workflows/        # solo release.yml (compila y publica al crear un tag; sin tests)
 ```
 
 ---
@@ -800,7 +800,7 @@ bullpen/
 | libghostty difícil de compilar universal / API inestable | Retraso | Abstracción `TerminalEngine`; SwiftTerm como base suficiente |
 | Animaciones del Edificio en Intel antiguos | Ventiladores | Core Animation fuera de proceso, 6–8 fps, pausa por oclusión e inactividad, modo reducido |
 | Arte de personajes (tiempo/licencias) | Retraso de fase 2 / no se puede publicar | Solo CC0 o CC BY (redistribuible en repo público); sistema por capas |
-| App sin notarizar | Fricción en la primera instalación, desconfianza | Guía clara en README (una sola vez), código abierto y releases reproducibles desde CI, checksums; Sparkle evita repetirlo |
+| App sin notarizar | Fricción en la primera instalación, desconfianza | Guía clara en README (una sola vez), código abierto, releases compiladas por GitHub desde el tag, checksums; Sparkle evita repetirlo |
 | Pérdida de la clave EdDSA de Sparkle | Usuarios sin actualizaciones automáticas | Copia de seguridad fuera de GitHub; documentado en `docs/RELEASING.md` |
 | Alcance infinito (Orca tiene cientos de features) | No terminar nunca | Principio "no es un IDE"; criterio de salida por fase; backlog explícito |
 | Uso de marcas de terceros (logos de Claude, OpenAI…) | Legal | Colores/accesorios genéricos, sin logos |
@@ -824,6 +824,7 @@ bullpen/
 | Prompt inicial | Por proyecto (más global), se envía al crear cada worktree; se combina con la plantilla de Linear/GitHub (§6.5) |
 | Distribución | Solo GitHub Releases, sin cuenta de Apple Developer ni notarización; actualizaciones con Sparkle (§4.4, §4.5) |
 | Identificador | `com.byluismoya.Bullpen` |
+| Pruebas | Solo en local (y en un Mac Intel en momentos concretos); nada de tests en GitHub |
 | Integraciones | Cada proyecto se engancha a Linear y/o GitHub como fuentes de tareas (§11.5) |
 | Editor | **Solo visor**; se trabaja con la terminal integrada y los agentes |
 | SSH remoto y app móvil | **Fuera** de la v1 |
