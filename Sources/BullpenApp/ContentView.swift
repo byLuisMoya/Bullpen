@@ -61,8 +61,8 @@ struct ContentView: View {
                 Button("Añadir proyecto", systemImage: "plus") { isImporting = true }
             }
         } detail: {
-            if let (worktree, _) = selectedWorktree {
-                TerminalPane(worktree: worktree)
+            if let (worktree, project) = selectedWorktree {
+                WorktreeDetail(worktree: worktree, project: project)
                     .id(worktree.id)
                     .navigationTitle(worktree.branch)
                     .navigationSubtitle(worktree.path)
@@ -168,5 +168,42 @@ private struct OfficeHeader: View {
         case .singleDesk: "lightbulb.fill"
         case .allOn: "lightbulb.2.fill"
         }
+    }
+}
+
+/// Terminal and review for one worktree. The terminal stays mounted while reviewing so it keeps its state.
+private struct WorktreeDetail: View {
+    let worktree: Worktree
+    let project: Project
+    // BULLPEN_SNAPSHOT_TAB=changes opens the review tab (for DebugSnapshots).
+    @State private var tab = ProcessInfo.processInfo.environment["BULLPEN_SNAPSHOT_TAB"] == "changes" ? Tab.changes : .terminal
+    @Environment(ReviewNotes.self) private var notes
+
+    enum Tab: Hashable { case terminal, changes }
+
+    var body: some View {
+        ZStack {
+            TerminalPane(worktree: worktree)
+                .opacity(tab == .terminal ? 1 : 0)
+                .allowsHitTesting(tab == .terminal)
+            if tab == .changes {
+                ReviewView(worktree: worktree, project: project)
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("Vista", selection: $tab) {
+                    Text("Terminal").tag(Tab.terminal)
+                    Text(changesLabel).tag(Tab.changes)
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+            }
+        }
+    }
+
+    private var changesLabel: String {
+        let count = notes.comments[worktree.id]?.count ?? 0
+        return count > 0 ? "Cambios (\(count))" : "Cambios"
     }
 }

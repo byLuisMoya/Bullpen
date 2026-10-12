@@ -4,6 +4,7 @@ public struct GitError: Error, LocalizedError, Equatable {
     public var arguments: [String]
     public var status: Int32
     public var stderr: String
+    public var stdout: String = ""
 
     public var errorDescription: String? {
         "git \(arguments.joined(separator: " ")) failed (\(status)): \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))"
@@ -51,7 +52,7 @@ public struct Git: Sendable {
         // Pipes are drained concurrently with the process so large outputs never fill the buffer.
         let stdout = String(decoding: await stdoutTask.value, as: UTF8.self)
         guard status == 0 else {
-            throw GitError(arguments: arguments, status: status, stderr: String(decoding: await stderrTask.value, as: UTF8.self))
+            throw GitError(arguments: arguments, status: status, stderr: String(decoding: await stderrTask.value, as: UTF8.self), stdout: stdout)
         }
         return stdout
     }

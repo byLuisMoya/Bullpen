@@ -90,3 +90,16 @@ public struct GitHubCLI: Sendable {
         return pending ? .pending : .success
     }
 }
+
+public extension GitHubCLI {
+    /// `gh pr create` from the worktree; returns the new PR's URL.
+    func createPullRequest(in directory: URL, base: String, head: String, title: String, body: String, draft: Bool) async throws -> URL? {
+        let bodyFile = FileManager.default.temporaryDirectory.appendingPathComponent("bullpen-pr-\(UUID().uuidString).md")
+        try body.write(to: bodyFile, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: bodyFile) }
+        var args = ["pr", "create", "--base", base, "--head", head, "--title", title, "--body-file", bodyFile.path]
+        if draft { args.append("--draft") }
+        let output = try await Git(executable: executable).run(args, in: directory)
+        return output.split(separator: "\n").last.flatMap { URL(string: String($0).trimmingCharacters(in: .whitespaces)) }
+    }
+}

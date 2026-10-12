@@ -86,6 +86,14 @@ start() {
     git -C "$WT/demo-web/docs-changelog" push -q -u origin docs/changelog
     git -C "$WT/demo-web/docs-changelog" -c user.email=demo@example.com -c user.name=Demo commit -q --allow-empty -m wip
 
+    # Some changes to review in feature/login: one commit plus uncommitted and untracked files.
+    local L="$WT/demo-web/feature-login"
+    printf 'export function login(user, password) {\n  if (!user) return null\n  return api.post("/login", { user, password })\n}\n' > "$L/login.js"
+    git -C "$L" add login.js
+    git -C "$L" -c user.email=demo@example.com -c user.name=Demo commit -q -m "Add login"
+    printf 'export function login(user, password, remember = false) {\n  if (!user || !password) return null\n  return api.post("/login", { user, password, remember })\n}\n' > "$L/login.js"
+    printf 'test("login without password fails", () => {\n  expect(login("ana")).toBeNull()\n})\n' > "$L/login.test.js"
+
     sleep 1
     event "$a" PreToolUse Bash          # working
     event "$b" UserPromptSubmit         # thinking

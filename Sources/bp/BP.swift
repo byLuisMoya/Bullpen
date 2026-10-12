@@ -16,7 +16,7 @@ struct BP: AsyncParsableCommand {
 struct Sessions: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Sessions kept alive by the bpd daemon.",
-        subcommands: [List.self, Start.self, Kill.self, Remove.self],
+        subcommands: [List.self, Start.self, Send.self, Kill.self, Remove.self],
         defaultSubcommand: List.self
     )
 
@@ -70,6 +70,19 @@ struct Sessions: AsyncParsableCommand {
             defer { client.close() }
             let info = try await client.create(SessionSpec(id: id, cwd: cwd, command: command))
             print("\(info.id) running pid \(info.pid)")
+        }
+    }
+
+    struct Send: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Send a message to the program in a session (e.g. an agent).")
+        @OptionGroup var common: Common
+        @Argument var id: String
+        @Argument(help: "Text to send; newlines are kept as one message.") var text: String
+
+        func run() async throws {
+            let client = try common.connect()
+            defer { client.close() }
+            try await client.sendMessage(id, text)
         }
     }
 

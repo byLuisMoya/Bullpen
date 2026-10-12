@@ -178,6 +178,16 @@ final class SessionManager {
     }
 
     func input(_ id: String, _ data: Data) { client?.input(id, data) }
+
+    /// Sends `text` to the worktree's agent as one message.
+    func sendMessage(_ text: String, to worktree: Worktree) async throws {
+        let client = try await connection()
+        let id = Self.sessionID(for: worktree)
+        guard try await client.list().contains(where: { $0.id == id && $0.isRunning }) else {
+            throw SessionError(message: "El worktree no tiene una terminal en marcha")
+        }
+        try await client.sendMessage(id, text)
+    }
     func resize(_ id: String, cols: Int, rows: Int) {
         client?.resize(id, cols: UInt16(clamping: cols), rows: UInt16(clamping: rows))
     }

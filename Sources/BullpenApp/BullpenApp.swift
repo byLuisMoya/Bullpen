@@ -9,6 +9,7 @@ struct BullpenApp: App {
     @State private var attention = AttentionCenter()
     @State private var repoStatus = RepoStatusCenter()
     @State private var navigation = Navigation()
+    @State private var reviewNotes = ReviewNotes()
 
     var body: some Scene {
         WindowGroup("Bullpen", id: "main") {
@@ -18,6 +19,7 @@ struct BullpenApp: App {
                 .environment(attention)
                 .environment(repoStatus)
                 .environment(navigation)
+                .environment(reviewNotes)
                 .task { await store.start() }
                 .task { await sessions.startPolling() }
                 .task { await attention.start(store: store, sessions: sessions) }

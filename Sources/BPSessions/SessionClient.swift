@@ -83,6 +83,16 @@ public final class SessionClient: @unchecked Sendable {
         _ = try await request { .shutdown(request: $0) }
     }
 
+    /// Types `text` into a terminal app as one message: bracketed paste keeps newlines from
+    /// submitting early (agents' TUIs support it), then Enter sends it.
+    public func sendMessage(_ session: String, _ text: String) async throws {
+        input(session, Data(("\u{1B}[200~" + text + "\u{1B}[201~").utf8))
+        try await Task.sleep(for: .milliseconds(150))
+        input(session, Data("\r".utf8))
+        // Round-trip so both writes are flushed before the caller moves on (or exits).
+        _ = try await list()
+    }
+
     // MARK: Fire and forget
 
     public func detach(_ session: String) { send(.detach(session: session)) }
