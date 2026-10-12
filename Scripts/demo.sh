@@ -5,11 +5,15 @@
 # Agents are simulated: each "agent" terminal runs `sleep`, and states are set by sending
 # hook events with `bp hook`, exactly like Claude Code's hooks would.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+# From the repo: Scripts/demo.sh. From the app: it runs the copy in its bundle with BULLPEN_APP_MACOS set.
+APP=${BULLPEN_APP_MACOS:-}
+if [[ -z "$APP" ]]; then
+    cd "$(dirname "$0")/.."
+    APP="$PWD/build/Bullpen.app/Contents/MacOS"
+fi
 DEMO=${BULLPEN_DEMO_DIR:-/tmp/bullpen-demo}
 DB="$HOME/Library/Application Support/Bullpen/bullpen.sqlite"
 WT="$HOME/Bullpen/worktrees"
-APP=build/Bullpen.app/Contents/MacOS
 BP=$APP/bp
 
 stop() {
@@ -44,6 +48,7 @@ event() { # session-uuid event [tool] [command or prompt]
 
 start() {
     [[ -x "$BP" ]] || { echo "Run 'make app' first."; exit 1; }
+    command -v sqlite3 >/dev/null || { echo "sqlite3 not found"; exit 1; }
     stop >/dev/null
     mkdir -p "$DEMO"
     mk() {
@@ -59,7 +64,7 @@ start() {
 
     # The app migrates the database: open it once if this build's tables aren't there yet.
     if ! sqlite3 "$DB" "select runID from worktree limit 0" >/dev/null 2>&1; then
-        open -g build/Bullpen.app
+        open -g "$APP/../.."
         for _ in $(seq 1 40); do
             sqlite3 "$DB" "select runID from worktree limit 0" >/dev/null 2>&1 && break
             sleep 0.25
@@ -85,7 +90,7 @@ start() {
         sqlite3 "$DB" "insert into worktree(id,projectID,branch,path,baseRef,createdAt,agentProfileID,runID) values
             (X'$(hex "$id")',X'$(hex "$1")','$3','$path','main',$now,$agent,$run);"
         if [[ -n "$4" ]]; then
-            "$BP" sessions start "wt-$id" --cwd "$path" --command "exec -a claude sleep 86400" >/dev/null
+            "$BP" sessions start "wt-$id" --cwd "$path" --command "printf '\\033[2m(agente simulado de la demo de Bullpen: su estado lo fijan eventos de ejemplo)\\033[0m\\n'; exec -a claude sleep 86400" >/dev/null
         else
             "$BP" sessions start "wt-$id" --cwd "$path" >/dev/null
         fi
@@ -136,7 +141,7 @@ start() {
     event "$e" PermissionRequest Write  # needs you
     event "$r1" Stop                    # done
     event "$r2" PreToolUse Edit         # still working
-    echo "Demo ready: open the app (make run). Remove it with: Scripts/demo.sh stop"
+    echo "Demo ready."
 }
 
 case "${1:-}" in

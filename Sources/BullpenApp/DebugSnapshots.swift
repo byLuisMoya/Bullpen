@@ -10,6 +10,13 @@ enum DebugSnapshots {
         let env = ProcessInfo.processInfo.environment
         guard let dir = env["BULLPEN_SNAPSHOT_DIR"] else { return }
         let delay = Double(env["BULLPEN_SNAPSHOT_DELAY"] ?? "") ?? 6
+        // BULLPEN_SNAPSHOT_DEMO=1: load the demo through the same code as the button, remove it at the end.
+        let withDemo = env["BULLPEN_SNAPSHOT_DEMO"] == "1"
+        try? await Task.sleep(for: .seconds(1))
+        save(to: dir, name: "00-start")
+        if withDemo {
+            do { try await AppActions.demo("start") } catch { print("demo start failed: \(error)") }
+        }
         try? await Task.sleep(for: .seconds(delay))
         save(to: dir, name: "01-building")
         for (index, worktree) in store.offices.flatMap(\.worktrees).enumerated() {
@@ -20,6 +27,11 @@ enum DebugSnapshots {
         navigation.selection = nil
         try? await Task.sleep(for: .seconds(1))
         save(to: dir, name: "99-building-again")
+        if withDemo {
+            do { try await AppActions.demo("stop") } catch { print("demo stop failed: \(error)") }
+            try? await Task.sleep(for: .seconds(4))
+            save(to: dir, name: "99-after-demo")
+        }
     }
 
     private static func save(to dir: String, name: String) {

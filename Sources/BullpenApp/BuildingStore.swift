@@ -70,6 +70,15 @@ final class BuildingStore {
 
     // MARK: Worktrees
 
+    /// Forgets a project with no active worktrees (nothing on disk is touched).
+    func removeProject(_ project: Project) {
+        do {
+            try database?.deleteProject(id: project.id)
+        } catch {
+            report(error, "Remove project failed")
+        }
+    }
+
     func updateProject(_ project: Project) {
         do {
             try database?.save(project)

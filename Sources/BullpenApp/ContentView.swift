@@ -11,6 +11,8 @@ struct ContentView: View {
     @Environment(RepoStatusCenter.self) private var repoStatus
     @Environment(Navigation.self) private var navigation
     @State private var editingPromptFor: Project?
+    @State private var demoBusy = false
+    @Environment(\.openWindow) private var openWindow
     @State private var isImporting = false
     @State private var newWorktreeFor: Project?
     @State private var pendingRemoval: PendingRemoval?
@@ -41,6 +43,7 @@ struct ContentView: View {
                                     Button("Mostrar en Finder") {
                                         NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: worktree.path)
                                     }
+                                    Button("Abrir en Terminal") { AppActions.openInTerminal(worktree) }
                                     Button("Eliminar worktree…", role: .destructive) {
                                         Task { await confirmRemoval(worktree, in: office.project) }
                                     }
@@ -51,12 +54,21 @@ struct ContentView: View {
                             .contextMenu {
                                 Button("Nuevo worktree…") { newWorktreeFor = office.project }
                                 Button("Prompt inicial…") { editingPromptFor = office.project }
+                                Button("Mostrar en Finder") {
+                                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: office.project.path)
+                                }
+                                Divider()
+                                Button("Quitar proyecto", role: .destructive) { store.removeProject(office.project) }
+                                    .disabled(!office.worktrees.isEmpty)
+                                    .help(office.worktrees.isEmpty ? "Deja de mostrarlo (no borra nada del disco)" : "Elimina antes sus worktrees")
                             }
                     }
                 }
             }
             .navigationSplitViewColumnWidth(min: 220, ideal: 260)
             .toolbar {
+                Button("Uso", systemImage: "chart.bar") { openWindow(id: "usage") }
+                    .help("Uso y coste (⌘⇧U)")
                 Button("Edificio", systemImage: "building.2") { selection = nil }
                     .help("Ver todas las oficinas (⌘0)")
                     .keyboardShortcut("0", modifiers: .command)
@@ -69,11 +81,16 @@ struct ContentView: View {
                     .navigationTitle(worktree.branch)
                     .navigationSubtitle(worktree.path)
             } else if store.offices.isEmpty {
-                ContentUnavailableView(
-                    "Edificio vacío",
-                    systemImage: "building.2",
-                    description: Text("Añade un repositorio git para abrir su oficina.")
-                )
+                ContentUnavailableView {
+                    Label("Edificio vacío", systemImage: "building.2")
+                } description: {
+                    Text("Añade un repositorio git para abrir su oficina, o prueba Bullpen con una demo (agentes simulados, no gasta tokens).")
+                } actions: {
+                    Button("Añadir proyecto…") { isImporting = true }
+                        .buttonStyle(.borderedProminent)
+                    Button(demoBusy ? "Preparando…" : "Probar con una demo") { Task { await demo("start") } }
+                        .disabled(demoBusy)
+                }
             } else {
                 BuildingView { selection = $0 }
                     .navigationTitle("Edificio")
@@ -114,6 +131,12 @@ struct ContentView: View {
         } message: {
             Text(store.errorMessage ?? "")
         }
+    }
+
+    private func demo(_ action: String) async {
+        demoBusy = true
+        defer { demoBusy = false }
+        do { try await AppActions.demo(action) } catch { store.errorMessage = error.localizedDescription }
     }
 
     private var selectedWorktree: (Worktree, Project)? {
@@ -177,6 +200,8 @@ private struct WorktreeDetail: View {
     let worktree: Worktree
     let project: Project
     // BULLPEN_SNAPSHOT_TAB=changes opens the review tab (for DebugSnapshots).
+    @Environment(SessionManager.self) private var sessions
+    @Environment(BuildingStore.self) private var store
     @State private var tab: Tab = switch ProcessInfo.processInfo.environment["BULLPEN_SNAPSHOT_TAB"] {
     case "changes": .changes
     case "compare": .compare
@@ -218,6 +243,28 @@ private struct WorktreeDetail: View {
                 }
                 .pickerStyle(.segmented)
                 .fixedSize()
+            }
+            ToolbarItem {
+                Menu {
+                    Button("Interrumpir (Ctrl-C)") { sessions.interrupt(worktree) }
+                    Button(worktree.agentProfileID == nil ? "Reabrir terminal" : "Reiniciar agente") {
+                        Task {
+                            do {
+                                let env = (try? WorktreeEnvironment.load(project: project, worktree: worktree))?.environment ?? [:]
+                                try await sessions.restartAgent(worktree, environment: env)
+                                tab = .terminal
+                            } catch { store.errorMessage = error.localizedDescription }
+                        }
+                    }
+                    Divider()
+                    Button("Abrir en Terminal") { AppActions.openInTerminal(worktree) }
+                    Button("Mostrar en Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: worktree.path) }
+                } label: {
+                    Label("Agente", systemImage: "person.crop.circle.badge.gearshape")
+                        .labelStyle(.titleAndIcon)
+                }
+                .fixedSize()
+                .help("Interrumpir o reiniciar el agente, abrir el worktree en Terminal o Finder")
             }
         }
     }

@@ -162,6 +162,24 @@ final class SessionManager {
         return sessions.contains { $0.id == Self.sessionID(for: worktree) && $0.isRunning }
     }
 
+    /// Interrupts the agent (Ctrl-C, twice: most TUIs ask for a second one to quit).
+    func interrupt(_ worktree: Worktree) {
+        let id = Self.sessionID(for: worktree)
+        client?.input(id, Data([0x03]))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.client?.input(id, Data([0x03])) }
+    }
+
+    /// Closes the worktree's terminal and starts its agent again (no prompt; the conversation is new).
+    func restartAgent(_ worktree: Worktree, environment: [String: String]) async throws {
+        await close(worktree)
+        guard let profile = AgentProfile.named(worktree.agentProfileID) else {
+            _ = try await ensureShell(for: worktree, environment: environment)
+            return
+        }
+        let launch = profile.launch(model: worktree.agentModel, prompt: nil, hooks: hooks)
+        try await startAgent(for: worktree, command: launch.command, environment: environment)
+    }
+
     /// Hangs up the worktree's session (like closing its terminal window) and forgets it.
     func close(_ worktree: Worktree) async {
         guard let client = try? await connection() else { return }

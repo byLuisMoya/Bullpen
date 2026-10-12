@@ -9,6 +9,7 @@ struct SettingsView: View {
             ModelSettings().tabItem { Label("Modelos", systemImage: "cpu") }
             LimitSettings().tabItem { Label("Límites", systemImage: "gauge.with.dots.needle.33percent") }
             IntegrationSettings().tabItem { Label("Integraciones", systemImage: "link") }
+            CommandLineSettings().tabItem { Label("Terminal", systemImage: "terminal") }
         }
         .frame(width: 600, height: 460)
     }
@@ -165,5 +166,31 @@ private struct IntegrationSettings: View {
 
     private func save() {
         try? ModelService.keys.setSecret(linearKey.trimmingCharacters(in: .whitespacesAndNewlines), account: "linear", label: "Linear")
+    }
+}
+
+private struct CommandLineSettings: View {
+    @State private var message: String?
+
+    var body: some View {
+        Form {
+            Section {
+                Button("Instalar el comando bp") {
+                    do { message = try AppActions.installCLI() } catch { message = error.localizedDescription }
+                }
+                Text("Crea ~/.local/bin/bp apuntando a esta app: bp wt list, bp wt create, bp wt send…").font(.caption).foregroundStyle(.secondary)
+            } header: { Text("Comando bp") }
+            Section {
+                Text(AppActions.mcpCommand).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                Button("Copiar comando") {
+                    AppActions.copy(AppActions.mcpCommand)
+                    message = "Copiado. Pégalo en una terminal para que Claude Code pueda manejar Bullpen."
+                }
+            } header: { Text("Bullpen como servidor MCP") } footer: {
+                Text("Con esto, un agente puede listar worktrees, crear otros con su tarea, enviarles mensajes y leer sus terminales.")
+            }
+            if let message { Text(message).foregroundStyle(.secondary) }
+        }
+        .formStyle(.grouped)
     }
 }

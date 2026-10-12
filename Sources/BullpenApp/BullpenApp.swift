@@ -44,6 +44,9 @@ struct BullpenApp: App {
             CommandGroup(after: .windowArrangement) {
                 OpenUsageButton()
             }
+            CommandGroup(replacing: .help) {
+                DemoMenu(store: store)
+            }
         }
         Window("Uso", id: "usage") {
             UsageWindow()
@@ -71,5 +74,16 @@ private struct OpenUsageButton: View {
     var body: some View {
         Button("Uso y coste") { openWindow(id: "usage") }
             .keyboardShortcut("u", modifiers: [.command, .shift])
+    }
+}
+
+private struct DemoMenu: View {
+    let store: BuildingStore
+    var body: some View {
+        Button("Cargar demo (agentes simulados)") { run("start") }
+        Button("Quitar demo") { run("stop") }
+    }
+    private func run(_ action: String) {
+        Task { do { try await AppActions.demo(action) } catch { store.errorMessage = error.localizedDescription } }
     }
 }

@@ -10,10 +10,27 @@ struct BuildingView: View {
     @Environment(AttentionCenter.self) private var attention
     @Environment(RepoStatusCenter.self) private var repoStatus
     var onSelect: (UUID) -> Void
+    @State private var removingDemo = false
 
     var body: some View {
         ScrollView([.vertical, .horizontal]) {
             VStack(alignment: .leading, spacing: 10) {
+                if store.offices.contains(where: { $0.project.path.hasPrefix("/tmp/bullpen-demo") || $0.project.path.hasPrefix("/private/tmp/bullpen-demo") }) {
+                    HStack {
+                        Label("Estás viendo la demo: los agentes son simulados.", systemImage: "theatermasks")
+                        Spacer()
+                        Button(removingDemo ? "Quitando…" : "Quitar demo") {
+                            Task {
+                                removingDemo = true
+                                do { try await AppActions.demo("stop") } catch { store.errorMessage = error.localizedDescription }
+                                removingDemo = false
+                            }
+                        }
+                        .disabled(removingDemo)
+                    }
+                    .padding(10)
+                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                }
                 ForEach(store.offices) { office in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
