@@ -67,6 +67,23 @@ struct ContentView: View {
                 }
             }
             .navigationSplitViewColumnWidth(min: 240, ideal: 270)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                HStack {
+                    Spacer()
+                    SettingsLink {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 14, weight: .regular))
+                            .frame(width: 28, height: 24)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Ajustes (⌘,)")
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color(nsColor: .windowBackgroundColor))
+                .overlay(alignment: .top) { Divider() }
+            }
         } detail: {
             if let (worktree, project) = selectedWorktree {
                 WorktreeDetail(worktree: worktree, project: project)

@@ -154,3 +154,22 @@ import UniformTypeIdentifiers
         #expect(CGImageDestinationFinalize(dest))
     }
 }
+
+@MainActor
+@Suite struct SnapshotTests {
+    @Test func compactSnapshotHasTheRightSize() throws {
+        let desks = (0..<3).map { i -> DeskModel in
+            let id = UUID()
+            return DeskModel(id: id, name: "w\(i)", state: [.working, .needsYou, .done][i], look: .make(worktreeID: id, agent: "claude"))
+        }
+        let image = try #require(OfficeSnapshot.image(OfficeModel(desks: desks), desks: 3))
+        #expect(image.width == Int(OfficeLayer.preferredWidth(desks: 3) / OfficeLayer.scale * 2))
+        #expect(image.height == Int(OfficeLayer.openHeight / OfficeLayer.scale * 2))
+        if let dir = ProcessInfo.processInfo.environment["BULLPEN_PREVIEW"] {
+            let url = URL(fileURLWithPath: dir).appendingPathComponent("snapshot.png")
+            let dest = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil))
+            CGImageDestinationAddImage(dest, image, nil)
+            #expect(CGImageDestinationFinalize(dest))
+        }
+    }
+}

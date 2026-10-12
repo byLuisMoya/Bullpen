@@ -78,7 +78,8 @@ func officeModel(_ office: Office, statuses: [UUID: AgentStatus], warnings: [UUI
     })
 }
 
-/// The office strip shown above each project's worktrees in the sidebar.
+/// The office strip shown above each project's worktrees in the sidebar. A plain SwiftUI image
+/// (no AppKit layers) so it clips and animates with the sidebar; tap a person to open the worktree.
 struct MiniOffice: View {
     let office: Office
     let onSelect: (UUID) -> Void
@@ -86,13 +87,24 @@ struct MiniOffice: View {
     @Environment(RepoStatusCenter.self) private var repoStatus
 
     var body: some View {
-        let size = OfficeView.size(desks: max(office.worktrees.count, 1), compact: true)
-        OfficeFloor(model: officeModel(office, statuses: attention.statuses, warnings: repoStatus.warnings), compact: true, onSelect: onSelect)
-            .frame(width: size.width, height: size.height)
-            .clipShape(RoundedRectangle(cornerRadius: 3))
-            .fixedSize()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .clipped()
+        let model = officeModel(office, statuses: attention.statuses, warnings: repoStatus.warnings)
+        let desks = max(office.worktrees.count, 1)
+        let size = OfficeView.size(desks: desks, compact: true)
+        Group {
+            if let image = OfficeSnapshot.image(model, desks: desks) {
+                Image(decorative: image, scale: 2).interpolation(.none)
+            } else {
+                Color.clear
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .contentShape(Rectangle())
+        .onTapGesture { location in
+            let slot = Int((location.x - 8) / 34)          // art margin and desk width, 1 pt per art pixel
+            if model.desks.indices.contains(slot) { onSelect(model.desks[slot].id) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

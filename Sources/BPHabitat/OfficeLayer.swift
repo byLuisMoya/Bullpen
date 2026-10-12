@@ -306,3 +306,28 @@ enum SpriteCache {
         return image
     }
 }
+
+/// A still picture of an office, for places that must be plain images (the sidebar): Core
+/// Animation layers inside an NSView escape SwiftUI's clipping while the sidebar animates.
+public enum OfficeSnapshot {
+    /// Renders `model` at one point per art pixel (the compact size), at `scale` pixels per point.
+    @MainActor
+    public static func image(_ model: OfficeModel, desks: Int, scale: CGFloat = 2) -> CGImage? {
+        let layer = OfficeLayer()
+        layer.isCompact = true
+        let width = OfficeLayer.preferredWidth(desks: max(desks, 1)), height = OfficeLayer.openHeight
+        layer.frame = CGRect(x: 0, y: 0, width: width, height: height)
+        layer.update(model, reduceMotion: true)
+        let zoom = scale / OfficeLayer.scale
+        let pw = Int((width * zoom).rounded()), ph = Int((height * zoom).rounded())
+        guard let ctx = CGContext(data: nil, width: pw, height: ph, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.interpolationQuality = .none
+        // The layer lays out top-down; flip into Core Graphics' bottom-up space.
+        ctx.translateBy(x: 0, y: CGFloat(ph))
+        ctx.scaleBy(x: zoom, y: -zoom)
+        layer.render(in: ctx)
+        return ctx.makeImage()
+    }
+}
