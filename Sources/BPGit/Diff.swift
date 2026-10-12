@@ -133,3 +133,11 @@ extension Git {
         }
     }
 }
+
+public extension Repository {
+    /// Files of the worktree that git tracks or would track (respects .gitignore), sorted.
+    func listFiles(in path: URL) async throws -> [String] {
+        let output = try await git.run(["ls-files", "--cached", "--others", "--exclude-standard", "-z"], in: path)
+        return Array(Set(output.split(separator: "\0").map(String.init))).sorted()
+    }
+}

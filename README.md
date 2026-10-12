@@ -3,11 +3,26 @@
 A native macOS app (Apple Silicon and Intel) for running AI coding agents in parallel git worktrees,
 with a 2D office per project where every worktree is a character you can watch work.
 
-> Status: early development. Worktrees, agents (Claude Code, Codex) with live status, and the
-> building view work; expect rough edges.
+> Status: early development (phases 0–4 of [the plan](docs/PLAN.md) done); expect rough edges.
 
 ![The building: one office per project, one person per worktree](docs/images/building-preview.png)
 > The full plan, in Spanish, is in [docs/PLAN.md](docs/PLAN.md).
+
+## What it does
+
+- **Worktrees per task**, each with its own terminal that keeps running when the app is closed.
+- **Agents**: Claude Code, Codex, Gemini CLI, OpenCode, Cursor, Copilot, Aider, Goose, Amp or your own
+  ([docs/agents.md](docs/agents.md)), with a per-project initial prompt.
+- **Live state** (working, needs you, done…) from the agents' hooks, with notifications.
+- **The building**: one pixel-art office per project, one person per worktree.
+- **Branch and PR state** like Orca; warnings when worktrees overlap or would conflict.
+- **Review**: diff with line comments sent to the agent, file viewer, the agent's log, PR creation.
+- **`.bullpen.toml`**: setup, per-worktree ports and env, teardown and verify ([docs/bullpen-toml.md](docs/bullpen-toml.md)).
+- **Compare agents** on the same task, with an optional judge model.
+- **Tickets**: start from GitHub issues or Linear; usage and cost estimates; limits.
+- **`bp` CLI and `bp mcp`** so agents can drive Bullpen too.
+
+Try it without spending tokens: `make demo` (and `make demo-stop` to remove it).
 
 ## Install
 

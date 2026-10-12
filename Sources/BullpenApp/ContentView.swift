@@ -181,11 +181,12 @@ private struct WorktreeDetail: View {
     case "changes": .changes
     case "compare": .compare
     case "log": .log
+    case "files": .files
     default: .terminal
     }
     @Environment(ReviewNotes.self) private var notes
 
-    enum Tab: Hashable { case terminal, changes, compare, log }
+    enum Tab: Hashable { case terminal, changes, files, compare, log }
 
     var body: some View {
         ZStack {
@@ -194,6 +195,9 @@ private struct WorktreeDetail: View {
                 .allowsHitTesting(tab == .terminal)
             if tab == .changes {
                 ReviewView(worktree: worktree, project: project)
+            }
+            if tab == .files {
+                FilesView(worktree: worktree, project: project).background(Color(nsColor: .windowBackgroundColor))
             }
             if tab == .log {
                 SessionLogView(worktree: worktree).background(Color(nsColor: .windowBackgroundColor))
@@ -208,6 +212,7 @@ private struct WorktreeDetail: View {
                 Picker("Vista", selection: $tab) {
                     Text("Terminal").tag(Tab.terminal)
                     Text(changesLabel).tag(Tab.changes)
+                    Text("Ficheros").tag(Tab.files)
                     Text("Bitácora").tag(Tab.log)
                     if worktree.runID != nil { Text("Comparar").tag(Tab.compare) }
                 }

@@ -53,3 +53,14 @@ import Testing
         #expect(try await git.run(["diff", "--cached", "--name-only"], in: wt).isEmpty)
     }
 }
+
+@Suite struct ListFilesTests {
+    @Test func listsTrackedAndNewFilesButNotIgnored() async throws {
+        let (repo, dir) = try await makeRepo()
+        try "secret\n".write(to: dir.appendingPathComponent(".env"), atomically: true, encoding: .utf8)
+        try ".env\n".write(to: dir.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("src"), withIntermediateDirectories: true)
+        try "x".write(to: dir.appendingPathComponent("src/new.swift"), atomically: true, encoding: .utf8)
+        #expect(try await repo.listFiles(in: dir) == [".gitignore", "README.md", "src/new.swift"])
+    }
+}

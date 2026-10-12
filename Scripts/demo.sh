@@ -48,7 +48,9 @@ start() {
     mkdir -p "$DEMO"
     mk() {
         git init -q -b main "$DEMO/$1"
-        git -C "$DEMO/$1" -c user.email=demo@example.com -c user.name=Demo commit -q --allow-empty -m init
+        printf '# %s\n\nProyecto de **demostración** de Bullpen.\n\n## Cómo arrancarlo\n\n- Instala dependencias\n- Ejecuta `make run`\n\n```sh\nmake run\n```\n' "$1" > "$DEMO/$1/README.md"
+        git -C "$DEMO/$1" add README.md
+        git -C "$DEMO/$1" -c user.email=demo@example.com -c user.name=Demo commit -q -m init
     }
     mk demo-web; mk demo-api; mk demo-docs
     git init -q --bare "$DEMO/remote.git"

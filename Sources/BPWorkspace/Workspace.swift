@@ -230,6 +230,11 @@ public struct Workspace: Sendable {
             }
             let repo = try await Repository.open(at: URL(fileURLWithPath: project.path))
             try await repo.removeWorktree(at: path, force: force)
+            // Don't leave ~/Bullpen/worktrees/<project>/ behind once its last worktree is gone.
+            let parent = path.deletingLastPathComponent()
+            if (try? FileManager.default.contentsOfDirectory(atPath: parent.path))?.isEmpty == true {
+                try? FileManager.default.removeItem(at: parent)
+            }
         }
         try? claudeTrust?.forget(worktree.path)
         var archived = worktree
