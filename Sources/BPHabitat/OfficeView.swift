@@ -14,13 +14,14 @@ public final class OfficeView: NSView, NSViewToolTipOwner {
     public init(frame: NSRect = .zero, compact: Bool = false) {
         zoom = compact ? 1 / OfficeLayer.scale : 1
         super.init(frame: frame)
-        host.isGeometryFlipped = true
+        // The office layer flips its own geometry (y down); the host must not flip again.
         layer = host
         wantsLayer = true
         office.contentsScale = 2
         office.isCompact = compact
         office.anchorPoint = .zero
         office.setAffineTransform(CGAffineTransform(scaleX: zoom, y: zoom))
+        host.isGeometryFlipped = false
         host.addSublayer(office)
     }
 
@@ -37,7 +38,8 @@ public final class OfficeView: NSView, NSViewToolTipOwner {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    public override var isFlipped: Bool { true }
+    // Not flipped: AppKit would then flip the hosting layer too, and together with the office
+    // layer's own flip the scene ended up upside down. Only x matters for hit testing.
 
     private var unzoomedBounds: CGRect {
         CGRect(x: 0, y: 0, width: bounds.width / zoom, height: bounds.height / zoom)
@@ -62,6 +64,8 @@ public final class OfficeView: NSView, NSViewToolTipOwner {
     private func layoutOffice() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        // Exactly one flip between the window and the art: the office's own.
+        office.isGeometryFlipped = !host.isGeometryFlipped
         office.bounds = unzoomedBounds
         office.position = .zero
         CATransaction.commit()

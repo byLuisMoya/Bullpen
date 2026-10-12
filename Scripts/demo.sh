@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Demo data for trying the app without spending tokens:
+#   Scripts/demo.sh start   create 3 demo projects (3, 1 and 0 worktrees) and fake agent states
+#   Scripts/demo.sh stop    remove everything the demo created
+# Agents are simulated: each "agent" terminal runs `sleep`, and states are set by sending
+# hook events with `bp hook`, exactly like Claude Code's hooks would.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+DEMO=${BULLPEN_DEMO_DIR:-/tmp/bullpen-demo}
+DB="$HOME/Library/Application Support/Bullpen/bullpen.sqlite"
+WT="$HOME/Bullpen/worktrees"
+APP=build/Bullpen.app/Contents/MacOS
+BP=$APP/bp
+
+stop() {
+    if [[ -f "$DEMO/ids" ]]; then
+        while read -r id; do
+            "$BP" sessions kill "wt-$id" --signal 9 2>/dev/null || true
+            sleep 0.2
+            "$BP" sessions rm "wt-$id" 2>/dev/null || true
+        done < "$DEMO/ids"
+    fi
+    if [[ -f "$DB" ]]; then
+        sqlite3 "$DB" "PRAGMA foreign_keys=ON; delete from project where path like '$DEMO/%';"
+    fi
+    for repo in "$DEMO"/demo-*; do
+        [[ -d "$repo/.git" ]] || continue
+        git -C "$repo" worktree list --porcelain | awk '/^worktree /{print $2}' | tail -n +2 | while read -r w; do
+            git -C "$repo" worktree remove --force "$w" 2>/dev/null || true
+        done
+    done
+    rm -rf "$WT"/demo-web "$WT"/demo-api "$DEMO"
+    echo "Demo removed."
+}
+
+event() { # session-uuid event [detail]
+    local json="{\"hook_event_name\":\"$2\""
+    [[ -n "${3:-}" ]] && json+=",\"tool_name\":\"$3\""
+    echo "$json}" | BULLPEN_SESSION_ID="wt-$1" "$BP" hook claude
+}
+
+start() {
+    [[ -x "$BP" ]] || { echo "Run 'make app' first."; exit 1; }
+    stop >/dev/null
+    mkdir -p "$DEMO"
+    mk() {
+        git init -q -b main "$DEMO/$1"
+        git -C "$DEMO/$1" -c user.email=demo@example.com -c user.name=Demo commit -q --allow-empty -m init
+    }
+    mk demo-web; mk demo-api; mk demo-docs
+    git init -q --bare "$DEMO/remote.git"
+    git -C "$DEMO/demo-web" remote add origin "$DEMO/remote.git"
+    git -C "$DEMO/demo-web" push -q -u origin main
+
+    # Make sure the daemon is up (the app also starts it).
+    "$BP" sessions >/dev/null 2>&1 || { ("$APP/bpd" >/dev/null 2>&1 &); sleep 0.5; }
+
+    local p1 p2 p3 now="strftime('%Y-%m-%d %H:%M:%f','now')"
+    p1=$(uuidgen); p2=$(uuidgen); p3=$(uuidgen)
+    hex() { echo "$1" | tr -d '-'; }
+    sqlite3 "$DB" "insert into project(id,name,path,defaultBaseRef,sortIndex,createdAt) values
+        (X'$(hex "$p1")','demo-web','$DEMO/demo-web','main',100,$now),
+        (X'$(hex "$p2")','demo-api','$DEMO/demo-api','main',101,$now),
+        (X'$(hex "$p3")','demo-docs','$DEMO/demo-docs','main',102,$now);"
+
+    wt() { # project-uuid repo branch agent(claude|"") -> prints worktree uuid
+        local id path; id=$(uuidgen); path="$WT/$2/$(echo "$3" | tr '/' '-')"
+        git -C "$DEMO/$2" worktree add -q -b "$3" "$path" main
+        local agent="NULL"; [[ -n "$4" ]] && agent="'$4'"
+        sqlite3 "$DB" "insert into worktree(id,projectID,branch,path,baseRef,createdAt,agentProfileID) values
+            (X'$(hex "$id")',X'$(hex "$1")','$3','$path','main',$now,$agent);"
+        if [[ -n "$4" ]]; then
+            "$BP" sessions start "wt-$id" --cwd "$path" --command "exec -a claude sleep 86400" >/dev/null
+        else
+            "$BP" sessions start "wt-$id" --cwd "$path" >/dev/null
+        fi
+        echo "$id" >> "$DEMO/ids"
+        echo "$id"
+    }
+    local a b c d e
+    a=$(wt "$p1" demo-web feature/login claude)
+    b=$(wt "$p1" demo-web fix/flaky-tests claude)
+    c=$(wt "$p1" demo-web docs/changelog claude)
+    d=$(wt "$p1" demo-web chore/deps "")
+    e=$(wt "$p2" demo-api feature/rate-limit claude)
+    git -C "$WT/demo-web/docs-changelog" push -q -u origin docs/changelog
+    git -C "$WT/demo-web/docs-changelog" -c user.email=demo@example.com -c user.name=Demo commit -q --allow-empty -m wip
+
+    sleep 1
+    event "$a" PreToolUse Bash          # working
+    event "$b" UserPromptSubmit         # thinking
+    event "$c" Stop                     # done
+    event "$e" PermissionRequest Write  # needs you
+    echo "Demo ready: open the app (make run). Remove it with: Scripts/demo.sh stop"
+}
+
+case "${1:-}" in
+    start) start ;;
+    stop) stop ;;
+    *) echo "usage: $0 start|stop"; exit 2 ;;
+esac

@@ -36,7 +36,7 @@ public enum StatusEngine {
         let foreground = session.foregroundProcess
         // Back at the shell prompt: the agent is not running any more.
         if let foreground, shells.contains(foreground), age > 5 {
-            return AgentStatus(state: .dead, detail: "\(profile.name) no está en ejecución", confidence: .medium, since: nil)
+            return AgentStatus(state: .dead, detail: "no está en ejecución", confidence: .medium, since: nil)
         }
 
         guard let activity = session.agentActivity else {

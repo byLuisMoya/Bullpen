@@ -22,6 +22,7 @@ struct BullpenApp: App {
                 .task { await sessions.startPolling() }
                 .task { await attention.start(store: store, sessions: sessions) }
                 .task { await repoStatus.start(store: store) }
+                .task { await DebugSnapshots.run(store: store, navigation: navigation) }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                     Task { await repoStatus.refresh(store: store, includePRs: true) }
                 }
