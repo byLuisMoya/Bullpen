@@ -35,8 +35,11 @@ make run    # build and open the app
 |---|---|
 | `Sources/BPCore` | Domain models (projects, worktrees, agent states, office lighting) |
 | `Sources/BPPersistence` | SQLite storage (GRDB) |
+| `Sources/BPGit` | git CLI wrapper: repositories and worktrees |
+| `Sources/BPSessions` | PTY sessions, `bpd` protocol, server and client |
+| `Sources/bpd` | Session daemon: keeps terminals and agents alive when the app closes |
 | `Sources/BullpenApp` | SwiftUI app |
-| `Sources/bp` | `bp` command line tool |
+| `Sources/bp` | `bp` command line tool (`bp sessions`) |
 | `docs/adr` | Architecture decision records |
 
 ## License

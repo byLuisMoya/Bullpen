@@ -5,6 +5,7 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(BuildingStore.self) private var store
+    @Environment(SessionManager.self) private var sessions
     @State private var selection: UUID?
     @State private var isImporting = false
     @State private var newWorktreeFor: Project?
@@ -38,7 +39,12 @@ struct ContentView: View {
                 Button("Añadir proyecto", systemImage: "plus") { isImporting = true }
             }
         } detail: {
-            if store.offices.isEmpty {
+            if let (worktree, _) = selectedWorktree {
+                TerminalPane(worktree: worktree)
+                    .id(worktree.id)
+                    .navigationTitle(worktree.branch)
+                    .navigationSubtitle(worktree.path)
+            } else if store.offices.isEmpty {
                 ContentUnavailableView(
                     "Edificio vacío",
                     systemImage: "building.2",
@@ -61,17 +67,16 @@ struct ContentView: View {
             isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }),
             presenting: pendingRemoval
         ) { removal in
-            Button(removal.guards.isEmpty ? "Eliminar" : "Eliminar igualmente", role: .destructive) {
-                Task { await store.removeWorktree(removal.worktree, in: removal.project, force: !removal.guards.isEmpty) }
+            Button(removal.guards.isEmpty && !removal.hasLiveSession ? "Eliminar" : "Eliminar igualmente", role: .destructive) {
+                Task {
+                    if selection == removal.worktree.id { selection = nil }
+                    await sessions.close(removal.worktree)
+                    await store.removeWorktree(removal.worktree, in: removal.project, force: !removal.guards.isEmpty)
+                }
             }
             Button("Cancelar", role: .cancel) {}
         } message: { removal in
-            if removal.guards.isEmpty {
-                Text("Se borra la carpeta del worktree. La rama se conserva.")
-            } else {
-                Text("Se perdería:\n" + removal.guards.map { "• " + $0.message }.joined(separator: "\n")
-                    + "\n\nLa rama se conserva, pero los cambios sin commitear se pierden.")
-            }
+            Text(removal.message)
         }
         .alert(
             "Algo ha fallado",
@@ -83,9 +88,17 @@ struct ContentView: View {
         }
     }
 
+    private var selectedWorktree: (Worktree, Project)? {
+        for office in store.offices {
+            if let worktree = office.worktrees.first(where: { $0.id == selection }) { return (worktree, office.project) }
+        }
+        return nil
+    }
+
     private func confirmRemoval(_ worktree: Worktree, in project: Project) async {
         let guards = await store.removalGuards(for: worktree, in: project)
-        pendingRemoval = PendingRemoval(worktree: worktree, project: project, guards: guards)
+        let live = await sessions.hasRunningSession(worktree)
+        pendingRemoval = PendingRemoval(worktree: worktree, project: project, guards: guards, hasLiveSession: live)
     }
 }
 
@@ -93,6 +106,16 @@ private struct PendingRemoval {
     var worktree: Worktree
     var project: Project
     var guards: [RemovalGuard]
+    var hasLiveSession: Bool
+
+    var message: String {
+        var lines: [String] = []
+        if hasLiveSession { lines.append("• su terminal sigue abierta y se cerrará") }
+        lines += guards.map { "• " + $0.message }
+        if lines.isEmpty { return "Se borra la carpeta del worktree. La rama se conserva." }
+        return "Atención:\n" + lines.joined(separator: "\n")
+            + "\n\nLa rama se conserva" + (guards.isEmpty ? "." : ", pero los cambios sin commitear se pierden.")
+    }
 }
 
 private struct OfficeHeader: View {
