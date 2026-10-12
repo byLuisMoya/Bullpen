@@ -10,6 +10,10 @@ final class Navigation {
     var selection: UUID?
     /// Sidebar shown or hidden (kept here so it can be driven programmatically, e.g. by DebugSnapshots).
     var columnVisibility: NavigationSplitViewVisibility = .all
+
+    func toggleSidebar() {
+        columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+    }
 }
 
 /// What the main overview is called ("Edificio" by default); set in Settings › General.

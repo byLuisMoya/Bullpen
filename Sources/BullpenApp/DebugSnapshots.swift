@@ -24,8 +24,8 @@ enum DebugSnapshots {
         if env["BULLPEN_SNAPSHOT_SIDEBAR"] == "1" {
             for (target, label) in [(NavigationSplitViewVisibility.detailOnly, "collapse"), (.all, "expand")] {
                 withAnimation { navigation.columnVisibility = target }
-                for frame in 0..<6 {
-                    try? await Task.sleep(for: .milliseconds(60))
+                for frame in 0..<14 {
+                    try? await Task.sleep(for: .milliseconds(20))
                     save(to: dir, name: "sidebar-\(label)-\(frame)")
                 }
                 try? await Task.sleep(for: .seconds(1))

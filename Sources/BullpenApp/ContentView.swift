@@ -66,10 +66,12 @@ struct ContentView: View {
                     }
                 }
             }
-            .navigationSplitViewColumnWidth(min: 240, ideal: 270)
+            .navigationSplitViewColumnWidth(min: 220, ideal: 270)
+            // SwiftUI's own toggle hops between the sidebar's and the window's toolbar while the
+            // sidebar animates (it vanishes and reappears); ours stays put in the detail toolbar.
+            .toolbar(removing: .sidebarToggle)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 HStack {
-                    Spacer()
                     SettingsLink {
                         Image(systemName: "gearshape")
                             .font(.system(size: 14, weight: .regular))
@@ -78,6 +80,7 @@ struct ContentView: View {
                     }
                     .buttonStyle(.borderless)
                     .help("Ajustes (⌘,)")
+                    Spacer()
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -111,6 +114,14 @@ struct ContentView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    withAnimation { navigation.toggleSidebar() }
+                } label: {
+                    Label("Barra lateral", systemImage: "sidebar.left")
+                }
+                .help("Mostrar u ocultar la barra lateral (⌃⌘S)")
+            }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button(buildingName.isEmpty ? BuildingName.standard : buildingName, systemImage: "building.2") { selection = nil }
                     .help("Ver todas las oficinas (⌘0)")
