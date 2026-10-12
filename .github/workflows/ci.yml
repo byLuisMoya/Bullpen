@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15        # Apple Silicon
+          - runner: macos-15-intel  # Intel: runs the x86_64 slice natively
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      - run: make test
+
+  universal-app:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: make app
+      - name: Check both architectures are present
+        run: |
+          lipo -verify_arch build/Bullpen.app/Contents/MacOS/Bullpen arm64 x86_64
+          lipo -verify_arch build/bp arm64 x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Bullpen-universal
+          path: build/
