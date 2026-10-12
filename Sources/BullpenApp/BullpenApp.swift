@@ -23,6 +23,7 @@ struct BullpenApp: App {
                 .environment(reviewNotes)
                 .environment(usage)
                 .task { await usage.start(store: store, sessions: sessions) }
+                .task { await SeasonalIcon.keepUpdated() }
                 .task {
                     store.connectToDaemon = { [sessions] in try await sessions.connection() }
                     store.hooks = sessions.hooks

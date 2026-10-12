@@ -1,3 +1,5 @@
+<img src="Resources/AppIcon.png" width="128" alt="Bullpen icon">
+
 # Bullpen
 
 A native macOS app (Apple Silicon and Intel) for running AI coding agents in parallel git worktrees,

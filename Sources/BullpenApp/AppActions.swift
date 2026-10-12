@@ -74,3 +74,23 @@ enum AppActions {
         }
     }
 }
+
+/// Seasonal Dock icon (Halloween, Christmas). Only the Dock changes; the app bundle keeps its
+/// regular icon so its code signature stays intact. BULLPEN_SEASON overrides the date (to preview).
+@MainActor
+enum SeasonalIcon {
+    static func apply(now: Date = Date()) {
+        let season = ProcessInfo.processInfo.environment["BULLPEN_SEASON"].flatMap(Season.init(rawValue:)) ?? Season.of(now)
+        NSApp.applicationIconImage = season.iconResource
+            .flatMap { Bundle.main.url(forResource: $0, withExtension: "png") }
+            .flatMap(NSImage.init(contentsOf:))      // nil restores the bundle icon
+    }
+
+    /// Re-checks every hour so a long-running app switches on the first day of a season.
+    static func keepUpdated() async {
+        while !Task.isCancelled {
+            apply()
+            try? await Task.sleep(for: .seconds(3600))
+        }
+    }
+}

@@ -8,6 +8,8 @@
     <string>Bullpen</string>
     <key>CFBundleIdentifier</key>
     <string>com.byluismoya.Bullpen</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleExecutable</key>
     <string>Bullpen</string>
     <key>CFBundlePackageType</key>

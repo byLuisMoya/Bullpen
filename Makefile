@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 ENV := source Scripts/env.sh &&
 
-.PHONY: build test app run clean bench demo demo-stop
+.PHONY: build test app run clean bench demo demo-stop icons
 
 build:
 	$(ENV) swift build "$${SWIFT_EXTRA_FLAGS[@]}"
@@ -31,3 +31,8 @@ demo: app
 
 demo-stop:
 	Scripts/demo.sh stop
+
+# Regenerate the app icon and the seasonal Dock icons (needs node; outputs are committed).
+icons:
+	node Tools/icon/art.js /tmp/bullpen-icon-art.json
+	python3 Tools/icon/render.py /tmp/bullpen-icon-art.json Resources
