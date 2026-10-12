@@ -66,7 +66,13 @@ struct ContentView: View {
                     }
                 }
             }
-            .navigationSplitViewColumnWidth(min: 220, ideal: 270)
+            // While the sidebar animates, its width passes through every value from 0: without a
+            // minimum the rows re-lay out each frame (names truncate, the count jumps). A fixed
+            // minimum, anchored to the trailing edge, makes the content slide in whole instead.
+            .frame(minWidth: Self.sidebarMinWidth, maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .clipped()
+            .navigationSplitViewColumnWidth(min: Self.sidebarMinWidth, ideal: 270)
             // SwiftUI's own toggle hops between the sidebar's and the window's toolbar while the
             // sidebar animates (it vanishes and reappears); ours stays put in the detail toolbar.
             .toolbar(removing: .sidebarToggle)
@@ -168,6 +174,8 @@ struct ContentView: View {
             Text(store.errorMessage ?? "")
         }
     }
+
+    static let sidebarMinWidth: CGFloat = 240
 
     private func demo(_ action: String) async {
         demoBusy = true
