@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 ENV := source Scripts/env.sh &&
 
-.PHONY: build test app run clean
+.PHONY: build test app run clean bench
 
 build:
 	$(ENV) swift build "$${SWIFT_EXTRA_FLAGS[@]}"
@@ -17,3 +17,9 @@ run: app
 
 clean:
 	rm -rf .build build
+
+# Terminal engine benchmark (ADR 0002). Local only; results land in docs/bench/.
+bench:
+	$(ENV) cd Benchmarks/TerminalBench && \
+	  if [[ "$$(xcode-select -p)" != *CommandLineTools* ]]; then export TERMINALBENCH_XCODE=1; fi && \
+	  swift build -c release && "$$(swift build -c release --show-bin-path)/TerminalBench" --out ../../docs/bench
