@@ -42,6 +42,9 @@ struct ContentView: View {
             }
             .navigationSplitViewColumnWidth(min: 220, ideal: 260)
             .toolbar {
+                Button("Edificio", systemImage: "building.2") { selection = nil }
+                    .help("Ver todas las oficinas (⌘0)")
+                    .keyboardShortcut("0", modifiers: .command)
                 Button("Añadir proyecto", systemImage: "plus") { isImporting = true }
             }
         } detail: {
@@ -57,7 +60,8 @@ struct ContentView: View {
                     description: Text("Añade un repositorio git para abrir su oficina.")
                 )
             } else {
-                ContentUnavailableView("Bullpen \(Bullpen.version)", systemImage: "building.2.fill")
+                BuildingView { selection = $0 }
+                    .navigationTitle("Edificio")
             }
         }
         .fileImporter(isPresented: $isImporting, allowedContentTypes: [.folder]) { result in

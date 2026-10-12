@@ -27,10 +27,11 @@ let package = Package(
         .target(name: "BPGit"),
         .target(name: "BPSessions"),
         .target(name: "BPAgents", dependencies: ["BPCore", "BPSessions"]),
+        .target(name: "BPHabitat", dependencies: ["BPCore"]),
         .executableTarget(name: "bpd", dependencies: ["BPCore", "BPSessions"]),
         .executableTarget(
             name: "BullpenApp",
-            dependencies: ["BPCore", "BPPersistence", "BPGit", "BPSessions", "BPAgents", "SwiftTerm"]
+            dependencies: ["BPCore", "BPPersistence", "BPGit", "BPSessions", "BPAgents", "BPHabitat", "SwiftTerm"]
         ),
         .executableTarget(
             name: "bp",
@@ -41,5 +42,6 @@ let package = Package(
         .testTarget(name: "BPGitTests", dependencies: ["BPGit"]),
         .testTarget(name: "BPSessionsTests", dependencies: ["BPSessions"]),
         .testTarget(name: "BPAgentsTests", dependencies: ["BPAgents"]),
+        .testTarget(name: "BPHabitatTests", dependencies: ["BPHabitat"]),
     ]
 )

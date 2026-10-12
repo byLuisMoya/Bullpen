@@ -3,7 +3,10 @@
 A native macOS app (Apple Silicon and Intel) for running AI coding agents in parallel git worktrees,
 with a 2D office per project where every worktree is a character you can watch work.
 
-> Status: early development (phase 0). Nothing usable yet.
+> Status: early development. Worktrees, agents (Claude Code, Codex) with live status, and the
+> building view work; expect rough edges.
+
+![The building: one office per project, one person per worktree](docs/images/building-preview.png)
 > The full plan, in Spanish, is in [docs/PLAN.md](docs/PLAN.md).
 
 ## Install
@@ -39,7 +42,9 @@ make run    # build and open the app
 | `Sources/BPSessions` | PTY sessions, `bpd` protocol, server and client |
 | `Sources/bpd` | Session daemon: keeps terminals and agents alive when the app closes |
 | `Sources/BullpenApp` | SwiftUI app |
-| `Sources/bp` | `bp` command line tool (`bp sessions`) |
+| `Sources/BPAgents` | Agent profiles, hooks, initial prompts, status engine |
+| `Sources/BPHabitat` | The building: pixel-art offices and characters (Core Animation) |
+| `Sources/bp` | `bp` command line tool (`bp sessions`, `bp agent`, `bp hook`) |
 | `docs/adr` | Architecture decision records |
 
 ## License
