@@ -94,7 +94,7 @@ Orca (stablyai/orca, MIT, Electron) es un "ADE" (Agent Development Environment):
 | Rendimiento Intel | Modo "bajo consumo" automático: personajes a 15 fps o estáticos, terminal sin efectos, throttle de watchers | Intel con iGPU y 8 GB es el peor caso |
 | Pruebas | **Solo en local**: este Mac (Apple Silicon) y, en momentos concretos (antes de cada release), un Mac Intel con `make test` y `make bench`. **Ninguna prueba en GitHub** | Validar ambos slices de verdad, no solo compilarlos |
 
-Compilación universal: `ARCHS = arm64 x86_64`, `ONLY_ACTIVE_ARCH = NO` en Release. Dependencias binarias (p. ej. libghostty si se usa) deben distribuirse como XCFramework universal; lo verificamos con `lipo -info` en CI.
+Compilación universal: `ARCHS = arm64 x86_64`, `ONLY_ACTIVE_ARCH = NO` en Release. Dependencias binarias, si alguna vez las hay, deben distribuirse como XCFramework universal; lo verificamos con `lipo -info` en CI.
 
 ---
 
@@ -133,7 +133,7 @@ Compilación universal: `ARCHS = arm64 x86_64`, `ONLY_ACTIVE_ARCH = NO` en Relea
 | `BPCore` | Modelos de dominio (Repo, Worktree, AgentSession, Task, Run), IDs, errores, logging (`os.Logger`) |
 | `BPPersistence` | SQLite con **GRDB** (migraciones, observación reactiva). Nada de Core Data |
 | `BPGit` | Wrapper del **CLI de git** (worktree add/remove/list --porcelain, status --porcelain=v2, diff, log, merge-tree). FSEvents para cambios. libgit2 no cubre bien worktrees |
-| `BPTerminal` | Vista de terminal. Protocolo `TerminalEngine` con 2 implementaciones: **SwiftTerm** (MVP, puro Swift, universal) y **libghostty** (fase 2, Metal, más rápido) |
+| `BPTerminal` | Vista de terminal. Protocolo `TerminalEngine`; implementación única: **SwiftTerm 1.11.2 con CoreGraphics** (ADR 0002). Metal y libghostty descartados por exigir Xcode; el protocolo permite cambiarlo sin tocar el resto. |
 | `BPSessionDaemon` | PTY, scrollback persistente (ring buffer + fichero mmap), handoff, árbol de procesos |
 | `BPAgents` | Perfiles de agente (declarativos), instalación de hooks, parsers de estado, reanudación de sesiones |
 | `BPStatus` | **StatusEngine**: fusiona señales → máquina de estados por sesión |
@@ -149,7 +149,7 @@ Compilación universal: `ARCHS = arm64 x86_64`, `ONLY_ACTIVE_ARCH = NO` en Relea
 ### 4.3 Stack y dependencias (mínimas, todas MIT/Apache/BSD)
 
 - UI: SwiftUI + AppKit (NSSplitView, NSToolbar, NSWindow tabs donde SwiftUI se queda corto).
-- Terminal: **SwiftTerm** → **libghostty** (evaluar en fase 2).
+- Terminal: **SwiftTerm 1.11.2** con renderizado CoreGraphics (compila sin Xcode; ADR 0002).
 - Visor de código: **CodeEditSourceEditor** + tree-sitter (resaltado) o **STTextView**, en modo **solo lectura**.
 - Markdown: `swift-markdown` + render propio; PDF: PDFKit; imágenes: nativo.
 - BBDD: **GRDB**.
@@ -724,7 +724,7 @@ Estimación para 1 persona a tiempo parcial con ayuda de agentes; ajustable.
 ### Fase 0 — Cimientos (2 semanas)
 - Swift Package de módulos, Universal 2, `make test` / `make app` / `make bench` en local.
 - `BPCore`, `BPPersistence` (esquema inicial + migraciones), logging.
-- Spike técnico: SwiftTerm vs libghostty en Intel (rendimiento + empaquetado universal) → decisión documentada (ADR).
+- Benchmark local de motores de terminal (`make bench`) → decisión documentada en ADR 0002: SwiftTerm CoreGraphics.
 
 ### Fase 1 — MVP "worktree + agente + estado" (5–6 semanas)
 - Añadir repo, crear/listar/borrar worktree con base ref y guardias básicas.
@@ -759,7 +759,7 @@ Estimación para 1 persona a tiempo parcial con ayuda de agentes; ajustable.
 - Progresión cosmética de los personajes.
 
 ### Fase 5 — Más allá de v1 (backlog)
-- libghostty si no entró antes; widget y ventana "pecera"; automations programadas; orquestación entre agentes (mailbox/tasks) al estilo Orca pero sobre el StatusEngine; modo equipo (compartir bitácoras/estado vía repo o servidor ligero); plugins.
+- Widget y ventana "pecera"; automations programadas; orquestación entre agentes (mailbox/tasks) al estilo Orca pero sobre el StatusEngine; modo equipo (compartir bitácoras/estado vía repo o servidor ligero); plugins.
 
 **Total hasta v1.0 (fases 0–4): ~19–21 semanas.**
 
@@ -797,7 +797,8 @@ bullpen/
 | Riesgo | Impacto | Mitigación |
 |---|---|---|
 | Cambios en hooks/formatos de los CLIs (cambian a menudo) | Estado incorrecto | Perfiles declarativos actualizables sin release; capas 2–3 de respaldo; tests con trazas grabadas |
-| libghostty difícil de compilar universal / API inestable | Retraso | Abstracción `TerminalEngine`; SwiftTerm como base suficiente |
+| SwiftTerm fijado en 1.11.2 (las versiones nuevas exigen Xcode) | Sin arreglos nuevos del upstream | Abstracción `TerminalEngine`; si hace falta, fork propio que compile los shaders Metal en tiempo de ejecución |
+| Una actualización de Command Line Tools quita el SDK 26 | Deja de compilar SwiftUI sin Xcode | Vigilar en cada actualización; buscar alternativa sin cuenta antes de plantear Xcode |
 | Animaciones del Edificio en Intel antiguos | Ventiladores | Core Animation fuera de proceso, 6–8 fps, pausa por oclusión e inactividad, modo reducido |
 | Arte de personajes (tiempo/licencias) | Retraso de fase 2 / no se puede publicar | Solo CC0 o CC BY (redistribuible en repo público); sistema por capas |
 | App sin notarizar | Fricción en la primera instalación, desconfianza | Guía clara en README (una sola vez), código abierto, releases compiladas por GitHub desde el tag, checksums; Sparkle evita repetirlo |
@@ -824,6 +825,8 @@ bullpen/
 | Prompt inicial | Por proyecto (más global), se envía al crear cada worktree; se combina con la plantilla de Linear/GitHub (§6.5) |
 | Distribución | Solo GitHub Releases, sin cuenta de Apple Developer ni notarización; actualizaciones con Sparkle (§4.4, §4.5) |
 | Identificador | `com.byluismoya.Bullpen` |
+| Herramientas | **Sin Xcode** ni nada que exija cuenta (Apple ID, App Store…): solo Command Line Tools, SwiftPM y herramientas open source |
+| Terminal | SwiftTerm 1.11.2 con CoreGraphics (ADR 0002) |
 | Pruebas | Solo en local (y en un Mac Intel en momentos concretos); nada de tests en GitHub |
 | Integraciones | Cada proyecto se engancha a Linear y/o GitHub como fuentes de tareas (§11.5) |
 | Editor | **Solo visor**; se trabaja con la terminal integrada y los agentes |

@@ -1,6 +1,6 @@
 # 0002 — Motor de terminal
 
-Fecha: 2026-10-12 · Estado: pendiente (faltan datos de Metal y libghostty)
+Fecha: 2026-10-12 · Estado: **aceptada** — SwiftTerm 1.11.2 con CoreGraphics
 
 ## Opciones
 - **SwiftTerm (CoreGraphics)**: Swift puro, universal, MIT.
@@ -25,5 +25,14 @@ el informe lo marca y los números de render no valen). Repetir en un Mac Intel 
   (p. ej. 2.000 líneas) y el resto ir a disco en el daemon, como ya prevé el plan (§4.1, §15).
 - Los números de render de esta primera ejecución no son fiables (pantalla bloqueada).
 
-## Siguiente paso
-Instalar Xcode, ejecutar `make bench` con las tres opciones en este Mac y en uno Intel, y decidir.
+## Decisión
+- **No se instala Xcode** (ni nada que obligue a usar una cuenta, como el Apple ID). Por tanto Metal y libghostty
+  quedan descartados.
+- Motor: **SwiftTerm 1.11.2 con CoreGraphics**, detrás del protocolo `TerminalEngine` para poder cambiarlo.
+  Su rendimiento sobra para el volumen de salida de un agente.
+- Scroll en memoria limitado (~2.000 líneas por terminal); el historial completo vive en disco en el daemon.
+
+## Si algún día hace falta más rendimiento
+Fork de SwiftTerm que distribuya `Shaders.metal` como recurso sin compilar: SwiftTerm ya sabe compilarlo
+en tiempo de ejecución (`makeLibrary(source:)`), así que el renderizador Metal funcionaría sin Xcode.
+Volver a medir con `make bench` (en local, con la pantalla desbloqueada).
