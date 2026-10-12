@@ -144,26 +144,26 @@ final class SessionManager {
     // MARK: Worktree shells
 
     /// Returns the id of a running shell session for the worktree, starting one if needed.
-    func ensureShell(for worktree: Worktree, cols: UInt16 = 120, rows: UInt16 = 40) async throws -> String {
+    func ensureShell(for worktree: Worktree, environment: [String: String] = [:], cols: UInt16 = 120, rows: UInt16 = 40) async throws -> String {
         let client = try await connection()
         let id = Self.sessionID(for: worktree)
         if let existing = try await client.list().first(where: { $0.id == id }) {
             if existing.isRunning { return id }
             try await client.remove(id)
         }
-        _ = try await client.create(SessionSpec(id: id, cwd: worktree.path, cols: cols, rows: rows))
+        _ = try await client.create(SessionSpec(id: id, cwd: worktree.path, environment: environment, cols: cols, rows: rows))
         return id
     }
 
     /// Starts the worktree's terminal running `command` (an agent) instead of a plain shell.
-    func startAgent(for worktree: Worktree, command: String) async throws {
+    func startAgent(for worktree: Worktree, command: String, environment: [String: String] = [:]) async throws {
         let client = try await connection()
         let id = Self.sessionID(for: worktree)
         if let existing = try await client.list().first(where: { $0.id == id }) {
             guard !existing.isRunning else { throw SessionError(message: "El worktree ya tiene una terminal en marcha") }
             try await client.remove(id)
         }
-        infos[id] = try await client.create(SessionSpec(id: id, cwd: worktree.path, command: command))
+        infos[id] = try await client.create(SessionSpec(id: id, cwd: worktree.path, command: command, environment: environment))
     }
 
     func attach(_ id: String, handler: SessionOutputHandler) async throws {

@@ -45,6 +45,8 @@ public struct Worktree: Identifiable, Hashable, Codable, Sendable {
     public var agentModel: String?
     /// What the user asked for when creating it.
     public var taskDescription: String?
+    /// Ports reserved for `{{port:name}}` in `.bullpen.toml` (PLAN §6.2).
+    public var ports: [String: Int]?
 
     public init(
         id: UUID = UUID(),
@@ -56,7 +58,8 @@ public struct Worktree: Identifiable, Hashable, Codable, Sendable {
         archivedAt: Date? = nil,
         agentProfileID: String? = nil,
         agentModel: String? = nil,
-        taskDescription: String? = nil
+        taskDescription: String? = nil,
+        ports: [String: Int]? = nil
     ) {
         self.id = id
         self.projectID = projectID
@@ -68,6 +71,7 @@ public struct Worktree: Identifiable, Hashable, Codable, Sendable {
         self.agentProfileID = agentProfileID
         self.agentModel = agentModel
         self.taskDescription = taskDescription
+        self.ports = ports
     }
 
     public var isActive: Bool { archivedAt == nil }

@@ -1,6 +1,9 @@
 import BPAgents
 import BPCore
+import BPEnv
 import BPGit
+import BPSessions
+import BPWorkspace
 import BPPersistence
 import Foundation
 import Observation
@@ -10,6 +13,9 @@ import os
 @MainActor
 @Observable
 final class BuildingStore {
+    /// How to reach bpd (the session manager's connection, which can launch it).
+    @ObservationIgnored var connectToDaemon: @Sendable () async throws -> SessionClient = { try SessionClient.connect() }
+    @ObservationIgnored var hooks = AgentHooks.standard(bpPath: "/usr/local/bin/bp")
     private(set) var offices: [Office] = []
     /// Last error to show to the user; cleared when dismissed.
     var errorMessage: String?
@@ -20,6 +26,7 @@ final class BuildingStore {
         do {
             let database = try AppDatabase.onDisk()
             self.database = database
+            workspace = Workspace(database: database, connect: connectToDaemon, hooks: hooks)
             for try await offices in database.observeOffices() {
                 self.offices = offices
             }
@@ -63,30 +70,14 @@ final class BuildingStore {
         }
     }
 
-    /// Creates the git worktree and records it. Returns nil (and sets `errorMessage`) on failure.
-    func createWorktree(in project: Project, branch: String, baseRef: String,
-                        agent: String?, model: String?, task: String?) async -> Worktree? {
-        guard let database else { return nil }
+    /// Shared create/remove logic (also used by the CLI). Set once the database is open.
+    var workspace: Workspace?
+
+    /// Creates the worktree end to end. Returns nil (and sets `errorMessage`) on failure.
+    func createWorktree(_ request: WorktreeRequest) async -> Worktree? {
+        guard let workspace else { return nil }
         do {
-            let repo = try await Repository.open(at: URL(fileURLWithPath: project.path))
-            guard await repo.isValidBranchName(branch) else {
-                errorMessage = "“\(branch)” no es un nombre de rama válido."
-                return nil
-            }
-            let path = WorktreeLocation.path(project: project.name, branch: branch)
-            try await repo.addWorktree(branch: branch, at: path, baseRef: baseRef)
-            let worktree = Worktree(
-                projectID: project.id, branch: branch, path: path.path, baseRef: baseRef,
-                agentProfileID: agent, agentModel: model?.nilIfBlank, taskDescription: task?.nilIfBlank
-            )
-            try database.save(worktree)
-            // Claude Code asks to trust every new folder; worktrees are ours, so pre-trust them.
-            do {
-                try ClaudeTrust().trust(path.path)
-            } catch {
-                log.warning("Cannot pre-trust worktree for Claude: \(error.localizedDescription, privacy: .public)")
-            }
-            return worktree
+            return try await workspace.createWorktree(request)
         } catch {
             report(error, "Create worktree failed")
             return nil
@@ -105,19 +96,10 @@ final class BuildingStore {
         }
     }
 
-    /// Removes the worktree folder (the branch is kept) and archives it in the database.
+    /// Hangs up its terminal, runs teardown, removes the folder (the branch is kept) and archives it.
     func removeWorktree(_ worktree: Worktree, in project: Project, force: Bool) async {
-        guard let database else { return }
         do {
-            let repo = try await Repository.open(at: URL(fileURLWithPath: project.path))
-            let path = URL(fileURLWithPath: worktree.path)
-            if FileManager.default.fileExists(atPath: path.path) {
-                try await repo.removeWorktree(at: path, force: force)
-            }
-            try? ClaudeTrust().forget(worktree.path)
-            var archived = worktree
-            archived.archivedAt = Date()
-            try database.save(archived)
+            try await workspace?.removeWorktree(worktree, in: project, force: force)
         } catch {
             report(error, "Remove worktree failed")
         }
@@ -126,13 +108,6 @@ final class BuildingStore {
     private func report(_ error: Error, _ context: String) {
         log.error("\(context, privacy: .public): \(error.localizedDescription, privacy: .public)")
         errorMessage = error.localizedDescription
-    }
-}
-
-extension String {
-    var nilIfBlank: String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

@@ -1,6 +1,7 @@
 import BPCore
 import BPGit
 import BPPersistence
+import BPWorkspace
 import SwiftUI
 
 struct ContentView: View {
@@ -97,7 +98,6 @@ struct ContentView: View {
             Button(removal.guards.isEmpty && !removal.hasLiveSession ? "Eliminar" : "Eliminar igualmente", role: .destructive) {
                 Task {
                     if selection == removal.worktree.id { selection = nil }
-                    await sessions.close(removal.worktree)
                     await store.removeWorktree(removal.worktree, in: removal.project, force: !removal.guards.isEmpty)
                 }
             }
@@ -183,7 +183,7 @@ private struct WorktreeDetail: View {
 
     var body: some View {
         ZStack {
-            TerminalPane(worktree: worktree)
+            TerminalPane(worktree: worktree, environment: (try? WorktreeEnvironment.load(project: project, worktree: worktree))?.environment ?? [:])
                 .opacity(tab == .terminal ? 1 : 0)
                 .allowsHitTesting(tab == .terminal)
             if tab == .changes {

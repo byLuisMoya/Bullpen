@@ -1,6 +1,8 @@
 import BPCore
+import BPEnv
 import BPGit
 import BPPersistence
+import BPWorkspace
 import SwiftUI
 
 /// A comment on one line of the worktree's changes, to be sent back to the agent (PLAN §11.1).
@@ -41,6 +43,8 @@ struct ReviewView: View {
     @State private var loading = false
     @State private var error: String?
     @State private var showingPR = false
+    @State private var verifying = false
+    @State private var verifyResults: [CommandResult]?
 
     private var comments: [ReviewComment] { notes.comments[worktree.id] ?? [] }
 
@@ -92,6 +96,9 @@ struct ReviewView: View {
         .toolbar {
             ToolbarItemGroup {
                 Button("Recargar", systemImage: "arrow.clockwise") { Task { await load() } }
+                Button(verifying ? "Verificando…" : "Verificar", systemImage: "checkmark.seal") { Task { await verify() } }
+                    .disabled(verifying)
+                    .help("Ejecuta [verify] de .bullpen.toml en este worktree")
                 Button("Crear PR…", systemImage: "arrow.triangle.pull") { showingPR = true }
                     .disabled(repoStatus.pullRequests[worktree.id]?.state == .open || repoStatus.pullRequests[worktree.id]?.state == .draft)
                     .help(repoStatus.pullRequests[worktree.id].map { "Ya existe la PR #\($0.number)" } ?? "Subir la rama y abrir una PR")
@@ -99,6 +106,9 @@ struct ReviewView: View {
         }
         .sheet(isPresented: $showingPR) {
             CreatePRSheet(worktree: worktree, project: project)
+        }
+        .sheet(isPresented: Binding(get: { verifyResults != nil }, set: { if !$0 { verifyResults = nil } })) {
+            VerifyResultsView(results: verifyResults ?? [])
         }
         .task(id: worktree.id) { await load() }
     }
@@ -113,6 +123,21 @@ struct ReviewView: View {
             if selectedPath == nil || !files.contains(where: { $0.path == selectedPath }) { selectedPath = files.first?.path }
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    private func verify() async {
+        verifying = true
+        defer { verifying = false }
+        do {
+            let env = try WorktreeEnvironment.load(project: project, worktree: worktree)
+            guard !env.config.verify.isEmpty else {
+                store.errorMessage = "Añade [verify] run = [\"…\"] a .bullpen.toml para poder verificar."
+                return
+            }
+            verifyResults = await CommandRunner.run(env.config.verify, in: URL(fileURLWithPath: worktree.path), environment: env.environment)
+        } catch {
+            store.errorMessage = error.localizedDescription
         }
     }
 
@@ -249,5 +274,34 @@ extension FileDiff.Status {
         case .modified: .orange
         case .renamed: .blue
         }
+    }
+}
+
+private struct VerifyResultsView: View {
+    let results: [CommandResult]
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(results.allSatisfy(\.succeeded) ? "Verificación correcta" : "La verificación ha fallado",
+                  systemImage: results.allSatisfy(\.succeeded) ? "checkmark.seal.fill" : "xmark.seal.fill")
+                .font(.headline)
+                .foregroundStyle(results.allSatisfy(\.succeeded) ? .green : .red)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(results.enumerated()), id: \.offset) { _, result in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("$ \(result.command)  →  \(result.exitCode)").font(.system(.callout, design: .monospaced).bold())
+                                .foregroundStyle(result.succeeded ? Color.primary : .red)
+                            Text(result.output.suffix(4000)).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack { Spacer(); Button("Cerrar") { dismiss() }.keyboardShortcut(.defaultAction) }
+        }
+        .padding()
+        .frame(width: 640, height: 420)
     }
 }

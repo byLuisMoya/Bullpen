@@ -36,8 +36,9 @@ import Testing
         let p = Project(name: "a", path: "/tmp/a")
         try db.save(p)
         try db.save(Worktree(projectID: p.id, branch: "x", path: "/tmp/wt/x", baseRef: "main",
-                             agentProfileID: "claude", agentModel: "opus", taskDescription: "Arregla el login"))
+                             agentProfileID: "claude", agentModel: "opus", taskDescription: "Arregla el login", ports: ["web": 4100]))
         let wt = try #require(try db.offices().first?.worktrees.first)
+        #expect(wt.ports == ["web": 4100])
         #expect(wt.agentProfileID == "claude" && wt.agentModel == "opus" && wt.taskDescription == "Arregla el login")
     }
 

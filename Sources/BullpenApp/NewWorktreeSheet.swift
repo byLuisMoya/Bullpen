@@ -1,6 +1,8 @@
 import BPAgents
 import BPCore
+import BPEnv
 import BPGit
+import BPWorkspace
 import SwiftUI
 
 /// Creates a worktree and, optionally, starts an agent in it with the composed initial prompt (PLAN §6.1, §6.5).
@@ -19,21 +21,18 @@ struct NewWorktreeSheet: View {
     @State private var sendInitialPrompt = true
     @State private var isCreating = false
     @State private var installed: [String: Bool] = [:]
+    @State private var config: Result<BullpenConfig, Error> = .success(BullpenConfig())
 
     private var profile: AgentProfile? { AgentProfile.named(agentID) }
     private var path: String { WorktreeLocation.path(project: project.name, branch: branch).path }
 
+    private var request: WorktreeRequest {
+        WorktreeRequest(project: project, branch: branch, baseRef: baseRef, agent: profile, model: model,
+                        task: task, globalPrompt: globalPrompt, sendInitialPrompt: sendInitialPrompt)
+    }
+
     private var composed: Result<String?, Error> {
-        Result {
-            try PromptComposer.compose(
-                global: sendInitialPrompt ? globalPrompt : nil,
-                project: sendInitialPrompt ? project.initialPrompt : nil,
-                task: task,
-                variables: PromptComposer.variables(
-                    projectName: project.name, branch: branch, baseRef: baseRef, path: path, task: task.nilIfBlank
-                )
-            )
-        }
+        Result { try Workspace.composePrompt(request, config: (try? config.get()) ?? BullpenConfig(), path: path) }
     }
 
     var body: some View {
@@ -47,6 +46,7 @@ struct NewWorktreeSheet: View {
                     }
                 }
             }
+            ConfigSummary(config: config)
             Section("Agente") {
                 Picker("Agente", selection: $agentID) {
                     ForEach(AgentProfile.all) { profile in
@@ -76,7 +76,7 @@ struct NewWorktreeSheet: View {
                     TextEditor(text: $task)
                         .font(.body)
                         .frame(minHeight: 70)
-                    Toggle("Incluir prompt inicial (global y del proyecto)", isOn: $sendInitialPrompt)
+                    Toggle("Incluir prompt inicial (global, del repo y del proyecto)", isOn: $sendInitialPrompt)
                     switch composed {
                     case let .success(prompt?):
                         DisclosureGroup("Prompt que se enviará") {
@@ -104,11 +104,19 @@ struct NewWorktreeSheet: View {
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Crear") { Task { await create() } }
-                    .disabled(branch.isEmpty || baseRef.isEmpty || isCreating || isPromptInvalid)
+                    .disabled(branch.isEmpty || baseRef.isEmpty || isCreating || isPromptInvalid || isConfigInvalid)
             }
         }
-        .onAppear { baseRef = project.defaultBaseRef ?? "main" }
+        .onAppear {
+            baseRef = project.defaultBaseRef ?? "main"
+            config = Result { try BullpenConfig.load(from: URL(fileURLWithPath: project.path)) }
+        }
         .task { await detectInstalledAgents() }
+    }
+
+    private var isConfigInvalid: Bool {
+        if case .failure = config { return true }
+        return false
     }
 
     private var isPromptInvalid: Bool {
@@ -119,18 +127,7 @@ struct NewWorktreeSheet: View {
     private func create() async {
         isCreating = true
         defer { isCreating = false }
-        guard let worktree = await store.createWorktree(
-            in: project, branch: branch, baseRef: baseRef,
-            agent: profile?.id, model: model, task: task
-        ) else { return }
-        if let profile, case let .success(prompt) = composed {
-            let command = profile.command(model: model.nilIfBlank, prompt: prompt, hooks: sessions.hooks)
-            do {
-                try await sessions.startAgent(for: worktree, command: command)
-            } catch {
-                store.errorMessage = "Worktree creado, pero el agente no arrancó: \(error.localizedDescription)"
-            }
-        }
+        guard let worktree = await store.createWorktree(request) else { return }
         onCreated(worktree)
         dismiss()
     }
@@ -149,6 +146,30 @@ struct NewWorktreeSheet: View {
                 return process.terminationStatus == 0
             }.value
             installed[profile.id] = found
+        }
+    }
+}
+
+/// What `.bullpen.toml` will do for the new worktree.
+private struct ConfigSummary: View {
+    let config: Result<BullpenConfig, Error>
+
+    var body: some View {
+        switch config {
+        case let .failure(error):
+            Section(".bullpen.toml") {
+                Label(error.localizedDescription, systemImage: "xmark.octagon").foregroundStyle(.red)
+            }
+        case let .success(config) where !config.isEmpty:
+            Section(".bullpen.toml") {
+                if !config.copy.isEmpty { LabeledContent("Copia", value: config.copy.joined(separator: ", ")) }
+                if !config.clone.isEmpty { LabeledContent("Clona (APFS)", value: config.clone.joined(separator: ", ")) }
+                if !config.setup.isEmpty { LabeledContent("Prepara", value: config.setup.joined(separator: " && ")) }
+                if !config.portNames.isEmpty { LabeledContent("Puertos propios", value: config.portNames.joined(separator: ", ")) }
+                if !config.env.isEmpty { LabeledContent("Variables", value: config.env.keys.sorted().joined(separator: ", ")) }
+            }
+        default:
+            EmptyView()
         }
     }
 }

@@ -20,7 +20,11 @@ struct BullpenApp: App {
                 .environment(repoStatus)
                 .environment(navigation)
                 .environment(reviewNotes)
-                .task { await store.start() }
+                .task {
+                    store.connectToDaemon = { [sessions] in try await sessions.connection() }
+                    store.hooks = sessions.hooks
+                    await store.start()
+                }
                 .task { await sessions.startPolling() }
                 .task { await attention.start(store: store, sessions: sessions) }
                 .task { await repoStatus.start(store: store) }

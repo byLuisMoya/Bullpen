@@ -55,6 +55,9 @@ public final class AppDatabase: Sendable {
                 t.add(column: "taskDescription", .text)
             }
         }
+        migrator.registerMigration("v3-ports") { db in
+            try db.alter(table: "worktree") { t in t.add(column: "ports", .text) }
+        }
         return migrator
     }
 }

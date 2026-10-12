@@ -10,8 +10,17 @@ public struct PromptError: Error, LocalizedError, Equatable {
 /// Builds the first prompt sent to an agent when a worktree is created (PLAN §6.5):
 /// global prompt + project prompt + the task the user typed, with `{{variables}}` filled in.
 public enum PromptComposer {
-    public static func compose(global: String?, project: String?, task: String?, variables: [String: String]) throws -> String? {
-        let parts = [global, project, task]
+    /// `luis/Fix login` → `luis-fix-login`, safe for database names and paths.
+    public static func slug(_ s: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        return String(s.lowercased().unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" })
+            .split(separator: "-", omittingEmptySubsequences: true).joined(separator: "-")
+    }
+
+    /// Order: global (app settings) → repository (`.bullpen.toml`) → project (local) → task.
+    public static func compose(global: String?, repository: String? = nil, project: String?, task: String?,
+                               variables: [String: String]) throws -> String? {
+        let parts = [global, repository, project, task]
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         guard !parts.isEmpty else { return nil }
@@ -48,6 +57,7 @@ public enum PromptComposer {
             "worktree.path": path,
             "task.description": task ?? "",
             "user.name": NSFullUserName(),
+            "worktree.slug": slug(branch),
         ]
     }
 }

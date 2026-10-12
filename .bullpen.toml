@@ -1,0 +1,9 @@
+# Bullpen's own config (see docs/bullpen-toml.md).
+[verify]
+run = ["make test"]
+
+[prompt]
+default = """
+Lee docs/PLAN.md si necesitas contexto. Código y commits en inglés; documentación en español.
+Antes de terminar ejecuta `make test`.
+"""

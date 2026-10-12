@@ -5,6 +5,7 @@ import SwiftUI
 /// Integrated terminal for a worktree, backed by a `bpd` session that outlives the view and the app.
 struct TerminalPane: NSViewRepresentable {
     let worktree: Worktree
+    var environment: [String: String] = [:]
     @Environment(SessionManager.self) private var sessions
 
     func makeCoordinator() -> Coordinator { Coordinator(sessions: sessions) }
@@ -14,7 +15,7 @@ struct TerminalPane: NSViewRepresentable {
         // Recent history only; the full log stays on disk in the daemon (ADR 0002).
         view.getTerminal().changeHistorySize(2_000)
         view.terminalDelegate = context.coordinator
-        context.coordinator.start(view: view, worktree: worktree)
+        context.coordinator.start(view: view, worktree: worktree, environment: environment)
         return view
     }
 
@@ -32,13 +33,13 @@ struct TerminalPane: NSViewRepresentable {
 
         init(sessions: SessionManager) { self.sessions = sessions }
 
-        func start(view: TerminalView, worktree: Worktree) {
+        func start(view: TerminalView, worktree: Worktree, environment: [String: String]) {
             self.view = view
             Task {
                 do {
                     let terminal = view.getTerminal()
                     let id = try await sessions.ensureShell(
-                        for: worktree, cols: UInt16(max(terminal.cols, 20)), rows: UInt16(max(terminal.rows, 5))
+                        for: worktree, environment: environment, cols: UInt16(max(terminal.cols, 20)), rows: UInt16(max(terminal.rows, 5))
                     )
                     sessionID = id
                     try await sessions.attach(id, handler: self)
