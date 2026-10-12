@@ -26,8 +26,11 @@ jobs:
       - run: make app
       - name: Check both architectures are present
         run: |
-          lipo -verify_arch build/Bullpen.app/Contents/MacOS/Bullpen arm64 x86_64
-          lipo -verify_arch build/bp arm64 x86_64
+          for f in build/Bullpen.app/Contents/MacOS/Bullpen build/bp; do
+            archs=$(lipo -archs "$f")
+            echo "$f: $archs"
+            [[ " $archs " == *" arm64 "* && " $archs " == *" x86_64 "* ]]
+          done
       - uses: actions/upload-artifact@v7
         with:
           name: Bullpen-universal
