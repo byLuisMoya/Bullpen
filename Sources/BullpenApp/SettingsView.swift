@@ -1,6 +1,17 @@
+import BPProviders
 import SwiftUI
 
 struct SettingsView: View {
+    var body: some View {
+        TabView {
+            PromptSettings().tabItem { Label("Prompt", systemImage: "text.bubble") }
+            ModelSettings().tabItem { Label("Modelos", systemImage: "cpu") }
+        }
+        .frame(width: 600, height: 460)
+    }
+}
+
+private struct PromptSettings: View {
     @AppStorage("globalInitialPrompt") private var globalPrompt = ""
 
     var body: some View {
@@ -13,10 +24,93 @@ struct SettingsView: View {
             } header: {
                 Text("Prompt inicial global")
             } footer: {
-                Text("Se antepone al prompt de cada proyecto en todos los worktrees nuevos.")
+                Text("Se antepone al prompt del repo y del proyecto en todos los worktrees nuevos.")
             }
         }
         .formStyle(.grouped)
-        .frame(width: 560, height: 380)
+    }
+}
+
+/// Keys (Keychain) and which model does what. Only for Bullpen's own small jobs; agents use their own accounts.
+private struct ModelSettings: View {
+    @State private var keys: [ProviderID: String] = [:]
+    @State private var quick = ModelService.choice(for: .quick)
+    @State private var judge = ModelService.choice(for: .judge)
+    @State private var testResult: String?
+
+    var body: some View {
+        Form {
+            Section {
+                ChoiceEditor(title: "Tareas rápidas", note: "Nombres de rama, resúmenes cortos", choice: $quick)
+                ChoiceEditor(title: "Juez", note: "Compara los resultados de varios agentes", choice: $judge)
+                HStack {
+                    Button("Probar tareas rápidas") { Task { await test() } }
+                    if let testResult { Text(testResult).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                }
+            } header: {
+                Text("Modelos de Bullpen")
+            } footer: {
+                Text("Son opcionales: sin ellos, Bullpen funciona igual y estas funciones se ocultan o piden configuración.")
+            }
+            Section("Claves (se guardan en el Llavero)") {
+                ForEach(ProviderID.allCases.filter(\.needsKey)) { provider in
+                    SecureField(provider.name, text: Binding(
+                        get: { keys[provider] ?? "" },
+                        set: { keys[provider] = $0 }
+                    ))
+                    .onSubmit { save(provider) }
+                }
+                Button("Guardar claves") { ProviderID.allCases.filter(\.needsKey).forEach(save) }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear {
+            for provider in ProviderID.allCases where provider.needsKey {
+                keys[provider] = ModelService.keys.key(for: provider) ?? ""
+            }
+        }
+        .onChange(of: quick) { _, value in ModelService.setChoice(value, for: .quick) }
+        .onChange(of: judge) { _, value in ModelService.setChoice(value, for: .judge) }
+    }
+
+    private func save(_ provider: ProviderID) {
+        try? ModelService.keys.setKey(keys[provider]?.trimmingCharacters(in: .whitespacesAndNewlines), for: provider)
+    }
+
+    private func test() async {
+        ProviderID.allCases.filter(\.needsKey).forEach(save)
+        testResult = "Probando…"
+        do {
+            testResult = "✓ " + (try await ModelService.suggestBranchName(for: "Arreglar el timeout del login", project: "demo"))
+        } catch {
+            testResult = "✗ " + error.localizedDescription
+        }
+    }
+}
+
+private struct ChoiceEditor: View {
+    let title: String
+    let note: String
+    @Binding var choice: ModelChoice
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.headline)
+            Text(note).font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Picker("Proveedor", selection: $choice.provider) {
+                    ForEach(ProviderID.allCases) { Text($0.name).tag($0) }
+                }
+                .labelsHidden()
+                .fixedSize()
+                TextField("Modelo", text: $choice.model)
+                if !choice.provider.suggestedModels.isEmpty {
+                    Menu("Sugerencias") {
+                        ForEach(choice.provider.suggestedModels, id: \.self) { m in Button(m) { choice.model = m } }
+                    }
+                    .fixedSize()
+                }
+            }
+        }
     }
 }

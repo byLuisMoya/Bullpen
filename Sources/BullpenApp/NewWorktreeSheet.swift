@@ -22,6 +22,7 @@ struct NewWorktreeSheet: View {
     @State private var isCreating = false
     @State private var installed: [String: Bool] = [:]
     @State private var config: Result<BullpenConfig, Error> = .success(BullpenConfig())
+    @State private var suggesting = false
 
     private var profile: AgentProfile? { AgentProfile.named(agentID) }
     private var path: String { WorktreeLocation.path(project: project.name, branch: branch).path }
@@ -38,7 +39,12 @@ struct NewWorktreeSheet: View {
     var body: some View {
         Form {
             Section("Worktree en \(project.name)") {
-                TextField("Rama", text: $branch, prompt: Text("luis/fix-login"))
+                HStack {
+                    TextField("Rama", text: $branch, prompt: Text("fix/login-timeout"))
+                    Button(suggesting ? "Sugiriendo…" : "Sugerir") { Task { await suggestBranch() } }
+                        .disabled(task.nilIfBlank == nil || suggesting)
+                        .help("Propone un nombre a partir de la tarea con el modelo de tareas rápidas")
+                }
                 TextField("Base", text: $baseRef, prompt: Text("main"))
                 if !branch.isEmpty {
                     LabeledContent("Carpeta") {
@@ -122,6 +128,17 @@ struct NewWorktreeSheet: View {
     private var isPromptInvalid: Bool {
         guard profile != nil, case .failure = composed else { return false }
         return true
+    }
+
+    private func suggestBranch() async {
+        guard let task = task.nilIfBlank else { return }
+        suggesting = true
+        defer { suggesting = false }
+        do {
+            branch = try await ModelService.suggestBranchName(for: task, project: project.name)
+        } catch {
+            store.errorMessage = error.localizedDescription
+        }
     }
 
     private func create() async {
