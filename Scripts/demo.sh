@@ -35,6 +35,7 @@ stop() {
         done
     done
     rm -rf "$WT"/demo-web "$WT"/demo-api "$DEMO"
+    rmdir "$WT" "$HOME/Bullpen" 2>/dev/null || true   # only if nothing else lives there
     echo "Demo removed."
 }
 
