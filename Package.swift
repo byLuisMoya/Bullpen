@@ -9,6 +9,7 @@ let package = Package(
         .executable(name: "bp", targets: ["bp"]),
         .library(name: "BPCore", targets: ["BPCore"]),
         .library(name: "BPPersistence", targets: ["BPPersistence"]),
+        .library(name: "BPGit", targets: ["BPGit"]),
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.10.0"),
@@ -20,9 +21,10 @@ let package = Package(
             name: "BPPersistence",
             dependencies: ["BPCore", .product(name: "GRDB", package: "GRDB.swift")]
         ),
+        .target(name: "BPGit"),
         .executableTarget(
             name: "BullpenApp",
-            dependencies: ["BPCore", "BPPersistence"]
+            dependencies: ["BPCore", "BPPersistence", "BPGit"]
         ),
         .executableTarget(
             name: "bp",
@@ -30,5 +32,6 @@ let package = Package(
         ),
         .testTarget(name: "BPCoreTests", dependencies: ["BPCore"]),
         .testTarget(name: "BPPersistenceTests", dependencies: ["BPPersistence"]),
+        .testTarget(name: "BPGitTests", dependencies: ["BPGit"]),
     ]
 )
