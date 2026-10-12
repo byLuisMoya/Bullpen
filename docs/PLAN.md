@@ -110,7 +110,7 @@ Compilación universal: `ARCHS = arm64 x86_64`, `ONLY_ACTIVE_ARCH = NO` en Relea
          ▼                                          ▼
 ┌───────────────────────────┐            ┌─────────────────────────────┐
 │ BPSessionDaemon (LaunchAgent│          │ bp  (CLI)  ·  bp mcp (MCP)   │  ← lo usan humanos y agentes
-│  vía SMAppService)          │          └─────────────────────────────┘
+│  propio, ver §4.4)          │          └─────────────────────────────┘
 │ - PTYs (forkpty)            │
 │ - buffer/scrollback en disco│◄── hooks de agentes (bp hook …) ── Claude Code / Codex / …
 │ - StatusEngine              │
@@ -153,16 +153,78 @@ Compilación universal: `ARCHS = arm64 x86_64`, `ONLY_ACTIVE_ARCH = NO` en Relea
 - Visor de código: **CodeEditSourceEditor** + tree-sitter (resaltado) o **STTextView**, en modo **solo lectura**.
 - Markdown: `swift-markdown` + render propio; PDF: PDFKit; imágenes: nativo.
 - BBDD: **GRDB**.
-- Actualizaciones: **Sparkle 2** (EdDSA, appcast con deltas).
+- Actualizaciones: **Sparkle 2** (EdDSA, appcast en GitHub Releases; ver §4.5).
 - Atajos globales: `KeyboardShortcuts` (sindresorhus).
 - Tests: Swift Testing + XCTest UI + snapshot tests (`swift-snapshot-testing`).
 
-### 4.4 Distribución
+### 4.4 Distribución: solo GitHub, sin cuenta de Apple Developer
 
-- **Fuera de la Mac App Store**: el sandbox impide lanzar CLIs arbitrarios y PTYs. Developer ID + **notarización** + Hardened Runtime.
-- Entitlements mínimos: sin sandbox, `com.apple.security.cs.allow-jit` NO; sin Apple Events.
-- Formatos: DMG firmado + **Homebrew cask** (`brew install --cask bullpen`).
-- Daemon como LaunchAgent registrado con `SMAppService.agent(plistName:)` (requiere aprobación en Ajustes > Ítems de inicio; flujo de onboarding que lo explique).
+**Decisión (2026-10-12):** Bullpen se distribuye **únicamente por GitHub Releases**. No hay cuenta de Apple Developer, así que **no hay firma Developer ID ni notarización**, ni Mac App Store, ni Homebrew cask oficial (Homebrew está retirando los casks sin firmar).
+
+**Qué se publica en cada release:**
+- `Bullpen-<versión>-universal.zip` (creado con `ditto -c -k --keepParent`, conserva atributos y enlaces de frameworks): app Universal + CLI `bp` dentro del bundle (`Contents/Resources/bin/bp`).
+- `appcast.xml` para Sparkle (ver §4.5).
+- `SHA256SUMS.txt`.
+
+**Firma sin Developer ID:**
+- En local: firma ad-hoc (`codesign -s -`).
+- En CI de release: **certificado autofirmado estable** (creado una vez, guardado como secreto del repo). Gatekeeper sigue sin confiar en él, pero da una identidad de código **constante entre versiones**, de modo que macOS no trata cada actualización como una app nueva: el Llavero no vuelve a pedir permiso para las claves guardadas, ni se pierden las aprobaciones de notificaciones o de ítems en segundo plano. Con firma ad-hoc esas aprobaciones se romperían en cada versión.
+- Hardened Runtime activado igualmente.
+
+**Primera instalación (documentada en el README):**
+1. Descargar el zip de la release y mover `Bullpen.app` a `/Applications`.
+2. Abrirla: macOS la bloquea por no estar notarizada → Ajustes del Sistema › Privacidad y seguridad › **"Abrir igualmente"** (en macOS 15+ ya no vale clic derecho › Abrir).
+3. Alternativa para quien prefiera terminal: `xattr -dr com.apple.quarantine /Applications/Bullpen.app`.
+4. Opcional: `Bullpen › Instalar herramienta de línea de comandos` crea el enlace `/usr/local/bin/bp`.
+
+Solo hay que hacerlo **una vez**: las actualizaciones posteriores llegan por Sparkle y no vuelven a pasar por Gatekeeper (Sparkle descarga sin atributo de cuarentena).
+
+**Componentes que dependen de la firma:**
+- Daemon de sesiones: en vez de `SMAppService` (pensado para apps con firma de confianza), la app lanza el daemon como **LaunchAgent propio** (`~/Library/LaunchAgents/com.byluismoya.Bullpen.daemon.plist`) o, como alternativa, como proceso hijo desacoplado (`setsid`) que sobrevive al cierre de la app. Se decide en fase 1.
+- Notificaciones, Llavero y WidgetKit funcionan con el certificado autofirmado estable. El widget queda fuera de la v1.
+
+### 4.5 Actualizaciones automáticas (Sparkle 2)
+
+**Por qué Sparkle**: es el estándar en apps de Mac fuera de la App Store, es open source (MIT), funciona **sin Developer ID** (verifica las actualizaciones con su propia firma EdDSA, independiente de Apple) y evita que el usuario repita el paso de Gatekeeper en cada versión.
+
+**Cómo funciona:**
+
+```
+ tag v0.3.0 ──► CI (macos-15) ──► build universal ──► firma autofirmada ──► zip
+                                                                    │
+                       sign_update (clave EdDSA privada, secreto) ◄─┘
+                                      │
+                    generate_appcast ─┴─► appcast.xml + zip + SHA256SUMS ──► GitHub Release
+                                                                                  │
+ Bullpen.app ── cada 24 h ── GET …/releases/latest/download/appcast.xml ◄─────────┘
+      │  hay versión nueva + firma EdDSA válida
+      └─► diálogo "Bullpen 0.3.0 disponible" (notas de la release) ─► descarga ─► instala ─► reinicia
+```
+
+**Detalles:**
+
+| Aspecto | Definición |
+|---|---|
+| Versión | Sparkle **2.10.x** vía Swift Package Manager (XCFramework universal); `Sparkle.framework` se copia a `Contents/Frameworks` en `build-app.sh` y se firma con la app |
+| Feed | `SUFeedURL = https://github.com/byLuisMoya/Bullpen/releases/latest/download/appcast.xml` (sin servidor propio; GitHub sirve siempre el de la última release) |
+| Firma de updates | Claves EdDSA (ed25519) creadas una vez con `generate_keys`. Pública en `Info.plist` (`SUPublicEDKey`); **privada solo en secretos de GitHub Actions** y copia de seguridad en el Llavero del autor. Si se pierde la privada, los usuarios tendrían que reinstalar a mano |
+| Frecuencia | Comprobación al arrancar y cada 24 h (`SUScheduledCheckInterval = 86400`); el usuario puede desactivarla o pedir "Buscar actualizaciones…" en el menú de la app |
+| Instalación | Por defecto **pregunta** antes de instalar, con las notas de la release (markdown del release de GitHub convertido a HTML). Opción "descargar e instalar automáticamente" en Ajustes |
+| Canales | **Estable** (releases normales) y **beta** (releases marcadas como *pre-release*, con `sparkle:channel="beta"` en el appcast). El usuario elige canal en Ajustes |
+| Deltas | No en la v1 (la app pesará pocos MB). Se pueden añadir después con `generate_appcast` |
+| Versión mínima | `sparkle:minimumSystemVersion = 14.0` en cada item del appcast |
+| Agentes en marcha | Antes de reiniciar, la app avisa de cuántos agentes están trabajando. El daemon **no se reinicia** con la app: la versión nueva se conecta al daemon existente y hace el handoff de sesiones (§4.1) cuando el protocolo cambia. Opción "instalar cuando no haya agentes trabajando" |
+| Privacidad | Sin envío de perfil del sistema (`SUEnableSystemProfiling = NO`); la única petición es descargar el appcast de GitHub |
+| CLI `bp` | Va dentro del bundle, así que se actualiza junto con la app; el enlace de `/usr/local/bin` sigue apuntando al sitio correcto |
+
+**Flujo de release (manual mínimo):**
+1. Subir la versión en `BPCore/Bullpen.swift` y escribir las notas en `CHANGELOG.md`.
+2. `git tag v0.3.0 && git push --tags` (con sufijo `-beta.N` para el canal beta).
+3. El workflow `release.yml` compila, firma, genera el appcast y publica la release. Nada más.
+
+**Pruebas:** un appcast local servido con `python3 -m http.server` y una versión inflada (`9.9.9`) para probar el diálogo, la instalación y que el daemon sobrevive a la actualización, en arm64 e Intel.
+
+**Cuándo:** se implementa al final de la fase 1, en cuanto haya una primera versión que valga la pena actualizar.
 
 ---
 
@@ -609,7 +671,7 @@ bp mcp         (servidor MCP stdio con las mismas operaciones)
 - Claves en Keychain; nunca en ficheros ni logs (redacción en logs).
 - Contenido de issues/tickets/webs tratado como **datos no confiables** al pasarlo a agentes (marcado explícito en el prompt).
 - Confirmaciones para acciones destructivas (rm de worktree, force push).
-- Firmado, notarizado, Sparkle con EdDSA; builds reproducibles razonables.
+- Sin notarización (no hay cuenta de Apple Developer): firma con certificado autofirmado estable, actualizaciones verificadas con EdDSA de Sparkle, `SHA256SUMS.txt` en cada release.
 
 ---
 
@@ -619,7 +681,7 @@ bp mcp         (servidor MCP stdio con las mismas operaciones)
 - **Arte: CC BY 4.0** en `Resources/Habitat/` (permite reutilizarlo citando). Nada de assets comerciales no redistribuibles.
 - Repo público en GitHub desde la fase 0: issues con plantillas (bug / feature / agente nuevo), Discussions, `CONTRIBUTING.md`, `SECURITY.md` (reporte privado), CI visible.
 - Los **perfiles de agente** (`.toml`) son la contribución más fácil: cualquiera puede añadir soporte para un CLI nuevo sin tocar Swift.
-- Releases firmadas y notarizadas desde CI con secretos del repo; checksums publicados; Homebrew cask en `homebrew-cask` oficial cuando haya tracción.
+- Releases **solo en GitHub**, generadas por CI al crear un tag (§4.4 y §4.5); checksums publicados.
 - Sin telemetría por defecto (coherente con open source y privacidad).
 
 ---
@@ -660,13 +722,14 @@ bp mcp         (servidor MCP stdio con las mismas operaciones)
 Estimación para 1 persona a tiempo parcial con ayuda de agentes; ajustable.
 
 ### Fase 0 — Cimientos (2 semanas)
-- Proyecto Xcode + Swift Package de módulos, Universal 2, CI (build/test en arm64 e Intel), firma/notarización automatizadas, Sparkle con canal beta.
+- Proyecto Xcode + Swift Package de módulos, Universal 2, CI (build/test en arm64 e Intel).
 - `BPCore`, `BPPersistence` (esquema inicial + migraciones), logging.
 - Spike técnico: SwiftTerm vs libghostty en Intel (rendimiento + empaquetado universal) → decisión documentada (ADR).
 
 ### Fase 1 — MVP "worktree + agente + estado" (5–6 semanas)
 - Añadir repo, crear/listar/borrar worktree con base ref y guardias básicas.
 - Daemon de sesiones con PTY, terminal en la app, reanudar tras cerrar la app.
+- Sparkle + workflow de release en GitHub (§4.5) al cerrar la fase.
 - Perfiles de Claude Code y Codex (+ Custom). Detección de PATH del login shell.
 - **Prompt inicial** global y por proyecto (sin integraciones aún), con vista previa y variables básicas.
 - StatusEngine v1: hooks de Claude, kqueue de muerte, heurística de CPU/salida.
@@ -718,7 +781,7 @@ bullpen/
 ├── Resources/
 │   ├── Agents/               # perfiles .toml de serie
 │   └── Habitat/              # .aseprite fuente + atlas generados
-├── Tools/                    # fake-agent, scripts de atlas, release, notarización
+├── Tools/                    # fake-agent, scripts de atlas, release
 ├── LICENSE                   # MIT (código) · Resources/Habitat/LICENSE: CC BY 4.0 (arte)
 ├── CONTRIBUTING.md · CODE_OF_CONDUCT.md · SECURITY.md
 ├── docs/
@@ -737,7 +800,8 @@ bullpen/
 | libghostty difícil de compilar universal / API inestable | Retraso | Abstracción `TerminalEngine`; SwiftTerm como base suficiente |
 | Animaciones del Edificio en Intel antiguos | Ventiladores | Core Animation fuera de proceso, 6–8 fps, pausa por oclusión e inactividad, modo reducido |
 | Arte de personajes (tiempo/licencias) | Retraso de fase 2 / no se puede publicar | Solo CC0 o CC BY (redistribuible en repo público); sistema por capas |
-| `SMAppService` y aprobación del usuario | Fricción en onboarding | Fallback: daemon como proceso hijo de la app (sin supervivencia a cierre) |
+| App sin notarizar | Fricción en la primera instalación, desconfianza | Guía clara en README (una sola vez), código abierto y releases reproducibles desde CI, checksums; Sparkle evita repetirlo |
+| Pérdida de la clave EdDSA de Sparkle | Usuarios sin actualizaciones automáticas | Copia de seguridad fuera de GitHub; documentado en `docs/RELEASING.md` |
 | Alcance infinito (Orca tiene cientos de features) | No terminar nunca | Principio "no es un IDE"; criterio de salida por fase; backlog explícito |
 | Uso de marcas de terceros (logos de Claude, OpenAI…) | Legal | Colores/accesorios genéricos, sin logos |
 | Seguridad del socket/CLI | Escalada local | Permisos 0600, scopes por sesión, validación de rutas |
@@ -758,6 +822,8 @@ bullpen/
 | Agentes del MVP | Claude Code + Codex |
 | macOS mínimo | 14 Sonoma |
 | Prompt inicial | Por proyecto (más global), se envía al crear cada worktree; se combina con la plantilla de Linear/GitHub (§6.5) |
+| Distribución | Solo GitHub Releases, sin cuenta de Apple Developer ni notarización; actualizaciones con Sparkle (§4.4, §4.5) |
+| Identificador | `com.byluismoya.Bullpen` |
 | Integraciones | Cada proyecto se engancha a Linear y/o GitHub como fuentes de tareas (§11.5) |
 | Editor | **Solo visor**; se trabaja con la terminal integrada y los agentes |
 | SSH remoto y app móvil | **Fuera** de la v1 |

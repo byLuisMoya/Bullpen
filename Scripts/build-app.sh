@@ -28,7 +28,7 @@ lipo_product Bullpen "$APP/Contents/MacOS/Bullpen"
 lipo_product bp "$OUT/bp"
 sed "s/__VERSION__/$VERSION/g" Resources/Info.plist > "$APP/Contents/Info.plist"
 
-# Ad-hoc signature for local runs. Developer ID signing + notarization come later (PLAN §4.4).
+# No Apple Developer ID: ad-hoc locally, stable self-signed certificate in release CI (PLAN §4.4).
 codesign --force --sign - --options runtime "$APP"
 codesign --force --sign - --options runtime "$OUT/bp"
 

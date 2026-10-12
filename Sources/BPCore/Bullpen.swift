@@ -3,7 +3,7 @@ import os
 
 public enum Bullpen {
     public static let version = "0.0.1"
-    public static let bundleIdentifier = "com.luismoya.Bullpen"
+    public static let bundleIdentifier = "com.byluismoya.Bullpen"
 
     /// `~/Library/Application Support/Bullpen`
     public static func supportDirectory(fileManager: FileManager = .default) throws -> URL {

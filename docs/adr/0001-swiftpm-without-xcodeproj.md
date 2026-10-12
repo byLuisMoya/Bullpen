@@ -16,5 +16,6 @@ hay Command Line Tools.
 ## Consecuencias
 - Con solo Command Line Tools hay que fijar el SDK 26.x (el 27 usa macros de SwiftUI cuyo plugin
   solo trae Xcode) y añadir la ruta del plugin de Swift Testing. Lo hace `Scripts/env.sh`.
-- Para firma Developer ID, notarización y extensiones (widget, LaunchAgent con `SMAppService`)
-  puede hacer falta volver a un proyecto Xcode (generado con XcodeGen/Tuist). Se revisará en fase 1.
+- No hay firma Developer ID ni notarización (distribución solo por GitHub, ver PLAN §4.4), así que no
+  hace falta un proyecto Xcode para firmar. Si más adelante se necesitan extensiones (widget), se
+  generaría uno con XcodeGen.
