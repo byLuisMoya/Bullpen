@@ -1,3 +1,4 @@
+import BPAgents
 import BPCore
 import BPSessions
 import Darwin
@@ -20,12 +21,40 @@ final class SessionManager {
     private(set) var isConnected = false
     /// Shown when a daemon from another version is still running sessions.
     private(set) var warning: String?
+    /// Latest known state of every bpd session, refreshed by polling and by hook broadcasts.
+    private(set) var infos: [String: SessionInfo] = [:]
+    /// Agent hooks point at the `bp` executable that ships next to the app.
+    let hooks: AgentHooks
 
     @ObservationIgnored private var client: SessionClient?
     @ObservationIgnored private var handlers: [String: WeakHandler] = [:]
     @ObservationIgnored private let log = Logger.bullpen("sessions")
 
     static func sessionID(for worktree: Worktree) -> String { "wt-\(worktree.id.uuidString)" }
+
+    init() {
+        let dir = Bundle.main.executableURL?.deletingLastPathComponent() ?? URL(fileURLWithPath: "/usr/local/bin")
+        hooks = AgentHooks.standard(bpPath: dir.appendingPathComponent("bp").path)
+        do {
+            try hooks.writeClaudeSettings()
+        } catch {
+            log.error("Cannot write Claude hook settings: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    func status(for worktree: Worktree) -> AgentStatus {
+        StatusEngine.status(for: infos[Self.sessionID(for: worktree)], profile: AgentProfile.named(worktree.agentProfileID))
+    }
+
+    /// Keeps `infos` fresh (foreground process and output activity are only visible through `list`).
+    func startPolling() async {
+        while !Task.isCancelled {
+            if let client = try? await connection(), let sessions = try? await client.list() {
+                infos = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+            }
+            try? await Task.sleep(for: .milliseconds(1500))
+        }
+    }
 
     // MARK: Connection
 
@@ -103,7 +132,11 @@ final class SessionManager {
         switch event {
         case let .snapshot(id, data): handlers[id]?.value?.sessionSnapshot(data)
         case let .output(id, data): handlers[id]?.value?.sessionOutput(data)
-        case let .exited(id, status): handlers[id]?.value?.sessionExited(status: status)
+        case let .exited(id, status):
+            infos[id]?.exitStatus = status
+            handlers[id]?.value?.sessionExited(status: status)
+        case let .activity(info):
+            infos[info.id] = info
         default: break
         }
     }
@@ -120,6 +153,17 @@ final class SessionManager {
         }
         _ = try await client.create(SessionSpec(id: id, cwd: worktree.path, cols: cols, rows: rows))
         return id
+    }
+
+    /// Starts the worktree's terminal running `command` (an agent) instead of a plain shell.
+    func startAgent(for worktree: Worktree, command: String) async throws {
+        let client = try await connection()
+        let id = Self.sessionID(for: worktree)
+        if let existing = try await client.list().first(where: { $0.id == id }) {
+            guard !existing.isRunning else { throw SessionError(message: "El worktree ya tiene una terminal en marcha") }
+            try await client.remove(id)
+        }
+        infos[id] = try await client.create(SessionSpec(id: id, cwd: worktree.path, command: command))
     }
 
     func attach(_ id: String, handler: SessionOutputHandler) async throws {

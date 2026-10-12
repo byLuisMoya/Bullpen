@@ -6,7 +6,9 @@ import SwiftUI
 struct ContentView: View {
     @Environment(BuildingStore.self) private var store
     @Environment(SessionManager.self) private var sessions
+    @Environment(AttentionCenter.self) private var attention
     @State private var selection: UUID?
+    @State private var editingPromptFor: Project?
     @State private var isImporting = false
     @State private var newWorktreeFor: Project?
     @State private var pendingRemoval: PendingRemoval?
@@ -18,7 +20,7 @@ struct ContentView: View {
                 ForEach(store.offices) { office in
                     Section {
                         ForEach(office.worktrees) { worktree in
-                            Label(worktree.branch, systemImage: "person.fill")
+                            WorktreeRow(worktree: worktree, status: attention.statuses[worktree.id])
                                 .tag(worktree.id)
                                 .contextMenu {
                                     Button("Mostrar en Finder") {
@@ -31,6 +33,10 @@ struct ContentView: View {
                         }
                     } header: {
                         OfficeHeader(office: office) { newWorktreeFor = office.project }
+                            .contextMenu {
+                                Button("Nuevo worktree…") { newWorktreeFor = office.project }
+                                Button("Prompt inicial…") { editingPromptFor = office.project }
+                            }
                     }
                 }
             }
@@ -60,8 +66,12 @@ struct ContentView: View {
             }
         }
         .sheet(item: $newWorktreeFor) { project in
-            NewWorktreeSheet(project: project)
+            NewWorktreeSheet(project: project) { selection = $0.id }
         }
+        .sheet(item: $editingPromptFor) { project in
+            ProjectPromptSheet(project: project)
+        }
+        .onChange(of: selection) { _, id in attention.focusedWorktree = id }
         .alert(
             "¿Eliminar \(pendingRemoval?.worktree.branch ?? "")?",
             isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }),
@@ -141,47 +151,5 @@ private struct OfficeHeader: View {
         case .singleDesk: "lightbulb.fill"
         case .allOn: "lightbulb.2.fill"
         }
-    }
-}
-
-private struct NewWorktreeSheet: View {
-    let project: Project
-    @Environment(BuildingStore.self) private var store
-    @Environment(\.dismiss) private var dismiss
-    @State private var branch = ""
-    @State private var baseRef = ""
-    @State private var isCreating = false
-
-    var body: some View {
-        Form {
-            Section("Nuevo worktree en \(project.name)") {
-                TextField("Rama", text: $branch, prompt: Text("luis/fix-login"))
-                TextField("Base", text: $baseRef, prompt: Text("main"))
-            }
-            if !branch.isEmpty {
-                Text(WorktreeLocation.path(project: project.name, branch: branch).path)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-        }
-        .formStyle(.grouped)
-        .frame(width: 440)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Cancelar") { dismiss() }
-            }
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Crear") {
-                    isCreating = true
-                    Task {
-                        if await store.createWorktree(in: project, branch: branch, baseRef: baseRef) { dismiss() }
-                        isCreating = false
-                    }
-                }
-                .disabled(branch.isEmpty || baseRef.isEmpty || isCreating)
-            }
-        }
-        .onAppear { baseRef = project.defaultBaseRef ?? "main" }
     }
 }

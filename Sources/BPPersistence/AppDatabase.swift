@@ -48,6 +48,13 @@ public final class AppDatabase: Sendable {
                 t.column("archivedAt", .datetime)
             }
         }
+        migrator.registerMigration("v2-agents") { db in
+            try db.alter(table: "worktree") { t in
+                t.add(column: "agentProfileID", .text)
+                t.add(column: "agentModel", .text)
+                t.add(column: "taskDescription", .text)
+            }
+        }
         return migrator
     }
 }

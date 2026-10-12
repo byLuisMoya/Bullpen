@@ -1,0 +1,68 @@
+import BPAgents
+import BPCore
+import SwiftUI
+
+struct WorktreeRow: View {
+    let worktree: Worktree
+    let status: AgentStatus?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: status?.state.symbol ?? "circle.dotted")
+                .foregroundStyle(status?.state.color ?? .secondary)
+                .symbolEffect(.pulse, isActive: status?.state == .needsYou)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(worktree.branch).lineLimit(1)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }
+        .help(status.map { "\($0.state.label) · confianza \($0.confidence)" } ?? "")
+    }
+
+    private var subtitle: String {
+        let agent = AgentProfile.named(worktree.agentProfileID)?.name ?? "Terminal"
+        let state = status.map { $0.detail ?? $0.state.label } ?? "—"
+        return "\(agent) · \(state)"
+    }
+}
+
+extension AgentState {
+    var label: String {
+        switch self {
+        case .starting: "arrancando"
+        case .thinking: "pensando"
+        case .working: "trabajando"
+        case .needsYou: "te necesita"
+        case .done: "listo para revisar"
+        case .idle: "en espera"
+        case .error: "error"
+        case .dead: "parado"
+        case .unknown: "estado desconocido"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .starting: "circle.dotted"
+        case .thinking: "ellipsis.circle"
+        case .working: "gearshape.fill"
+        case .needsYou: "hand.raised.fill"
+        case .done: "checkmark.circle.fill"
+        case .idle: "moon.zzz"
+        case .error: "exclamationmark.triangle.fill"
+        case .dead: "chair"
+        case .unknown: "questionmark.circle"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .needsYou: .orange
+        case .error: .red
+        case .done: .green
+        case .working, .thinking, .starting: .blue
+        case .idle, .dead, .unknown: .secondary
+        }
+    }
+}

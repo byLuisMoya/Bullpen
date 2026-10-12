@@ -31,6 +31,16 @@ import Testing
         #expect(try db.offices().isEmpty)
     }
 
+    @Test func agentFieldsRoundTrip() throws {
+        let db = try AppDatabase.inMemory()
+        let p = Project(name: "a", path: "/tmp/a")
+        try db.save(p)
+        try db.save(Worktree(projectID: p.id, branch: "x", path: "/tmp/wt/x", baseRef: "main",
+                             agentProfileID: "claude", agentModel: "opus", taskDescription: "Arregla el login"))
+        let wt = try #require(try db.offices().first?.worktrees.first)
+        #expect(wt.agentProfileID == "claude" && wt.agentModel == "opus" && wt.taskDescription == "Arregla el login")
+    }
+
     @Test func initialPromptRoundTrips() throws {
         let db = try AppDatabase.inMemory()
         try db.save(Project(name: "a", path: "/tmp/a", initialPrompt: "Lee CLAUDE.md"))

@@ -40,6 +40,11 @@ public struct Worktree: Identifiable, Hashable, Codable, Sendable {
     public var baseRef: String
     public var createdAt: Date
     public var archivedAt: Date?
+    /// Agent launched in this worktree (`claude`, `codex`), nil for a plain terminal.
+    public var agentProfileID: String?
+    public var agentModel: String?
+    /// What the user asked for when creating it.
+    public var taskDescription: String?
 
     public init(
         id: UUID = UUID(),
@@ -48,7 +53,10 @@ public struct Worktree: Identifiable, Hashable, Codable, Sendable {
         path: String,
         baseRef: String,
         createdAt: Date = Date(),
-        archivedAt: Date? = nil
+        archivedAt: Date? = nil,
+        agentProfileID: String? = nil,
+        agentModel: String? = nil,
+        taskDescription: String? = nil
     ) {
         self.id = id
         self.projectID = projectID
@@ -57,6 +65,9 @@ public struct Worktree: Identifiable, Hashable, Codable, Sendable {
         self.baseRef = baseRef
         self.createdAt = createdAt
         self.archivedAt = archivedAt
+        self.agentProfileID = agentProfileID
+        self.agentModel = agentModel
+        self.taskDescription = taskDescription
     }
 
     public var isActive: Bool { archivedAt == nil }

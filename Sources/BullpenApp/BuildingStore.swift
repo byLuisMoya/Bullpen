@@ -54,21 +54,35 @@ final class BuildingStore {
 
     // MARK: Worktrees
 
-    func createWorktree(in project: Project, branch: String, baseRef: String) async -> Bool {
-        guard let database else { return false }
+    func updateProject(_ project: Project) {
+        do {
+            try database?.save(project)
+        } catch {
+            report(error, "Update project failed")
+        }
+    }
+
+    /// Creates the git worktree and records it. Returns nil (and sets `errorMessage`) on failure.
+    func createWorktree(in project: Project, branch: String, baseRef: String,
+                        agent: String?, model: String?, task: String?) async -> Worktree? {
+        guard let database else { return nil }
         do {
             let repo = try await Repository.open(at: URL(fileURLWithPath: project.path))
             guard await repo.isValidBranchName(branch) else {
                 errorMessage = "“\(branch)” no es un nombre de rama válido."
-                return false
+                return nil
             }
             let path = WorktreeLocation.path(project: project.name, branch: branch)
             try await repo.addWorktree(branch: branch, at: path, baseRef: baseRef)
-            try database.save(Worktree(projectID: project.id, branch: branch, path: path.path, baseRef: baseRef))
-            return true
+            let worktree = Worktree(
+                projectID: project.id, branch: branch, path: path.path, baseRef: baseRef,
+                agentProfileID: agent, agentModel: model?.nilIfBlank, taskDescription: task?.nilIfBlank
+            )
+            try database.save(worktree)
+            return worktree
         } catch {
             report(error, "Create worktree failed")
-            return false
+            return nil
         }
     }
 
@@ -104,6 +118,13 @@ final class BuildingStore {
     private func report(_ error: Error, _ context: String) {
         log.error("\(context, privacy: .public): \(error.localizedDescription, privacy: .public)")
         errorMessage = error.localizedDescription
+    }
+}
+
+extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
