@@ -1,3 +1,4 @@
+import BPCore
 import BPSessions
 import Foundation
 
@@ -35,7 +36,7 @@ public struct MCPServer: Sendable {
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": [:]],
                 "serverInfo": ["name": "bullpen", "version": version],
-                "instructions": "Bullpen manages git worktrees, each with its own terminal and coding agent. Use list_worktrees first; refer to worktrees by branch name. current_worktree tells you which one you are in. To delegate work, create_worktree with an agent and a task (or pick an existing worktree), then wait_for_worktree until it stops, or use ask_worktree to send a message and get the answer back. Only remove worktrees the user asked you to remove.",
+                "instructions": "Bullpen manages git worktrees, each with its own terminal and coding agent. Use list_worktrees first; refer to worktrees by branch name. current_worktree tells you which one you are in. To delegate work, create_worktree with an agent and a task (or pick an existing worktree), then wait_for_worktree until it stops, or use ask_worktree to send a message and get the answer back. send_message types into the other agent's terminal right away; post_message leaves it in its mailbox and Bullpen delivers it when that agent finishes its turn (use it while the other agent is busy, or to tell the user something with to=\"user\"). Each project has a shared task board: create_task, list_tasks, claim_task before starting one, complete_task with its result (the creator gets it by mailbox). Check read_inbox when you start and between tasks. Only remove worktrees the user asked you to remove.",
             ])
         case "ping":
             return reply(id: id, result: [:])
@@ -58,6 +59,10 @@ public struct MCPServer: Sendable {
     func call(_ name: String, _ args: [String: Any]) async throws -> String {
         func string(_ key: String) throws -> String {
             guard let value = args[key] as? String, !value.isEmpty else { throw ControlError("Falta «\(key)».") }
+            return value
+        }
+        func number() throws -> Int {
+            guard let value = args["number"] as? Int else { throw ControlError("Falta «number» (el número de la tarea, sin #).") }
             return value
         }
         switch name {
@@ -85,6 +90,37 @@ public struct MCPServer: Sendable {
                                          timeout: TimeInterval(args["timeout"] as? Int ?? 1800))
         case "read_terminal":
             return try service.readTerminal(try string("worktree"), lines: args["lines"] as? Int ?? 60)
+        case "post_message":
+            let message = try service.post(to: try string("to"), text: try string("text"))
+            return message.toWorktree == nil
+                ? "Enviado al usuario: lo verá en Bullpen con un aviso."
+                : "En su buzón: se le entrega en cuanto termine su turno, sin interrumpirle."
+        case "read_inbox":
+            let messages = try service.readInbox()
+            if messages.isEmpty { return "No tienes mensajes nuevos." }
+            return messages.map { "[\($0.fromLabel)] \($0.text)" }.joined(separator: "\n\n")
+        case "create_task":
+            let task = try service.createTask(title: try string("title"), detail: args["detail"] as? String, project: args["project"] as? String)
+            return "Tarea #\(task.number) creada en el tablero."
+        case "list_tasks":
+            let status = try (args["status"] as? String).map { raw in
+                guard let status = AgentTask.Status(rawValue: raw) else { throw ControlError("Estado desconocido «\(raw)»: open, claimed o done.") }
+                return status
+            }
+            let tasks = try service.tasks(project: args["project"] as? String, status: status)
+            return try json(tasks.map { task in
+                var row = ["number": "\(task.number)", "title": task.title, "status": task.status.rawValue, "createdBy": task.createdByLabel]
+                row["detail"] = task.detail
+                row["assignee"] = task.assigneeLabel
+                row["result"] = task.result
+                return row
+            })
+        case "claim_task":
+            let task = try service.claimTask(try number(), project: args["project"] as? String)
+            return "Tarea #\(task.number) «\(task.title)» es tuya.\(task.detail.map { "\n\n\($0)" } ?? "")"
+        case "complete_task":
+            let task = try service.completeTask(try number(), result: try string("result"), project: args["project"] as? String)
+            return "Tarea #\(task.number) hecha. Quien la creó recibe el resultado en su buzón."
         case "remove_worktree":
             try await service.remove(try string("worktree"), force: args["force"] as? Bool ?? false)
             return "Eliminado (la rama se conserva)."
@@ -165,6 +201,18 @@ public struct MCPServer: Sendable {
         tool("browser_eval", "Run JavaScript in the page and return its result (as JSON text).",
              ["script": ["type": "string"], "worktree": ["type": "string"]], ["script"]),
         tool("browser_console", "Console messages and JavaScript errors from the page since it was opened.", ["worktree": ["type": "string"]], []),
+        tool("post_message", "Leave a message in another worktree's mailbox (or the user's, with to=\"user\"). Unlike send_message it never interrupts: Bullpen types it in when that agent finishes its turn.",
+             ["to": ["type": "string", "description": "Branch name or id, or \"user\""], "text": ["type": "string"]], ["to", "text"]),
+        tool("read_inbox", "Your unread mailbox messages (from other agents, the user, or finished tasks you created). Marks them read.", [:], []),
+        tool("create_task", "Add a task to the project's shared board for any agent to claim. Returns its number.",
+             ["title": ["type": "string"], "detail": ["type": "string", "description": "What done looks like, files, constraints"],
+              "project": ["type": "string", "description": "Default: yours"]], ["title"]),
+        tool("list_tasks", "The project's task board: number, title, status (open, claimed, done), who has it and results.",
+             ["status": ["type": "string", "enum": ["open", "claimed", "done"]], "project": ["type": "string"]], []),
+        tool("claim_task", "Take an open task before working on it, so no other agent does it too. Fails if someone else has it.",
+             ["number": ["type": "integer"], "project": ["type": "string"]], ["number"]),
+        tool("complete_task", "Mark your task done with its result (what changed, branch, PR…); whoever created it gets it by mailbox.",
+             ["number": ["type": "integer"], "result": ["type": "string"], "project": ["type": "string"]], ["number", "result"]),
         tool("read_terminal", "Last lines printed in a worktree's terminal, as plain text.",
              ["worktree": ["type": "string"], "lines": ["type": "integer", "default": 60]], ["worktree"]),
         tool("remove_worktree", "Remove a worktree's folder (the branch is kept). Refuses if work would be lost unless force is true.",

@@ -15,14 +15,14 @@ with a 2D office per project where every worktree is a character you can watch w
 - **Worktrees per task**, each with its own terminal that keeps running when the app is closed.
 - **Agents**: Claude Code, Codex, Gemini CLI, OpenCode, Cursor, Copilot, Aider, Goose, Amp or your own
   ([docs/agents.md](docs/agents.md)), with a per-project initial prompt.
-- **Live state** (working, needs you, done…) from the agents' hooks, with notifications.
+- **Live state** (working, needs you, done…) from the agents' hooks, with notifications and a soft sound of your choice for each.
 - **The building**: one pixel-art office per project, one person per worktree.
 - **Branch and PR state** like Orca; warnings when worktrees overlap or would conflict.
 - **Review**: diff with line comments sent to the agent, file viewer, the agent's log, PR creation.
 - **`.bullpen.toml`**: setup, per-worktree ports and env, teardown and verify ([docs/bullpen-toml.md](docs/bullpen-toml.md)).
 - **Compare agents** on the same task, with an optional judge model.
 - **Tickets**: start from GitHub issues or Linear; usage and cost estimates; limits.
-- **`bp` CLI and `bp mcp`** so agents can drive Bullpen too.
+- **`bp` CLI and `bp mcp`** so agents can drive Bullpen too, and coordinate: a mailbox that never interrupts, and a shared task board per project.
 
 Try it without spending tokens: `make demo` (and `make demo-stop` to remove it).
 

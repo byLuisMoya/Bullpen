@@ -8,7 +8,7 @@ struct WorktreePanel: View {
     @Environment(ReviewNotes.self) private var notes
     @AppStorage("worktreePanel.tab") private var tab = ProcessInfo.processInfo.environment["BULLPEN_SNAPSHOT_TAB"] ?? Tab.changes.rawValue
 
-    enum Tab: String { case files, changes, log, compare }
+    enum Tab: String { case files, changes, log, team, compare }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,6 +16,7 @@ struct WorktreePanel: View {
                 Text("Ficheros").tag(Tab.files.rawValue)
                 Text(changesLabel).tag(Tab.changes.rawValue)
                 Text("Bitácora").tag(Tab.log.rawValue)
+                Text("Equipo").tag(Tab.team.rawValue)
                 if worktree.runID != nil { Text("Comparar").tag(Tab.compare.rawValue) }
             }
             .pickerStyle(.segmented)
@@ -27,6 +28,7 @@ struct WorktreePanel: View {
                 case .files: FilesView(worktree: worktree, project: project)
                 case .changes: ReviewView(worktree: worktree, project: project)
                 case .log: SessionLogView(worktree: worktree)
+                case .team: CoordinationView(worktree: worktree, project: project)
                 case .compare:
                     if let runID = worktree.runID { RunCompareView(runID: runID, project: project) } else { ReviewView(worktree: worktree, project: project) }
                 }

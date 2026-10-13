@@ -95,10 +95,7 @@ final class ReviewCenter {
             let head = try await workspace.headCommit(of: worktree)
             let reviewers = store.offices.flatMap(\.worktrees).compactMap(\.review).filter { $0.of == worktree.id }
             if automatic {
-                // Never twice for the same commit, nor for the commit of fixes accepted from a review,
-                // even when that reviewer has been closed since.
-                let ever = try workspace.database.allWorktrees().compactMap(\.review).filter { $0.of == worktree.id }
-                if ever.contains(where: { $0.commit == head || $0.appliedCommit == head }) { return }
+                if try workspace.wasReviewed(worktree, at: head) { return }
                 if reviewers.contains(where: { $0.phase == .reviewing || $0.phase == .summarizing }) { return }
             }
             var chosen = kind ?? .quick
@@ -108,6 +105,9 @@ final class ReviewCenter {
             }
             try await workspace.createReview(of: worktree, in: project, kind: chosen, pullRequest: pullRequest,
                                              prompt: Self.prompt(chosen, worktree: worktree))
+        } catch where automatic {
+            BackgroundNotice.post(id: "review-\(worktree.id)", title: "No se pudo lanzar la revisión de \(worktree.branch)",
+                                  body: error.localizedDescription, failure: true)
         } catch {
             store.errorMessage = "No se pudo lanzar la revisión de \(worktree.branch): \(error.localizedDescription)"
         }

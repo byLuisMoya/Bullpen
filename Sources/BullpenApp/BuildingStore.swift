@@ -20,6 +20,8 @@ final class BuildingStore {
     private(set) var offices: [Office] = []
     /// Last error to show to the user; cleared when dismissed.
     var errorMessage: String?
+    /// Review checkouts no reviewer points at that still have changes: the user decides.
+    var orphanReviews: [URL] = []
     private var database: AppDatabase?
     private let log = Logger.bullpen("store")
 
@@ -51,6 +53,28 @@ final class BuildingStore {
         } catch {
             report(error, "Database failed")
         }
+    }
+
+    /// At launch: clean review checkouts left behind go; the ones with changes wait for the user.
+    func cleanOrphanReviews() async {
+        guard let workspace else { return }
+        do {
+            let orphans = try await workspace.cleanOrphanReviews()
+            if !orphans.removed.isEmpty {
+                log.info("Removed orphan review checkouts: \(orphans.removed.joined(separator: ", "), privacy: .public)")
+            }
+            orphanReviews = orphans.withChanges
+        } catch {
+            log.error("Orphan review cleanup failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    func removeOrphanReviews() async {
+        guard let workspace else { return }
+        for dir in orphanReviews {
+            do { try await workspace.removeOrphanReview(dir) } catch { report(error, "Remove orphan review failed") }
+        }
+        orphanReviews = []
     }
 
     // MARK: Projects
@@ -107,14 +131,19 @@ final class BuildingStore {
         reloadAutomations()
     }
 
-    /// Runs it now; nil (and `errorMessage`) if creating its worktree failed.
+    /// Runs it now; nil if creating its worktree failed (`errorMessage` when the user asked for
+    /// it, a notification when it ran on its schedule).
     @discardableResult
-    func run(_ automation: Automation) async -> Worktree? {
+    func run(_ automation: Automation, scheduled: Bool = false) async -> Worktree? {
         guard let workspace else { return nil }
         defer { reloadAutomations() }
         do {
             return try await workspace.run(automation, defaultAgent: PrimaryAgent.id,
                                            globalPrompt: UserDefaults.standard.string(forKey: "globalInitialPrompt"))
+        } catch where scheduled {
+            BackgroundNotice.post(id: "automation-\(automation.id)", title: "La automatización «\(automation.name)» ha fallado",
+                                  body: error.localizedDescription, failure: true)
+            return nil
         } catch {
             report(error, "Automation failed")
             return nil
@@ -126,14 +155,9 @@ final class BuildingStore {
         while !Task.isCancelled {
             reloadAutomations()
             for automation in automations where automation.isDue(at: Date()) {
-                guard let worktree = await run(automation) else { continue }
-                let content = UNMutableNotificationContent()
-                content.title = "Automatización «\(automation.name)»"
-                content.body = "Worktree \(worktree.branch) creado con su tarea."
-                let request = UNNotificationRequest(identifier: "automation-\(automation.id)", content: content, trigger: nil)
-                if await UNUserNotificationCenter.current().notificationSettings().authorizationStatus == .authorized {
-                    try? await UNUserNotificationCenter.current().add(request)
-                }
+                guard let worktree = await run(automation, scheduled: true) else { continue }
+                BackgroundNotice.post(id: "automation-\(automation.id)", title: "Automatización «\(automation.name)»",
+                                      body: "Worktree \(worktree.branch) creado con su tarea.")
             }
             try? await Task.sleep(for: .seconds(30))
         }

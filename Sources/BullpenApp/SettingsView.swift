@@ -12,6 +12,7 @@ struct SettingsView: View {
             GeneralSettings().tabItem { Label("General", systemImage: "gearshape") }
             PromptSettings().tabItem { Label("Prompts", systemImage: "text.bubble") }
             ModelSettings().tabItem { Label("Modelos", systemImage: "cpu") }
+            NoticeSettings().tabItem { Label("Avisos", systemImage: "bell.badge") }
             LimitSettings().tabItem { Label("Límites", systemImage: "gauge.with.dots.needle.33percent") }
             AutomationSettings().tabItem { Label("Automatizaciones", systemImage: "clock.badge.checkmark") }
             OfficeSettings().tabItem { Label("Oficinas", systemImage: "building.2") }
@@ -19,7 +20,7 @@ struct SettingsView: View {
             IntegrationSettings().tabItem { Label("Integraciones", systemImage: "link") }
             CommandLineSettings().tabItem { Label("Terminal", systemImage: "terminal") }
         }
-        .frame(width: 640, height: 520)
+        .frame(width: 720, height: 520)
     }
 }
 
@@ -424,6 +425,62 @@ private struct GeneralSettings: View {
                 agentsVersion += 1
                 primaryAgent = saved.id
             }
+        }
+    }
+}
+
+/// The sound for each thing an agent can tell you, and how loud.
+private struct NoticeSettings: View {
+    @AppStorage(AlertSounds.volumeKey) private var volume = 0.6
+    @AppStorage(AlertSounds.whileLookingKey) private var whileLooking = false
+
+    var body: some View {
+        Form {
+            Section {
+                ForEach(AlertSounds.Event.allCases) { event in
+                    SoundPicker(event: event)
+                }
+            } header: {
+                Text("Sonidos")
+            } footer: {
+                Text("Suenan aunque las notificaciones de macOS estén desactivadas. Varios avisos a la vez suenan una sola vez.")
+            }
+            Section {
+                HStack {
+                    Image(systemName: "speaker.fill").foregroundStyle(.secondary)
+                    Slider(value: $volume, in: 0.05...1) { editing in
+                        if !editing { AlertSounds.preview(AlertSounds.sound(for: .needsYou)) }
+                    }
+                    Image(systemName: "speaker.wave.3.fill").foregroundStyle(.secondary)
+                }
+                Toggle("Sonar también en el worktree que estás mirando", isOn: $whileLooking)
+            } header: {
+                Text("Volumen")
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private struct SoundPicker: View {
+    let event: AlertSounds.Event
+    @AppStorage private var sound: String
+
+    init(event: AlertSounds.Event) {
+        self.event = event
+        _sound = AppStorage(wrappedValue: event.standard, event.key)
+    }
+
+    var body: some View {
+        HStack {
+            Picker(event.title, selection: $sound) {
+                ForEach(AlertSounds.choices, id: \.id) { Text($0.name).tag($0.id) }
+            }
+            .onChange(of: sound) { _, new in AlertSounds.preview(new) }
+            Button { AlertSounds.preview(sound) } label: { Image(systemName: "play.fill") }
+                .buttonStyle(.borderless)
+                .disabled(sound.isEmpty)
+                .help("Escuchar")
         }
     }
 }

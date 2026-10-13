@@ -103,11 +103,48 @@ public final class AppDatabase: Sendable {
             }
             try db.alter(table: "worktree") { t in t.add(column: "review", .text) }
         }
+        migrator.registerMigration("v12-coordination") { db in
+            try db.create(table: "agentMessage") { t in
+                t.primaryKey("id", .blob)
+                t.column("projectID", .blob).notNull().indexed().references("project", onDelete: .cascade)
+                t.column("toWorktree", .blob).indexed()
+                t.column("fromWorktree", .blob)
+                t.column("fromLabel", .text).notNull()
+                t.column("text", .text).notNull()
+                t.column("createdAt", .datetime).notNull()
+                t.column("deliveredAt", .datetime)
+                t.column("readAt", .datetime)
+            }
+            try db.create(table: "agentTask") { t in
+                t.primaryKey("id", .blob)
+                t.column("projectID", .blob).notNull().references("project", onDelete: .cascade)
+                t.column("number", .integer).notNull()
+                t.column("title", .text).notNull()
+                t.column("detail", .text)
+                t.column("status", .text).notNull()
+                t.column("createdBy", .blob)
+                t.column("createdByLabel", .text).notNull()
+                t.column("assignee", .blob)
+                t.column("assigneeLabel", .text)
+                t.column("result", .text)
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull()
+                t.uniqueKey(["projectID", "number"])
+            }
+        }
         return migrator
     }
 }
 
 // MARK: - Projects
+
+extension AgentMessage: FetchableRecord, PersistableRecord {
+    public static let databaseTableName = "agentMessage"
+}
+
+extension AgentTask: FetchableRecord, PersistableRecord {
+    public static let databaseTableName = "agentTask"
+}
 
 extension Automation: FetchableRecord, PersistableRecord {
     public static let databaseTableName = "automation"
@@ -123,6 +160,15 @@ extension Run: FetchableRecord, PersistableRecord {
 
 extension Worktree: FetchableRecord, PersistableRecord {
     public static let databaseTableName = "worktree"
+}
+
+public enum DatabaseTaskError: Error, LocalizedError, Equatable {
+    case notFound(Int)
+    public var errorDescription: String? {
+        switch self {
+        case let .notFound(number): "No hay ninguna tarea #\(number) en este proyecto."
+        }
+    }
 }
 
 /// A project with its active worktrees: one floor of the building.
@@ -174,6 +220,80 @@ public extension AppDatabase {
 
     func deleteProject(id: UUID) throws {
         _ = try writer.write { try Project.deleteOne($0, key: id) }
+    }
+
+    // MARK: Coordination
+
+    func save(_ message: AgentMessage) throws {
+        try writer.write { try message.save($0) }
+    }
+
+    /// A worktree's mailbox (nil: the user's) in a project, oldest first.
+    func messages(to worktree: UUID?, unreadOnly: Bool = false) throws -> [AgentMessage] {
+        try writer.read { db in
+            var request = AgentMessage.filter(Column("toWorktree") == worktree)
+            if unreadOnly { request = request.filter(Column("readAt") == nil) }
+            return try request.order(Column("createdAt")).fetchAll(db)
+        }
+    }
+
+    /// Everything a worktree sent or received, oldest first.
+    func conversation(of worktree: UUID) throws -> [AgentMessage] {
+        try writer.read { db in
+            try AgentMessage.filter(Column("toWorktree") == worktree || Column("fromWorktree") == worktree)
+                .order(Column("createdAt")).fetchAll(db)
+        }
+    }
+
+    /// Messages still waiting to reach their recipient.
+    func undeliveredMessages() throws -> [AgentMessage] {
+        try writer.read { try AgentMessage.filter(Column("deliveredAt") == nil).order(Column("createdAt")).fetchAll($0) }
+    }
+
+    /// Marks messages delivered (and, with `read`, read).
+    func markMessages(_ ids: [UUID], read: Bool = false) throws {
+        guard !ids.isEmpty else { return }
+        try writer.write { db in
+            let now = Date()
+            for id in ids {
+                guard var message = try AgentMessage.fetchOne(db, key: id) else { continue }
+                message.deliveredAt = message.deliveredAt ?? now
+                if read { message.readAt = message.readAt ?? now }
+                try message.save(db)
+            }
+        }
+    }
+
+    /// Adds a task to its project's board with the next number.
+    func createTask(_ task: AgentTask) throws -> AgentTask {
+        try writer.write { db in
+            var task = task
+            let last = try Int.fetchOne(db, sql: "SELECT MAX(number) FROM agentTask WHERE projectID = ?", arguments: [task.projectID]) ?? 0
+            task.number = last + 1
+            try task.insert(db)
+            return task
+        }
+    }
+
+    func tasks(project: UUID, status: AgentTask.Status? = nil) throws -> [AgentTask] {
+        try writer.read { db in
+            var request = AgentTask.filter(Column("projectID") == project)
+            if let status { request = request.filter(Column("status") == status.rawValue) }
+            return try request.order(Column("number")).fetchAll(db)
+        }
+    }
+
+    /// Changes one task in a single transaction: `change` sees the current row and may refuse.
+    func updateTask(project: UUID, number: Int, _ change: (inout AgentTask) throws -> Void) throws -> AgentTask {
+        try writer.write { db in
+            guard var task = try AgentTask.filter(Column("projectID") == project && Column("number") == number).fetchOne(db) else {
+                throw DatabaseTaskError.notFound(number)
+            }
+            try change(&task)
+            task.updatedAt = Date()
+            try task.save(db)
+            return task
+        }
     }
 
     /// Offices in building order, each with its active (non-archived) worktrees.

@@ -308,6 +308,60 @@ let fakeB = AgentProfile(id: "fake-b", name: "Fake B", executable: "/bin/echo")
         #expect(try f.workspace.database.offices().first { $0.project.isReviews }?.worktrees.isEmpty == true)
     }
 
+    /// A closed reviewer keeps its path in the database after its folder goes: reviewing the same
+    /// commit again gets another folder instead of failing on the unique path (and leaving a checkout).
+    @Test func reviewingAClosedReviewsCommitAgainGetsAnotherFolder() async throws {
+        let f = try await Fixture.make(config: "")
+        defer { f.server.stop() }
+        let wt = try await f.workspace.createWorktree(WorktreeRequest(project: f.project, branch: "feature/again", baseRef: "main"))
+        let head = try await f.workspace.headCommit(of: wt)
+        #expect(try f.workspace.wasReviewed(wt, at: head) == false)
+
+        let first = try await f.workspace.createReview(of: wt, in: f.project, kind: .quick, pullRequest: nil,
+                                                       prompt: "/review", agent: Self.fakeAgent)
+        let reviews = try #require(try f.workspace.database.offices().first { $0.project.isReviews })
+        try await f.workspace.removeWorktree(first, in: reviews.project, force: true)
+        #expect(!FileManager.default.fileExists(atPath: first.path))
+        #expect(try f.workspace.wasReviewed(wt, at: head), "a closed review still counts for its commit")
+
+        let second = try await f.workspace.createReview(of: wt, in: f.project, kind: .quick, pullRequest: nil,
+                                                        prompt: "/review", agent: Self.fakeAgent)
+        #expect(second.path != first.path)
+        #expect(FileManager.default.fileExists(atPath: second.path))
+        #expect(try f.workspace.database.offices().first { $0.project.isReviews }?.worktrees.map(\.id) == [second.id])
+    }
+
+    /// Checkouts in Reviews/ that no reviewer points at: clean ones go, ones with changes are reported.
+    @Test func cleansOrphanReviewCheckouts() async throws {
+        let f = try await Fixture.make(config: "")
+        defer { f.server.stop() }
+        let git = Git()
+        let wt = try await f.workspace.createWorktree(WorktreeRequest(project: f.project, branch: "feature/orphans", baseRef: "main"))
+        let reviewer = try await f.workspace.createReview(of: wt, in: f.project, kind: .quick, pullRequest: nil,
+                                                          prompt: "/review", agent: Self.fakeAgent)
+        let folder = f.workspace.worktreeRoot.appendingPathComponent("Reviews")
+        let clean = folder.appendingPathComponent("orphan-clean"), dirty = folder.appendingPathComponent("orphan-dirty")
+        try await git.run(["worktree", "add", "-q", "--detach", clean.path, "main"], in: f.repoDir)
+        try await git.run(["worktree", "add", "-q", "--detach", dirty.path, "main"], in: f.repoDir)
+        try "fix\n".write(to: dirty.appendingPathComponent("fix.txt"), atomically: true, encoding: .utf8)
+        let notGit = folder.appendingPathComponent("not-a-checkout")
+        try FileManager.default.createDirectory(at: notGit, withIntermediateDirectories: true)
+
+        // Just made: could be a review being launched.
+        #expect(try await f.workspace.cleanOrphanReviews().removed.isEmpty)
+
+        let orphans = try await f.workspace.cleanOrphanReviews(grace: 0)
+        #expect(orphans.removed == ["orphan-clean"])
+        #expect(orphans.withChanges.map(\.lastPathComponent) == ["orphan-dirty"])
+        #expect(!FileManager.default.fileExists(atPath: clean.path))
+        #expect(FileManager.default.fileExists(atPath: reviewer.path), "an active reviewer is never an orphan")
+        #expect(FileManager.default.fileExists(atPath: notGit.path), "a folder that isn't a checkout is left alone")
+        #expect(!(try await git.run(["worktree", "list"], in: f.repoDir)).contains("orphan-clean"))
+
+        try await f.workspace.removeOrphanReview(dirty)
+        #expect(!FileManager.default.fileExists(atPath: dirty.path))
+    }
+
     @Test func readsTheReviewersVerdict() {
         #expect(ReviewInfo.verdict(in: "VEREDICTO: SE PUEDE SUBIR\nTodo bien.") == true)
         #expect(ReviewInfo.verdict(in: "Resumen…\n**Veredicto: no se puede subir**\nFalta un test.") == false)

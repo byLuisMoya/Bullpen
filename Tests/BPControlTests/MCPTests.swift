@@ -63,6 +63,7 @@ import Testing
         #expect(Set(tools.compactMap { $0["name"] as? String }) ==
                 ["list_projects", "list_worktrees", "create_worktree", "send_message", "read_terminal", "remove_worktree",
                  "current_worktree", "wait_for_worktree", "ask_worktree",
+                 "post_message", "read_inbox", "create_task", "list_tasks", "claim_task", "complete_task",
                  "browser_open", "browser_snapshot", "browser_screenshot", "browser_click", "browser_type", "browser_eval", "browser_console"])
         #expect((try await rpc(env.mcp, 3, "nope")["error"] as? [String: Any])?["code"] as? Int == -32601)
     }
@@ -146,6 +147,61 @@ import Testing
         try await Task.sleep(for: .seconds(1))
         #expect(try env.service.readTerminal("ayudante", lines: 20).contains("Mensaje del agente de «coordina»"))
         _ = b
+    }
+
+    /// The mailbox: messages wait (never typed in by `post`), the recipient reads them once, and
+    /// the user can be written to only from a worktree.
+    @Test func mailboxKeepsMessagesUntilRead() async throws {
+        let env = try await make()
+        defer { env.server.stop() }
+        let a = try await env.service.create(project: "api", branch: "remitente")
+        let b = try await env.service.create(project: "api", branch: "destino")
+        let fromA = Workspace.sessionID(for: a), fromB = Workspace.sessionID(for: b)
+
+        let sent = try env.service.post(to: "destino", text: "¿Has terminado la API?", from: fromA)
+        #expect(sent.toWorktree == b.id && sent.fromLabel == "remitente" && sent.deliveredAt == nil)
+        #expect(try env.service.workspace.database.undeliveredMessages().map(\.id) == [sent.id])
+        #expect(throws: ControlError.self) { try env.service.post(to: "remitente", text: "a mí mismo", from: fromA) }
+
+        let inbox = try env.service.readInbox(session: fromB)
+        #expect(inbox.map(\.text) == ["¿Has terminado la API?"])
+        #expect(try env.service.readInbox(session: fromB).isEmpty, "read once")
+        #expect(try env.service.workspace.database.undeliveredMessages().isEmpty, "read is delivered: it won't be typed in")
+
+        let toUser = try env.service.post(to: "usuario", text: "Necesito la clave de staging", from: fromB)
+        #expect(toUser.toWorktree == nil && toUser.fromLabel == "destino")
+        #expect(throws: ControlError.self) { try env.service.post(to: "user", text: "sin worktree", from: nil) }
+    }
+
+    /// The task board: numbered per project, one agent at a time, and the result goes back to the creator.
+    @Test func taskBoardClaimAndComplete() async throws {
+        let env = try await make()
+        defer { env.server.stop() }
+        let lead = try await env.service.create(project: "api", branch: "lider")
+        let one = try await env.service.create(project: "api", branch: "uno")
+        let two = try await env.service.create(project: "api", branch: "dos")
+        let (sLead, sOne, sTwo) = (Workspace.sessionID(for: lead), Workspace.sessionID(for: one), Workspace.sessionID(for: two))
+
+        let first = try env.service.createTask(title: "Migrar la tabla de pagos", detail: "Sin downtime", session: sLead)
+        let second = try env.service.createTask(title: "Tests del checkout", project: "api", session: nil)
+        #expect(first.number == 1 && second.number == 2 && second.createdByLabel == "Tú")
+
+        let claimed = try env.service.claimTask(1, session: sOne)
+        #expect(claimed.status == .claimed && claimed.assigneeLabel == "uno")
+        #expect(throws: ControlError.self) { try env.service.claimTask(1, session: sTwo) }
+        #expect(throws: ControlError.self) { try env.service.completeTask(1, result: "yo no", session: sTwo) }
+        #expect(throws: (any Error).self) { try env.service.claimTask(99, session: sTwo) }
+
+        let done = try env.service.completeTask(1, result: "Hecho en la rama uno, PR #12", session: sOne)
+        #expect(done.status == .done && done.result == "Hecho en la rama uno, PR #12")
+        #expect(throws: ControlError.self) { try env.service.claimTask(1, session: sTwo) }
+        let inbox = try env.service.readInbox(session: sLead)
+        #expect(inbox.count == 1 && inbox[0].text.contains("#1") && inbox[0].text.contains("PR #12"))
+
+        #expect(try env.service.tasks(status: .open, session: sTwo).map(\.number) == [2])
+        let listed = try await call(env.mcp, "list_tasks", ["project": "api", "status": "done"])
+        #expect(listed.text.contains("Migrar la tabla de pagos") && listed.text.contains("\"assignee\" : \"uno\""))
+        #expect(try await call(env.mcp, "list_tasks", ["project": "api", "status": "later"]).isError)
     }
 
     @Test func waitGivesUpAfterTheTimeout() async throws {

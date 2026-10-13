@@ -233,6 +233,17 @@ struct ContentView: View {
             Text(removal.message)
         }
         .alert(
+            store.orphanReviews.count == 1 ? "Una revisión huérfana tiene cambios" : "\(store.orphanReviews.count) revisiones huérfanas tienen cambios",
+            isPresented: Binding(get: { !store.orphanReviews.isEmpty && store.errorMessage == nil },
+                                 set: { if !$0 { store.orphanReviews = [] } })
+        ) {
+            Button("Borrarlas", role: .destructive) { Task { await store.removeOrphanReviews() } }
+            Button("Mostrar en Finder") { NSWorkspace.shared.activateFileViewerSelecting(store.orphanReviews) }
+            Button("Conservar", role: .cancel) {}
+        } message: {
+            Text("Ningún revisor apunta ya a \(store.orphanReviews.map(\.lastPathComponent).joined(separator: ", ")), pero tiene cambios sin commitear (arreglos de una revisión). Se borran con sus cambios; la rama revisada no se toca.")
+        }
+        .alert(
             "Algo ha fallado",
             isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })
         ) {

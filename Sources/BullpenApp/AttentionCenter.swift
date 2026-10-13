@@ -65,20 +65,24 @@ final class AttentionCenter {
                 _ = try? await repo?.createCheckpoint(of: worktree.id, in: URL(fileURLWithPath: worktree.path), message: "Turno terminado · \(time)")
             }
         }
-        let title: String
+        let title: String, event: AlertSounds.Event
         switch status.state {
-        case .needsYou: title = "\(worktree.branch) te necesita"
-        case .done: title = "\(worktree.branch) ha terminado"
-        case .error: title = "\(worktree.branch) ha fallado"
+        case .needsYou: title = "\(worktree.branch) te necesita"; event = .needsYou
+        case .done: title = "\(worktree.branch) ha terminado"; event = .done
+        case .error: title = "\(worktree.branch) ha fallado"; event = .error
         default: return
         }
-        guard notificationsEnabled, worktree.id != focusedWorktree || !NSApp.isActive else { return }
+        // Reviewers finishing are not news (the review's verdict is).
+        let quietReviewer = worktree.review != nil && event == .done
+        let looking = worktree.id == focusedWorktree && NSApp.isActive
+        // Played here rather than by the banner: it sounds with notifications off, and the sound is the user's choice.
+        if !quietReviewer, !looking || UserDefaults.standard.bool(forKey: AlertSounds.whileLookingKey) { AlertSounds.play(event) }
+        guard notificationsEnabled, !looking else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.subtitle = project.name
         content.body = status.detail ?? ""
         content.threadIdentifier = worktree.id.uuidString
-        content.sound = status.state == .needsYou ? .default : nil
         // Same identifier per worktree: a new state replaces the previous banner.
         let request = UNNotificationRequest(identifier: worktree.id.uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)

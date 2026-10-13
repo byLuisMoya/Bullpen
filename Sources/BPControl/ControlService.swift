@@ -233,3 +233,112 @@ public struct ControlService: Sendable {
             .joined(separator: "\n")
     }
 }
+
+// MARK: Coordination: mailbox and task board
+
+public extension ControlService {
+    /// Names that address the user instead of a worktree.
+    static let userAliases: Set<String> = ["user", "usuario", "tú", "tu", "me"]
+
+    /// The caller: its worktree and project, or nil when not run from one (the user, a script).
+    private func caller(_ session: String?) -> (worktree: Worktree, project: Project)? {
+        guard let summary = try? current(session: session) else { return nil }
+        return try? find(summary.id)
+    }
+
+    /// Leaves `text` in a worktree's mailbox (or the user's): Bullpen types it in when that agent
+    /// finishes its turn, so it never interrupts work in progress.
+    @discardableResult
+    func post(to reference: String, text: String,
+              from session: String? = ProcessInfo.processInfo.environment["BULLPEN_SESSION_ID"]) throws -> AgentMessage {
+        let sender = caller(session)
+        let message: AgentMessage
+        if Self.userAliases.contains(reference.lowercased()) {
+            guard let sender else { throw ControlError("Solo un agente de un worktree puede escribir al usuario.") }
+            message = AgentMessage(projectID: sender.project.id, toWorktree: nil, fromWorktree: sender.worktree.id,
+                                   fromLabel: sender.worktree.branch, text: text)
+        } else {
+            let (to, project) = try find(reference)
+            if to.id == sender?.worktree.id { throw ControlError("Ese worktree eres tú.") }
+            message = AgentMessage(projectID: project.id, toWorktree: to.id, fromWorktree: sender?.worktree.id,
+                                   fromLabel: sender?.worktree.branch ?? "Tú", text: text)
+        }
+        try workspace.database.save(message)
+        return message
+    }
+
+    /// The caller's unread messages, now marked read (they won't be typed in later).
+    func readInbox(session: String? = ProcessInfo.processInfo.environment["BULLPEN_SESSION_ID"]) throws -> [AgentMessage] {
+        guard let me = caller(session) else { throw ControlError("Este proceso no corre en la terminal de ningún worktree de Bullpen.") }
+        let unread = try workspace.database.messages(to: me.worktree.id, unreadOnly: true)
+        try workspace.database.markMessages(unread.map(\.id), read: true)
+        return unread
+    }
+
+    /// The project named, or the caller's.
+    private func project(_ name: String?, session: String?) throws -> Project {
+        if let name, !name.isEmpty {
+            guard let project = try projects().first(where: { $0.name == name }) else { throw ControlError("No hay ningún proyecto «\(name)».") }
+            return project
+        }
+        guard let mine = caller(session) else { throw ControlError("Indica el proyecto: este proceso no corre en ningún worktree.") }
+        return mine.project
+    }
+
+    func createTask(title: String, detail: String? = nil, project name: String? = nil,
+                    session: String? = ProcessInfo.processInfo.environment["BULLPEN_SESSION_ID"]) throws -> AgentTask {
+        let project = try project(name, session: session)
+        let me = caller(session)
+        return try workspace.database.createTask(AgentTask(
+            projectID: project.id, title: title, detail: detail?.isEmpty == true ? nil : detail,
+            createdBy: me?.worktree.id, createdByLabel: me?.worktree.branch ?? "Tú"
+        ))
+    }
+
+    func tasks(project name: String? = nil, status: AgentTask.Status? = nil,
+               session: String? = ProcessInfo.processInfo.environment["BULLPEN_SESSION_ID"]) throws -> [AgentTask] {
+        try workspace.database.tasks(project: try project(name, session: session).id, status: status)
+    }
+
+    /// Takes an open task for the caller; refuses one someone else is on.
+    func claimTask(_ number: Int, project name: String? = nil,
+                   session: String? = ProcessInfo.processInfo.environment["BULLPEN_SESSION_ID"]) throws -> AgentTask {
+        guard let me = caller(session) else { throw ControlError("Solo el agente de un worktree puede coger una tarea.") }
+        let project = try project(name, session: session)
+        return try workspace.database.updateTask(project: project.id, number: number) { task in
+            switch task.status {
+            case .done: throw ControlError("La tarea #\(number) ya está hecha.")
+            case .claimed where task.assignee != me.worktree.id:
+                throw ControlError("La tarea #\(number) ya la tiene «\(task.assigneeLabel ?? "?")».")
+            default:
+                task.status = .claimed
+                task.assignee = me.worktree.id
+                task.assigneeLabel = me.worktree.branch
+            }
+        }
+    }
+
+    /// Marks a task done with its result, which reaches whoever created it by the mailbox.
+    func completeTask(_ number: Int, result: String, project name: String? = nil,
+                      session: String? = ProcessInfo.processInfo.environment["BULLPEN_SESSION_ID"]) throws -> AgentTask {
+        let me = caller(session)
+        let project = try project(name, session: session)
+        let task = try workspace.database.updateTask(project: project.id, number: number) { task in
+            if task.status == .claimed, let assignee = task.assignee, assignee != me?.worktree.id {
+                throw ControlError("La tarea #\(number) la tiene «\(task.assigneeLabel ?? "?")»: solo ella puede cerrarla.")
+            }
+            task.status = .done
+            task.result = result
+            if task.assignee == nil, let me {
+                task.assignee = me.worktree.id
+                task.assigneeLabel = me.worktree.branch
+            }
+        }
+        let note = "Tarea #\(task.number) «\(task.title)» hecha por «\(task.assigneeLabel ?? "Tú")»: \(result)"
+        if task.createdBy != me?.worktree.id {
+            try workspace.database.save(AgentMessage(projectID: project.id, toWorktree: task.createdBy, fromWorktree: me?.worktree.id,
+                                                     fromLabel: me?.worktree.branch ?? "Tú", text: note))
+        }
+        return task
+    }
+}

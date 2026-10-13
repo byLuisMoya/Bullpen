@@ -114,6 +114,52 @@ public extension Workspace {
         return AppliedFixes(commit: commit, updatedOriginal: updated)
     }
 
+    /// Whether `worktree` already had a review of `commit` (or `commit` holds fixes accepted from
+    /// one), closed reviewers included: an automatic review never runs twice on the same code.
+    func wasReviewed(_ worktree: Worktree, at commit: String) throws -> Bool {
+        try database.allWorktrees().compactMap(\.review)
+            .contains { $0.of == worktree.id && ($0.commit == commit || $0.appliedCommit == commit) }
+    }
+
+    /// Review checkouts no active reviewer points at (a launch that failed half way, a crash).
+    struct OrphanReviews: Sendable {
+        /// Clean ones, already removed.
+        public var removed: [String] = []
+        /// With uncommitted changes (a reviewer's fixes): kept until the user says so.
+        public var withChanges: [URL] = []
+    }
+
+    /// Removes the clean orphan review checkouts and reports the ones with changes. Folders newer
+    /// than `grace` are left alone: a review being launched has its checkout before its row.
+    func cleanOrphanReviews(grace: TimeInterval = 120) async throws -> OrphanReviews {
+        let folder = worktreeRoot.appendingPathComponent("Reviews", isDirectory: true)
+        let active = Set(try database.offices().flatMap(\.worktrees).map { Self.canonical($0.path) })
+        let children = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey, .creationDateKey])) ?? []
+        var result = OrphanReviews()
+        for dir in children {
+            let values = try? dir.resourceValues(forKeys: [.isDirectoryKey, .creationDateKey])
+            guard values?.isDirectory == true, !active.contains(Self.canonical(dir.path)),
+                  Date().timeIntervalSince(values?.creationDate ?? .distantPast) >= grace else { continue }
+            let changes = try? await Git().run(["status", "--porcelain"], in: dir)
+            guard let changes else { continue }   // not a git checkout: not ours to touch
+            if changes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                try await removeOrphanReview(dir)
+                result.removed.append(dir.lastPathComponent)
+            } else {
+                result.withChanges.append(dir)
+            }
+        }
+        return result
+    }
+
+    /// Removes an orphan review checkout through its repository (so git forgets it too).
+    func removeOrphanReview(_ dir: URL) async throws {
+        let common = try await Git().run(["rev-parse", "--path-format=absolute", "--git-common-dir"], in: dir)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let repo = URL(fileURLWithPath: common).deletingLastPathComponent()
+        try await Git().run(["worktree", "remove", "--force", "--force", dir.path], in: repo)
+    }
+
     func saveReview(_ info: ReviewInfo, for reviewer: Worktree) throws {
         var saved = reviewer
         saved.review = info
