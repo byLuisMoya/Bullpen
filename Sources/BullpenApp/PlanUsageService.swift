@@ -1,6 +1,7 @@
 import BPAgents
 import BPHabitat
 import BPProviders
+import BPSessions
 import Foundation
 import SwiftUI
 
@@ -19,6 +20,7 @@ enum PlanUsageService {
         switch agent {
         case AgentProfile.claude.id: await claude(tokensToday: claudeTokensToday)
         case AgentProfile.codex.id: await codex()
+        case AgentProfile.opencode.id: await opencode()
         default:
             if let source = AgentProfile.named(agent)?.effectiveUsageSource {
                 await balance(source)
@@ -95,6 +97,29 @@ enum PlanUsageService {
         if let data = fromKeychain, let token = PlanLimits.claudeAccessToken(fromCredentials: data) { return token }
         let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/.credentials.json")
         return (try? Data(contentsOf: file)).flatMap(PlanLimits.claudeAccessToken(fromCredentials:))
+    }
+
+    // MARK: OpenCode
+
+    /// OpenCode keeps its own tally (any provider): the last day's tokens and cost.
+    private static func opencode() async -> PlanUsage {
+        let output = await Task.detached { () -> String? in
+            guard let path = ShellEnvironment.locate("opencode") else { return nil }
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: path)
+            process.arguments = ["stats", "--days", "1"]
+            process.currentDirectoryURL = FileManager.default.temporaryDirectory
+            let out = Pipe()
+            process.standardOutput = out
+            process.standardError = FileHandle.nullDevice
+            process.standardInput = FileHandle.nullDevice
+            guard (try? process.run()) != nil else { return nil }
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
+        }.value
+        guard let output else { return .unavailable("No encuentro opencode en el PATH") }
+        return PlanLimits.parseOpenCodeStats(output) ?? .unavailable("OpenCode no devolvió el uso")
     }
 
     // MARK: Codex

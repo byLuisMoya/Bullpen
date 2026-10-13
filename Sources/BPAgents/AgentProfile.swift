@@ -24,7 +24,7 @@ public enum MCPDelivery: Equatable, Sendable {
 
 /// Which lifecycle hooks Bullpen can wire up for precise status (PLAN §8.2). Others fall back to
 /// process and output heuristics.
-public enum HookSupport: Equatable, Sendable { case claude, codex, none }
+public enum HookSupport: Equatable, Sendable { case claude, codex, opencode, none }
 
 /// How to launch a coding-agent CLI inside a worktree's terminal (PLAN §7.1).
 public struct AgentProfile: Identifiable, Hashable, Sendable {
@@ -81,7 +81,7 @@ public struct AgentProfile: Identifiable, Hashable, Sendable {
     public static let gemini = AgentProfile(id: "gemini", name: "Gemini CLI", executable: "gemini", processNames: ["gemini"],
                                             prompt: .flag("-i"), modelFlag: "-m")
     public static let opencode = AgentProfile(id: "opencode", name: "OpenCode", executable: "opencode", processNames: ["opencode"],
-                                              prompt: .flag("--prompt"), modelFlag: "-m")
+                                              prompt: .flag("--prompt"), modelFlag: "-m", hooks: .opencode)
     public static let cursor = AgentProfile(id: "cursor", name: "Cursor CLI", executable: "cursor-agent", processNames: ["cursor-agent"])
     public static let copilot = AgentProfile(id: "copilot", name: "GitHub Copilot CLI", executable: "copilot", processNames: ["copilot"],
                                              prompt: .type)
@@ -208,6 +208,11 @@ public struct AgentProfile: Identifiable, Hashable, Sendable {
             // prompt at the end isn't read as one more config.
             if hooks.offersBullpenMCP, AgentHooks.coordinationEnabled { parts += ["--mcp-config", shellQuote(hooks.claudeMCPConfig)] }
             parts += ["--settings", shellQuote(hooks.claudeSettingsPath)]
+        case .opencode:
+            // Inline config, merged with the user's own: the plugin that reports its state and,
+            // when coordination is on, Bullpen's MCP server.
+            let mcp = hooks.offersBullpenMCP && AgentHooks.coordinationEnabled
+            parts.insert("OPENCODE_CONFIG_CONTENT=" + shellQuote(hooks.opencodeConfigContent(mcp: mcp)), at: 0)
         case .codex:
             parts += ["-c", shellQuote(hooks.codexNotifyConfig)]
             parts += hooks.codexHookConfigs.flatMap { ["-c", shellQuote($0)] }

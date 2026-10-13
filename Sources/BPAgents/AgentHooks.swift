@@ -114,6 +114,110 @@ public struct AgentHooks: Sendable {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let data = try JSONSerialization.data(withJSONObject: claudeSettings(), options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         try data.write(to: url, options: .atomic)
+        // OpenCode's plugin lives next to it and points at the same `bp`.
+        try Data(opencodePlugin.utf8).write(to: URL(fileURLWithPath: opencodePluginPath), options: .atomic)
+    }
+
+    // MARK: OpenCode
+
+    /// The plugin OpenCode loads in Bullpen's terminals (next to the Claude settings).
+    public var opencodePluginPath: String {
+        URL(fileURLWithPath: claudeSettingsPath).deletingLastPathComponent().appendingPathComponent("opencode-bullpen.js").path
+    }
+
+    /// `OPENCODE_CONFIG_CONTENT`: OpenCode merges it with the user's config for this run only.
+    public func opencodeConfigContent(mcp: Bool) -> String {
+        var config: [String: Any] = ["plugin": [URL(fileURLWithPath: opencodePluginPath).absoluteString]]
+        if mcp { config["mcp"] = ["bullpen": ["type": "local", "command": [bpPath, "mcp"], "enabled": true]] }
+        let data = (try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Turns OpenCode's events into the hook events Bullpen already understands (Claude's names)
+    /// and hands them to `bp hook opencode`, without waiting: it can never slow OpenCode down.
+    public var opencodePlugin: String {
+        let bp = String(decoding: (try? JSONSerialization.data(withJSONObject: [bpPath], options: .withoutEscapingSlashes)) ?? Data("[]".utf8), as: UTF8.self)
+        return """
+        // Written by Bullpen (rewritten on every start). Tells Bullpen what OpenCode is doing in
+        // its worktree terminal; does nothing outside Bullpen.
+        import { spawn } from "node:child_process";
+
+        const BP = \(bp)[0];
+
+        export const Bullpen = async () => {
+          if (!process.env.BULLPEN_SESSION_ID) return {};
+          const children = new Set();   // subagent sessions: their idle isn't the end of the turn
+          const roles = new Map();      // messageID → role
+          let lastText = "";
+          let inTurn = false;           // a prompt is being worked on: its idle is the end of the turn
+          let queue = Promise.resolve();
+          const clip = (s, n) => (typeof s === "string" ? (s.length > n ? s.slice(0, n) + "…" : s) : undefined);
+          // One at a time, in order, never awaited by OpenCode.
+          const send = (payload) => {
+            queue = queue.then(() => new Promise((done) => {
+              try {
+                const child = spawn(BP, ["hook", "opencode", JSON.stringify(payload)], { stdio: "ignore" });
+                child.on("exit", done);
+                child.on("error", done);
+                setTimeout(done, 2000);
+              } catch { done(); }
+            }));
+          };
+          send({ hook_event_name: "SessionStart" });
+          return {
+            "chat.message": async (input, output) => {
+              const text = (output?.parts ?? []).filter((p) => p?.type === "text").map((p) => p.text).join("\\n");
+              inTurn = true;
+              lastText = "";
+              send({ hook_event_name: "UserPromptSubmit", prompt: clip(text, 2000) });
+            },
+            "tool.execute.before": async (input, output) => {
+              send({ hook_event_name: "PreToolUse", tool_name: input?.tool, tool_input: output?.args ?? {} });
+            },
+            "tool.execute.after": async (input) => {
+              send({ hook_event_name: "PostToolUse", tool_name: input?.tool });
+            },
+            event: async ({ event }) => {
+              const p = event?.properties ?? {};
+              switch (event?.type) {
+                case "session.created":
+                  if (p.info?.parentID) children.add(p.info.id);
+                  break;
+                case "message.updated":
+                  if (p.info?.id) roles.set(p.info.id, p.info.role);
+                  break;
+                case "message.part.updated":
+                  if (p.part?.type === "text" && roles.get(p.part.messageID) === "assistant" && !children.has(p.part.sessionID)) lastText = p.part.text ?? lastText;
+                  break;
+                case "permission.asked":
+                  send({ hook_event_name: "PermissionRequest", tool_name: p.permission ?? p.type,
+                         tool_input: { command: (p.patterns ?? []).join(" ") || undefined } });
+                  break;
+                case "question.asked":
+                  send({ hook_event_name: "Notification", notification_type: "question",
+                         message: clip(p.questions?.[0]?.question, 400) });
+                  break;
+                case "permission.replied":
+                case "question.replied":
+                  send({ hook_event_name: "PostToolUse" });
+                  break;
+                case "session.idle":
+                  if (children.has(p.sessionID) || !inTurn) break;
+                  inTurn = false;
+                  send({ hook_event_name: "Stop", last_assistant_message: clip(lastText, 1500) });
+                  break;
+                case "session.error":
+                  if (children.has(p.sessionID)) break;
+                  inTurn = false;
+                  if (p.error?.name === "MessageAbortedError") send({ hook_event_name: "Interrupt" });
+                  else send({ hook_event_name: "StopFailure", error_type: clip(p.error?.data?.message ?? p.error?.name, 200) });
+                  break;
+              }
+            },
+          };
+        };
+
+        """
     }
 
     /// `notify` receives the event JSON as its last argument (`agent-turn-complete`).

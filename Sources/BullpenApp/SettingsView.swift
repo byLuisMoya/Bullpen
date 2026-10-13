@@ -356,9 +356,15 @@ private struct GeneralSettings: View {
     @AppStorage(BuildingName.key) private var buildingName = BuildingName.standard
     @AppStorage(PrimaryAgent.key) private var primaryAgent = AgentProfile.claude.id
     @AppStorage(AgentHooks.coordinationKey) private var coordination = true
+    @AppStorage("dictation.locale") private var dictationLocale = "es-ES"
     @State private var addingAgent = false
     /// Bumped after adding or removing a custom agent, to re-read the list.
     @State private var agentsVersion = 0
+
+    static let dictationLocales = [
+        ("es-ES", "Español (España)"), ("es-MX", "Español (México)"), ("ca-ES", "Català"),
+        ("en-US", "English (US)"), ("en-GB", "English (UK)"), ("pt-BR", "Português"), ("fr-FR", "Français"),
+    ]
 
     var body: some View {
         let agents = { _ = agentsVersion; return AgentProfile.all }()
@@ -368,7 +374,11 @@ private struct GeneralSettings: View {
                     ForEach(agents) { Text($0.name).tag($0.id) }
                 }
                 Toggle("Los agentes pueden coordinarse entre worktrees", isOn: $coordination)
-                    .help("Claude Code y Codex arrancan con el servidor MCP de Bullpen: pueden crear worktrees, delegar tareas en otros agentes y esperar sus respuestas. Se aplica a los agentes que arranquen a partir de ahora.")
+                    .help("Claude Code, Codex y OpenCode arrancan con el servidor MCP de Bullpen: pueden crear worktrees, delegar tareas en otros agentes y esperar sus respuestas. Se aplica a los agentes que arranquen a partir de ahora.")
+                Picker("Idioma del dictado", selection: $dictationLocale) {
+                    ForEach(Self.dictationLocales, id: \.0) { Text($0.1).tag($0.0) }
+                }
+                .help("El idioma en que hablas al botón del micrófono de la terminal (⌘⇧D)")
             } header: {
                 Text("Agentes")
             } footer: {

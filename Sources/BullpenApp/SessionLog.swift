@@ -43,7 +43,7 @@ struct SessionLogView: View {
         Group {
             if events.isEmpty {
                 ContentUnavailableView("Sin actividad registrada", systemImage: "list.bullet.rectangle",
-                                       description: Text("La bitácora se llena con los avisos del agente (Claude Code y Codex)."))
+                                       description: Text("La bitácora se llena con los avisos del agente (Claude Code, Codex y OpenCode)."))
             } else {
                 List(Array(events.enumerated().reversed()), id: \.offset) { _, event in
                     HStack(alignment: .top, spacing: 10) {

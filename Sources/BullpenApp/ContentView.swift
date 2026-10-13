@@ -397,6 +397,11 @@ private struct WorktreeDetail: View {
                 } else {
                     TerminalPane(worktree: worktree, environment: terminalEnvironment, tab: terminalTab)
                         .id(terminalTab ?? "main")
+                        .overlay(alignment: .bottomTrailing) {
+                            DictationButton { text in
+                                sessions.typeText(text, into: terminalTab ?? SessionManager.sessionID(for: worktree))
+                            }
+                        }
                 }
             }
         }

@@ -265,6 +265,12 @@ final class SessionManager {
 
     func input(_ id: String, _ data: Data) { client?.input(id, data) }
 
+    /// Types `text` at the prompt as a paste (bracketed, so line breaks don't send it): the
+    /// user reviews it and presses Return.
+    func typeText(_ text: String, into id: String) {
+        client?.input(id, Data(("\u{1B}[200~" + text + "\u{1B}[201~").utf8))
+    }
+
     /// Sends `text` to the worktree's agent as one message.
     func sendMessage(_ text: String, to worktree: Worktree) async throws {
         let client = try await connection()

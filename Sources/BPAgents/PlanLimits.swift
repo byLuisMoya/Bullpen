@@ -125,6 +125,29 @@ public enum PlanLimits {
         return total
     }
 
+    /// `opencode stats --days 1`: a table with "Total Cost $0.01", "Input 11.7K", "Output 12",
+    /// "Cache Read 0", "Cache Write 0" (K/M suffixes).
+    public static func parseOpenCodeStats(_ text: String) -> PlanUsage? {
+        func value(_ label: String) -> String? {
+            for line in text.split(separator: "\n") {
+                let row = line.trimmingCharacters(in: CharacterSet(charactersIn: "│| \t"))
+                guard row.hasPrefix(label + " ") else { continue }
+                return row.dropFirst(label.count).trimmingCharacters(in: .whitespaces)
+            }
+            return nil
+        }
+        func tokens(_ label: String) -> Int? {
+            guard var s = value(label)?.uppercased(), !s.isEmpty else { return nil }
+            var factor = 1.0
+            if s.hasSuffix("K") { factor = 1e3; s.removeLast() } else if s.hasSuffix("M") { factor = 1e6; s.removeLast() } else if s.hasSuffix("B") { factor = 1e9; s.removeLast() }
+            return Double(s.replacingOccurrences(of: ",", with: "")).map { Int(($0 * factor).rounded()) }
+        }
+        let parts = ["Input", "Output", "Cache Read", "Cache Write"].compactMap(tokens)
+        guard !parts.isEmpty else { return nil }
+        let cost = value("Total Cost").flatMap { Double($0.replacingOccurrences(of: "$", with: "").replacingOccurrences(of: ",", with: "")) }
+        return .tokens(today: parts.reduce(0, +), costUSD: cost)
+    }
+
     static func number(_ value: Any?) -> Double? {
         switch value {
         case let n as NSNumber: n.doubleValue

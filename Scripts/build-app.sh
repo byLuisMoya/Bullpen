@@ -50,7 +50,7 @@ else
 fi
 codesign --force "${SIGN[@]}" --options runtime "$APP/Contents/MacOS/bpd"
 codesign --force "${SIGN[@]}" --options runtime "$APP/Contents/MacOS/bp"
-codesign --force "${SIGN[@]}" --options runtime "$APP"
+codesign --force "${SIGN[@]}" --options runtime --entitlements Resources/Bullpen.entitlements "$APP"
 codesign --force "${SIGN[@]}" --options runtime "$OUT/bp"
 
 lipo -info "$APP/Contents/MacOS/Bullpen" "$APP/Contents/MacOS/bpd" "$OUT/bp"

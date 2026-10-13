@@ -123,7 +123,7 @@ import Testing
         #expect(AgentProfile.gemini.launch(model: "pro", prompt: "hola", hooks: hooks).command
                 == #"gemini -m 'pro' -i 'hola'; exec "$SHELL" -l"#)
         #expect(AgentProfile.opencode.launch(model: nil, prompt: "hola", hooks: hooks).command
-                == #"opencode --prompt 'hola'; exec "$SHELL" -l"#)
+                .hasSuffix(#"' opencode --prompt 'hola'; exec "$SHELL" -l"#))
         let goose = AgentProfile.goose.launch(model: "x", prompt: "hola", hooks: hooks)
         #expect(goose.command == #"goose session; exec "$SHELL" -l"#, "no model flag, prompt typed later")
         #expect(goose.typedPrompt == "hola")
@@ -213,6 +213,49 @@ import Testing
         let command = AgentProfile.codex.command(model: nil, prompt: nil, hooks: hooks)
         #expect(command.contains(#"'mcp_servers.bullpen.command="/x/bp"'"#))
         #expect(command.contains(#"'mcp_servers.bullpen.args=["mcp"]'"#))
+    }
+
+    @Test func opencodeGetsItsPluginAndTheServerInline() throws {
+        let hooks = AgentHooks(bpPath: "/x/bp", claudeSettingsPath: "/tmp/agents/s.json", offersBullpenMCP: true)
+        let command = AgentProfile.opencode.command(model: "anthropic/claude-sonnet-5-5", prompt: "Arregla el login", hooks: hooks)
+        #expect(command.hasPrefix("OPENCODE_CONFIG_CONTENT='{"))
+        #expect(command.contains(#""plugin":["file:///tmp/agents/opencode-bullpen.js"]"#))
+        #expect(command.contains(" opencode -m 'anthropic/claude-sonnet-5-5' --prompt 'Arregla el login'"))
+        if AgentHooks.coordinationEnabled {
+            #expect(command.contains(#""mcp":{"bullpen":{"command":["/x/bp","mcp"],"enabled":true,"type":"local"}}"#))
+        }
+        #expect(!hooks.opencodeConfigContent(mcp: false).contains("mcp"))
+    }
+
+    @Test func readsOpenCodeStats() {
+        let table = """
+        │Total Cost                                        $1.25 │
+        │Input                                             11.7K │
+        │Output                                              300 │
+        │Cache Read                                         1.2M │
+        │Cache Write                                           0 │
+        """
+        #expect(PlanLimits.parseOpenCodeStats(table) == .tokens(today: 11_700 + 300 + 1_200_000, costUSD: 1.25))
+        #expect(PlanLimits.parseOpenCodeStats("nada") == nil)
+    }
+
+    /// The plugin is plain JavaScript that Node (and OpenCode's Bun) can load.
+    @Test func opencodePluginIsValidJavaScript() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("bp-oc-\(UUID().uuidString)")
+        let hooks = AgentHooks(bpPath: "/x/it's bp", claudeSettingsPath: dir.appendingPathComponent("s.json").path)
+        try hooks.writeClaudeSettings()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let plugin = try String(contentsOfFile: hooks.opencodePluginPath, encoding: .utf8)
+        #expect(plugin.contains(#"const BP = ["/x/it's bp"][0];"#))
+        guard let node = ["/opt/homebrew/bin/node", "/usr/local/bin/node"].first(where: FileManager.default.isExecutableFile) else { return }
+        let mjs = dir.appendingPathComponent("plugin.mjs")
+        try plugin.write(to: mjs, atomically: true, encoding: .utf8)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: node)
+        process.arguments = ["--check", mjs.path]
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
     }
 }
 

@@ -32,6 +32,10 @@
         <key>NSAllowsLocalNetworking</key>
         <true/>
     </dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Para dictar mensajes a los agentes con el botón del micrófono.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Para convertir en texto lo que dictas a los agentes.</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>

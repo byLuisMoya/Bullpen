@@ -89,6 +89,7 @@ public struct CharacterLook: Equatable, Sendable {
         switch agent {
         case "claude": 0xD97A4A   // warm orange
         case "codex": 0x3E9E7E    // teal green
+        case "opencode": 0x3F6FB5 // blue
         case nil: 0x6B7A99        // plain terminal: slate
         default: 0x8E6BC2
         }
