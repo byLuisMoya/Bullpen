@@ -3,7 +3,9 @@ import Foundation
 /// Model APIs Bullpen can call for its own small jobs (PLAN §7.2): branch names, status
 /// summaries, PR descriptions and judging fan-out results. Agents in worktrees don't use these.
 public enum ProviderID: String, CaseIterable, Codable, Sendable, Identifiable {
-    case anthropic, openai, gemini, openrouter, ollama, lmstudio
+    case anthropic, openai, gemini, openrouter, ollama, lmstudio, deepseek
+    /// The user's own Claude Code (`claude -p`): their subscription, no API key.
+    case claudeCode
 
     public var id: String { rawValue }
 
@@ -15,11 +17,13 @@ public enum ProviderID: String, CaseIterable, Codable, Sendable, Identifiable {
         case .openrouter: "OpenRouter"
         case .ollama: "Ollama (local)"
         case .lmstudio: "LM Studio (local)"
+        case .deepseek: "DeepSeek"
+        case .claudeCode: "Claude Code (tu suscripción)"
         }
     }
 
     /// Local servers need no key.
-    public var needsKey: Bool { self != .ollama && self != .lmstudio }
+    public var needsKey: Bool { self != .ollama && self != .lmstudio && self != .claudeCode }
 
     public var defaultBaseURL: URL {
         switch self {
@@ -29,6 +33,8 @@ public enum ProviderID: String, CaseIterable, Codable, Sendable, Identifiable {
         case .openrouter: URL(string: "https://openrouter.ai/api/v1")!
         case .ollama: URL(string: "http://localhost:11434/v1")!
         case .lmstudio: URL(string: "http://localhost:1234/v1")!
+        case .deepseek: URL(string: "https://api.deepseek.com")!
+        case .claudeCode: URL(fileURLWithPath: "/")
         }
     }
 
@@ -36,6 +42,8 @@ public enum ProviderID: String, CaseIterable, Codable, Sendable, Identifiable {
     public var suggestedModels: [String] {
         switch self {
         case .anthropic: ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"]
+        case .claudeCode: ["haiku", "sonnet", "opus"]
+        case .deepseek: ["deepseek-chat", "deepseek-reasoner"]
         default: []
         }
     }

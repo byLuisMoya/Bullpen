@@ -25,6 +25,8 @@ public struct BullpenConfig: Equatable, Sendable {
     public var sourceTemplates: [String: String] = [:]
     /// Only list Linear issues of this team key (`[integrations] linear_team = "FKPI"`).
     public var linearTeam: String?
+    /// `[browser] url`: the page the worktree's browser tab opens (e.g. `http://localhost:{{port:web}}`).
+    public var browserURL: String?
 
     public init() {}
 
@@ -53,6 +55,7 @@ public struct BullpenConfig: Equatable, Sendable {
             if let text = value["template"]?.string { sourceTemplates[source] = text }
         }
         linearTeam = root["integrations"]?["linear_team"]?.string
+        browserURL = root["browser"]?["url"]?.string
     }
 
     /// Reads `.bullpen.toml` from `directory`; a missing file is an empty config.
@@ -66,7 +69,7 @@ public struct BullpenConfig: Equatable, Sendable {
     public var portNames: [String] {
         let regex = try! NSRegularExpression(pattern: #"\{\{\s*port:([A-Za-z0-9_-]+)\s*\}\}"#)
         var names: [String] = []
-        for value in env.values.sorted() {
+        for value in env.values.sorted() + [browserURL].compactMap({ $0 }) {
             let ns = value as NSString
             for match in regex.matches(in: value, range: NSRange(location: 0, length: ns.length)) {
                 let name = ns.substring(with: match.range(at: 1))
@@ -74,6 +77,14 @@ public struct BullpenConfig: Equatable, Sendable {
             }
         }
         return names
+    }
+
+    /// The browser URL with its `{{port:name}}` and `{{variables}}` filled in.
+    public func resolvedBrowserURL(ports: [String: Int], variables: [String: String]) throws -> String? {
+        guard let browserURL else { return nil }
+        var all = variables
+        for (name, port) in ports { all["port:\(name)"] = String(port) }
+        return try Template.render(browserURL, variables: all)
     }
 
     /// Fills `{{port:name}}` and `{{variables}}` in `env`. Unknown names are an error.

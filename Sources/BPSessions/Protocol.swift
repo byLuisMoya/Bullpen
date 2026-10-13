@@ -4,7 +4,8 @@ import Foundation
 /// Newline-delimited JSON over a Unix socket; terminal bytes travel base64-encoded.
 public enum SessionProtocol {
     /// Bump on any incompatible change. A daemon with another version is replaced when it has no live sessions.
-    public static let version = 2
+    /// 3: `handover` (a new bpd takes the sessions over without stopping them).
+    public static let version = 3
 
     public static var defaultSocketPath: String {
         let base = FileManager.default.homeDirectoryForCurrentUser
@@ -127,6 +128,9 @@ public enum ClientMessage: Codable, Sendable {
     case shutdown(request: Int)
     /// Sent by `bp hook` from inside an agent's session.
     case agentEvent(request: Int, session: String, activity: AgentActivity)
+    /// From a newer bpd: send it every session (state, output, PTY descriptors) and exit
+    /// without hanging them up. Answered on the raw socket, not with a `ServerMessage`.
+    case handover(request: Int)
 }
 
 public enum ServerMessage: Codable, Sendable {

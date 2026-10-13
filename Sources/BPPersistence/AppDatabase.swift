@@ -75,11 +75,30 @@ public final class AppDatabase: Sendable {
         migrator.registerMigration("v7-external-worktrees") { db in
             try db.alter(table: "worktree") { t in t.add(column: "external", .boolean).notNull().defaults(to: false) }
         }
+        migrator.registerMigration("v8-automations") { db in
+            try db.create(table: "automation") { t in
+                t.primaryKey("id", .blob)
+                t.column("name", .text).notNull()
+                t.column("projectID", .blob).notNull().indexed().references("project", onDelete: .cascade)
+                t.column("agentID", .text)
+                t.column("task", .text).notNull()
+                t.column("weekdays", .text).notNull()
+                t.column("hour", .integer).notNull()
+                t.column("minute", .integer).notNull()
+                t.column("enabled", .boolean).notNull()
+                t.column("lastRun", .datetime)
+                t.column("createdAt", .datetime).notNull()
+            }
+        }
         return migrator
     }
 }
 
 // MARK: - Projects
+
+extension Automation: FetchableRecord, PersistableRecord {
+    public static let databaseTableName = "automation"
+}
 
 extension Project: FetchableRecord, PersistableRecord {
     public static let databaseTableName = "project"
@@ -121,6 +140,18 @@ public extension AppDatabase {
     /// Every worktree of a run, archived ones included (the losers stay listed after a pick).
     func worktrees(inRun id: UUID) throws -> [Worktree] {
         try writer.read { try Worktree.filter(Column("runID") == id).order(Column("createdAt")).fetchAll($0) }
+    }
+
+    func automations() throws -> [Automation] {
+        try writer.read { try Automation.order(Column("createdAt")).fetchAll($0) }
+    }
+
+    func save(_ automation: Automation) throws {
+        try writer.write { try automation.save($0) }
+    }
+
+    func deleteAutomation(id: UUID) throws {
+        _ = try writer.write { try Automation.deleteOne($0, key: id) }
     }
 
     /// Every worktree ever recorded, archived ones included (their paths are not imported again).

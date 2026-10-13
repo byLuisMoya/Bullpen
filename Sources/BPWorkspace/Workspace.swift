@@ -117,7 +117,8 @@ public struct Workspace: Sendable {
 
         try await repo.addWorktree(branch: request.branch, at: path, baseRef: request.baseRef)
         let taken = Set(try database.offices().flatMap(\.worktrees).flatMap { Array(($0.ports ?? [:]).values) })
-        let ports = PortAllocator.allocate(names: config.portNames, taken: taken)
+        // Without `[browser] url`, the worktree still gets a port of its own for its browser tab.
+        let ports = PortAllocator.allocate(names: config.portNames + (config.browserURL == nil ? ["preview"] : []), taken: taken)
         let worktree = Worktree(
             projectID: request.project.id, branch: request.branch, path: path.path, baseRef: request.baseRef,
             agentProfileID: request.agent?.id, agentModel: request.model?.nilIfBlank,
@@ -137,6 +138,7 @@ public struct Workspace: Sendable {
         }
 
         // [setup] runs first in the worktree's terminal; the agent starts only if it succeeds.
+        if let agent = request.agent { hooks.prepare(agent, in: path.path) }
         let launch = request.agent?.launch(model: request.model?.nilIfBlank, prompt: prompt, hooks: hooks)
         let setup = config.setup + [WorktreeSetup.scriptStep(request.project.setupScript)].compactMap { $0 }
         if let command = WorktreeSetup.command(setup: setup, then: launch?.command) {

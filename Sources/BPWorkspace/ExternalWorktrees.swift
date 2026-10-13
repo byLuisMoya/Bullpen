@@ -58,6 +58,82 @@ public struct OrcaWorktree: Equatable, Sendable {
     }
 }
 
+/// What Orca shows for one of its worktrees right now (`orca worktree ps --json`): its agent's
+/// state, what it was asked and its last answer, and when its terminal last printed.
+public struct OrcaActivity: Equatable, Sendable {
+    public var path: String
+    /// Orca's word for the agent's state ("working", "done", "waiting"…), lowercased.
+    public var agentState: String?
+    public var agentType: String?
+    public var prompt: String?
+    public var lastMessage: String?
+    public var lastOutputAt: Date?
+    public var liveTerminals: Int
+
+    public init(path: String, agentState: String?, agentType: String?, prompt: String?, lastMessage: String?,
+                lastOutputAt: Date?, liveTerminals: Int) {
+        self.path = path
+        self.agentState = agentState
+        self.agentType = agentType
+        self.prompt = prompt
+        self.lastMessage = lastMessage
+        self.lastOutputAt = lastOutputAt
+        self.liveTerminals = liveTerminals
+    }
+
+    /// Bullpen's state for Orca's: unknown words fall back to recent terminal output.
+    public func state(now: Date = Date()) -> AgentState {
+        switch agentState ?? "" {
+        case "working", "running", "busy", "active", "tool", "executing": return .working
+        case "thinking", "planning", "generating": return .thinking
+        case "waiting", "blocked", "needs-input", "needs_input", "input", "permission", "attention", "awaiting-input", "awaiting_input", "question":
+            return .needsYou
+        case "done", "complete", "completed", "finished", "success": return .done
+        case "error", "failed", "failure", "crashed": return .error
+        case "idle", "ready": return .idle
+        default:
+            if liveTerminals == 0 { return .dead }
+            if let lastOutputAt, now.timeIntervalSince(lastOutputAt) < 5 { return .working }
+            return .idle
+        }
+    }
+
+    public static func list() async -> [OrcaActivity] {
+        guard let orca = OrcaWorktree.locate() else { return [] }
+        let output = await Task.detached { () -> Data? in
+            let process = Process()
+            process.executableURL = orca
+            process.arguments = ["worktree", "ps", "--json"]
+            let out = Pipe()
+            process.standardOutput = out
+            process.standardError = FileHandle.nullDevice
+            guard (try? process.run()) != nil else { return nil }
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return process.terminationStatus == 0 ? data : nil
+        }.value
+        return output.map(parse) ?? []
+    }
+
+    static func parse(_ data: Data) -> [OrcaActivity] {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+        let rows = ((json["result"] as? [String: Any])?["worktrees"] ?? json["worktrees"]) as? [[String: Any]] ?? []
+        return rows.compactMap { row in
+            guard let path = row["path"] as? String else { return nil }
+            // The most recent agent pane speaks for the worktree.
+            let agent = (row["agents"] as? [[String: Any]])?.last
+            func date(_ key: String) -> Date? {
+                (row[key] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
+            }
+            return OrcaActivity(
+                path: path, agentState: (agent?["state"] as? String)?.lowercased(), agentType: agent?["agentType"] as? String,
+                prompt: agent?["prompt"] as? String, lastMessage: agent?["lastAssistantMessage"] as? String,
+                lastOutputAt: date("lastOutputAt"), liveTerminals: (row["liveTerminalCount"] as? NSNumber)?.intValue ?? 0
+            )
+        }
+    }
+}
+
 public extension Workspace {
     /// Shows worktrees made outside Bullpen (with Orca, or plain git) in their project's office,
     /// for the projects registered here only. Worktrees that disappear from git leave Bullpen;

@@ -11,6 +11,7 @@ func value(_ flag: String) -> String? {
 
 signal(SIGPIPE, SIG_IGN)
 
+// Used from the signal handler below, which runs off the main thread once dispatchMain() parks it.
 let server = SessionServer(
     socketPath: value("--socket") ?? SessionProtocol.defaultSocketPath,
     logDirectory: value("--logs").map { URL(fileURLWithPath: $0) } ?? SessionProtocol.defaultLogDirectory,
@@ -18,15 +19,17 @@ let server = SessionServer(
 )
 server.onExit = { exit(0) }
 do {
+    // Started to replace an older bpd: take its terminals over first (they keep running).
+    if args.contains("--takeover") { try server.adopt(from: server.socketPath) }
     try server.start()
 } catch {
     FileHandle.standardError.write(Data("bpd: cannot start: \(error)\n".utf8))
     exit(1)
 }
 
-let term = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+let term = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
 signal(SIGTERM, SIG_IGN)
-term.setEventHandler {
+term.setEventHandler { @Sendable in
     server.stop()
     exit(0)
 }

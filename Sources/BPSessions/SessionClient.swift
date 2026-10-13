@@ -28,6 +28,7 @@ public final class SessionClient: @unchecked Sendable {
     private init(fd: Int32) {
         self.fd = fd
         (events, eventsContinuation) = AsyncStream.makeStream(bufferingPolicy: .unbounded)
+        queue.setSpecific(key: Self.queueKey, value: ObjectIdentifier(self))
         queue.sync {
             writer = FDWriter(fd: fd, queue: queue)
             let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
@@ -114,8 +115,16 @@ public final class SessionClient: @unchecked Sendable {
     }
 
     public func close() {
-        queue.sync { closeLocked(SessionError(message: "connection closed")) }
+        // The last reference can go away inside our own read handler, so deinit (and this) may
+        // already run on `queue`: a sync there would deadlock.
+        if DispatchQueue.getSpecific(key: Self.queueKey) == ObjectIdentifier(self) {
+            closeLocked(SessionError(message: "connection closed"))
+        } else {
+            queue.sync { closeLocked(SessionError(message: "connection closed")) }
+        }
     }
+
+    private static let queueKey = DispatchSpecificKey<ObjectIdentifier>()
 
     // MARK: Plumbing
 

@@ -1,4 +1,5 @@
 import BPAgents
+import BPCore
 import BPGit
 import BPProviders
 import BPSessions
@@ -11,6 +12,7 @@ struct SettingsView: View {
             PromptSettings().tabItem { Label("Prompt", systemImage: "text.bubble") }
             ModelSettings().tabItem { Label("Modelos", systemImage: "cpu") }
             LimitSettings().tabItem { Label("Límites", systemImage: "gauge.with.dots.needle.33percent") }
+            AutomationSettings().tabItem { Label("Automatizaciones", systemImage: "clock.badge.checkmark") }
             IntegrationSettings().tabItem { Label("Integraciones", systemImage: "link") }
             CommandLineSettings().tabItem { Label("Terminal", systemImage: "terminal") }
         }
@@ -281,6 +283,9 @@ private struct CustomAgentSheet: View {
     @State private var delivery = 0
     @State private var promptFlag = "--prompt"
     @State private var modelFlag = ""
+    @State private var mcpMode = 0
+    @State private var usage = "auto"
+    @State private var mcpFlag = "--mcp-config"
     @State private var error: String?
 
     private var found: Bool? {
@@ -311,6 +316,27 @@ private struct CustomAgentSheet: View {
                 }
                 TextField("Opción del modelo (opcional)", text: $modelFlag, prompt: Text("--model"))
             }
+            Section {
+                Picker("Servidores MCP", selection: $mcpMode) {
+                    Text("No los usa").tag(0)
+                    Text("Opción con el JSON").tag(1)
+                    Text("Opción con la ruta de un fichero").tag(2)
+                    Text("Fichero .mcp.json en el worktree").tag(3)
+                }
+                if mcpMode == 1 || mcpMode == 2 {
+                    TextField("Opción", text: $mcpFlag, prompt: Text("--mcp-config"))
+                }
+                Picker("Uso junto a Ajustes", selection: $usage) {
+                    Text("Automático (por el nombre o el comando)").tag("auto")
+                    Text("Saldo de DeepSeek").tag("deepseek")
+                    Text("Saldo de OpenRouter").tag("openrouter")
+                    Text("No mostrar").tag("none")
+                }
+            } header: {
+                Text("Coordinación y uso")
+            } footer: {
+                Text("Con MCP recibe el servidor de Bullpen y puede delegar en otros agentes y esperar sus respuestas (el .mcp.json se deja fuera de git). El saldo se lee con la clave de Ajustes › Modelos.")
+            }
             if let error { Text(error).foregroundStyle(.red) }
         }
         .formStyle(.grouped)
@@ -331,12 +357,161 @@ private struct CustomAgentSheet: View {
         default: .positional
         }
         do {
+            let flag = mcpFlag.trimmingCharacters(in: .whitespaces)
+            let mcp: MCPDelivery? = switch mcpMode {
+            case 1: .inlineJSON(flag)
+            case 2: .file(flag)
+            case 3: .projectFile
+            default: nil
+            }
             let saved = try AgentProfile.saveCustom(name: name.trimmingCharacters(in: .whitespaces), command: command,
-                                                    prompt: prompt, modelFlag: modelFlag.trimmingCharacters(in: .whitespaces))
+                                                    prompt: prompt, modelFlag: modelFlag.trimmingCharacters(in: .whitespaces), mcp: mcp,
+                                                    usage: usage == "auto" ? nil : usage)
             onSaved(saved)
             dismiss()
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+}
+
+/// Scheduled tasks: on chosen days at a time, a worktree with its agent on a task.
+private struct AutomationSettings: View {
+    @Environment(BuildingStore.self) private var store
+    @State private var editing: Automation?
+    @State private var running: UUID?
+
+    var body: some View {
+        Form {
+            Section {
+                if store.automations.isEmpty {
+                    Text("Ninguna todavía.").foregroundStyle(.secondary)
+                }
+                ForEach(store.automations) { automation in
+                    HStack {
+                        Toggle("", isOn: Binding(get: { automation.enabled }, set: { on in
+                            var changed = automation
+                            changed.enabled = on
+                            store.save(changed)
+                        }))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(automation.name)
+                            Text(summary(automation)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer()
+                        Button(running == automation.id ? "Creando…" : "Ejecutar ahora") {
+                            Task {
+                                running = automation.id
+                                await store.run(automation)
+                                running = nil
+                            }
+                        }
+                        .disabled(running != nil)
+                        Button("Editar") { editing = automation }
+                    }
+                }
+                Button("Nueva automatización…", systemImage: "plus") {
+                    guard let project = store.offices.first?.project else { return }
+                    editing = Automation(name: "", projectID: project.id, task: "")
+                }
+                .disabled(store.offices.isEmpty)
+            } footer: {
+                Text("A la hora indicada, Bullpen crea un worktree en el proyecto (rama auto/<nombre>-<fecha>) y arranca el agente con la tarea. Si el Mac estaba dormido o Bullpen cerrado, se ejecuta una vez al volver, si no han pasado más de 12 h.")
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { store.reloadAutomations() }
+        .sheet(item: $editing) { automation in
+            AutomationEditor(automation: automation, isNew: !store.automations.contains { $0.id == automation.id })
+        }
+    }
+
+    private func summary(_ a: Automation) -> String {
+        let project = store.offices.first { $0.project.id == a.projectID }?.project.name ?? "?"
+        let agent = AgentProfile.named(a.agentID)?.name ?? "agente principal"
+        let next = a.nextOccurrence(after: Date()).map { "próxima: \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "sin días"
+        return "\(project) · \(agent) · \(AutomationEditor.daysText(a.weekdays)) a las \(String(format: "%02d:%02d", a.hour, a.minute)) · \(next)"
+    }
+}
+
+private struct AutomationEditor: View {
+    @State var automation: Automation
+    let isNew: Bool
+    @Environment(BuildingStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+
+    /// Monday first, as in Spain.
+    static let days: [(Int, String)] = [(2, "L"), (3, "M"), (4, "X"), (5, "J"), (6, "V"), (7, "S"), (1, "D")]
+
+    static func daysText(_ set: Set<Int>) -> String {
+        if set == [2, 3, 4, 5, 6] { return "de lunes a viernes" }
+        if set.count == 7 { return "todos los días" }
+        return days.filter { set.contains($0.0) }.map(\.1).joined(separator: " ")
+    }
+
+    private var time: Binding<Date> {
+        Binding(
+            get: { Calendar.current.date(bySettingHour: automation.hour, minute: automation.minute, second: 0, of: Date()) ?? Date() },
+            set: { date in
+                automation.hour = Calendar.current.component(.hour, from: date)
+                automation.minute = Calendar.current.component(.minute, from: date)
+            }
+        )
+    }
+
+    var body: some View {
+        Form {
+            TextField("Nombre", text: $automation.name, prompt: Text("Revisar dependencias"))
+            Picker("Proyecto", selection: $automation.projectID) {
+                ForEach(store.offices) { Text($0.project.name).tag($0.project.id) }
+            }
+            Picker("Agente", selection: Binding(get: { automation.agentID ?? "" }, set: { automation.agentID = $0.isEmpty ? nil : $0 })) {
+                Text("Agente principal").tag("")
+                ForEach(AgentProfile.all) { Text($0.name).tag($0.id) }
+            }
+            HStack {
+                Text("Días")
+                Spacer()
+                ForEach(Self.days, id: \.0) { day, letter in
+                    let on = automation.weekdays.contains(day)
+                    Button(letter) {
+                        if on { automation.weekdays.remove(day) } else { automation.weekdays.insert(day) }
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(on ? .accentColor : .secondary)
+                    .fontWeight(on ? .bold : .regular)
+                }
+            }
+            DatePicker("Hora", selection: time, displayedComponents: .hourAndMinute)
+            VStack(alignment: .leading) {
+                Text("Tarea")
+                TextEditor(text: $automation.task)
+                    .font(.body)
+                    .frame(minHeight: 90)
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
+            }
+            if !isNew {
+                Button("Borrar automatización", role: .destructive) {
+                    store.delete(automation)
+                    dismiss()
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 520)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("Cancelar") { dismiss() } }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Guardar") {
+                    store.save(automation)
+                    dismiss()
+                }
+                .disabled(automation.name.trimmingCharacters(in: .whitespaces).isEmpty
+                          || automation.task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || automation.weekdays.isEmpty)
+            }
         }
     }
 }

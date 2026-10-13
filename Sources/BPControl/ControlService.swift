@@ -142,6 +142,26 @@ public struct ControlService: Sendable {
                                baseRef: wt.baseRef, agent: wt.agentProfileID, state: "", detail: nil, ticket: wt.ticket?.key)
     }
 
+    // MARK: Browser
+
+    /// Drives the worktree's browser tab in the app (the given worktree, or the caller's own).
+    public func browser(_ action: BrowserRequest.Action, worktree reference: String?, url: String? = nil, selector: String? = nil,
+                        text: String? = nil, submit: Bool? = nil, script: String? = nil,
+                        bridge: String = BrowserBridge.socketPath) async throws -> BrowserResponse {
+        let (wt, project): (Worktree, Project)
+        if let reference, !reference.isEmpty {
+            (wt, project) = try find(reference)
+        } else {
+            (wt, project) = try find(try current().id)
+        }
+        let home = try workspace.browserURL(for: wt, in: project)
+        let response = try await BrowserBridge.send(BrowserRequest(action: action, worktree: wt.id.uuidString, home: home, url: url,
+                                                                   selector: selector, text: text, submit: submit, script: script),
+                                                    socketPath: bridge)
+        guard response.ok else { throw ControlError(response.text ?? "El navegador no pudo hacerlo.") }
+        return response
+    }
+
     /// States where an agent has stopped and is waiting for someone.
     public static let stopStates = Set([AgentState.done, .needsYou, .idle, .error, .dead].map(\.rawValue))
 

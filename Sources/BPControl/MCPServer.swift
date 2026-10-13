@@ -1,3 +1,4 @@
+import BPSessions
 import Foundation
 
 /// `bp mcp`: a Model Context Protocol server over stdio so agents can drive Bullpen (PLAN §13):
@@ -44,6 +45,7 @@ public struct MCPServer: Sendable {
             let name = params["name"] as? String ?? ""
             let args = params["arguments"] as? [String: Any] ?? [:]
             do {
+                if name.hasPrefix("browser_") { return reply(id: id, result: ["content": try await browser(name, args)]) }
                 return reply(id: id, result: ["content": [["type": "text", "text": try await call(name, args)]]])
             } catch {
                 return reply(id: id, result: ["content": [["type": "text", "text": error.localizedDescription]], "isError": true])
@@ -91,6 +93,28 @@ public struct MCPServer: Sendable {
         }
     }
 
+    /// Browser tools: text answers, and the screenshot as an image the model can see.
+    func browser(_ name: String, _ args: [String: Any]) async throws -> [[String: Any]] {
+        let action: BrowserRequest.Action = switch name {
+        case "browser_open": .open
+        case "browser_snapshot": .snapshot
+        case "browser_screenshot": .screenshot
+        case "browser_click": .click
+        case "browser_type": .type
+        case "browser_eval": .eval
+        case "browser_console": .console
+        default: throw ControlError("Herramienta desconocida: \(name)")
+        }
+        let response = try await service.browser(
+            action, worktree: args["worktree"] as? String, url: args["url"] as? String, selector: args["selector"] as? String,
+            text: args["text"] as? String, submit: args["submit"] as? Bool, script: args["script"] as? String
+        )
+        var content: [[String: Any]] = []
+        if let image = response.image { content.append(["type": "image", "data": image.base64EncodedString(), "mimeType": "image/png"]) }
+        if let text = response.text, !text.isEmpty { content.append(["type": "text", "text": text]) }
+        return content.isEmpty ? [["type": "text", "text": "Hecho."]] : content
+    }
+
     private func json<T: Encodable>(_ value: T) throws -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -126,6 +150,21 @@ public struct MCPServer: Sendable {
         tool("ask_worktree", "Delegate to another worktree's agent: send it a message, wait until it finishes, and get its answer (its last message, or its terminal's last lines).",
              ["worktree": ["type": "string"], "text": ["type": "string"], "timeout": ["type": "integer", "default": 1800, "description": "Seconds"]],
              ["worktree", "text"]),
+        tool("browser_open", "Open a page in the worktree's browser tab in Bullpen (by default the worktree's own URL: its dev server). Returns the title and URL.",
+             ["url": ["type": "string", "description": "Absolute URL, or a path like /login on the worktree's URL"],
+              "worktree": ["type": "string", "description": "Branch or id (default: yours)"]], []),
+        tool("browser_snapshot", "The page in the worktree's browser: URL, title, visible text and its links, buttons and fields with CSS selectors.",
+             ["worktree": ["type": "string"]], []),
+        tool("browser_screenshot", "A screenshot of the page in the worktree's browser.", ["worktree": ["type": "string"]], []),
+        tool("browser_click", "Click an element in the worktree's browser, by CSS selector or by its visible text.",
+             ["selector": ["type": "string"], "text": ["type": "string", "description": "Visible text, when there is no selector"],
+              "worktree": ["type": "string"]], []),
+        tool("browser_type", "Type into a field in the worktree's browser (replaces its value), optionally submitting its form.",
+             ["selector": ["type": "string"], "text": ["type": "string"], "submit": ["type": "boolean", "default": false],
+              "worktree": ["type": "string"]], ["selector", "text"]),
+        tool("browser_eval", "Run JavaScript in the page and return its result (as JSON text).",
+             ["script": ["type": "string"], "worktree": ["type": "string"]], ["script"]),
+        tool("browser_console", "Console messages and JavaScript errors from the page since it was opened.", ["worktree": ["type": "string"]], []),
         tool("read_terminal", "Last lines printed in a worktree's terminal, as plain text.",
              ["worktree": ["type": "string"], "lines": ["type": "integer", "default": 60]], ["worktree"]),
         tool("remove_worktree", "Remove a worktree's folder (the branch is kept). Refuses if work would be lost unless force is true.",

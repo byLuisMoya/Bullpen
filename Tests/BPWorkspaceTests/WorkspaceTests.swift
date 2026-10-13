@@ -396,3 +396,82 @@ let fakeB = AgentProfile(id: "fake-b", name: "Fake B", executable: "/bin/echo")
         client.close()
     }
 }
+
+@Suite(.serialized) struct AutomationRunTests {
+    @Test func runCreatesADatedWorktreeAndMarksIt() async throws {
+        let f = try await Fixture.make(config: "")
+        defer { f.server.stop() }
+        let auto = Automation(name: "Revisar dependencias", projectID: f.project.id, agentID: nil, task: "Revisa las dependencias")
+        try f.workspace.database.save(auto)
+        let first = try await f.workspace.run(auto, defaultAgent: "none", globalPrompt: nil)
+        #expect(first.branch.hasPrefix("auto/revisar-dependencias-"))
+        #expect(first.taskDescription == "Revisa las dependencias")
+        #expect(try f.workspace.database.automations().first?.lastRun != nil)
+        // Same day again: a free branch name.
+        let second = try await f.workspace.run(auto, defaultAgent: "none", globalPrompt: nil)
+        #expect(second.branch == first.branch + "-2")
+    }
+}
+
+@Suite(.serialized) struct BrowserURLTests {
+    @Test func everyWorktreeGetsItsOwnURL() async throws {
+        let f = try await Fixture.make(config: "")
+        defer { f.server.stop() }
+        let a = try await f.workspace.createWorktree(WorktreeRequest(project: f.project, branch: "a", baseRef: "main"))
+        let b = try await f.workspace.createWorktree(WorktreeRequest(project: f.project, branch: "b", baseRef: "main"))
+        let urlA = try f.workspace.browserURL(for: a, in: f.project), urlB = try f.workspace.browserURL(for: b, in: f.project)
+        #expect(urlA.hasPrefix("http://localhost:") && urlA != urlB)
+        #expect(urlA == "http://localhost:\(a.ports?["preview"] ?? 0)")
+    }
+
+    @Test func browserURLFromTheConfig() async throws {
+        let f = try await Fixture.make(config: """
+        [env]
+        PORT = "{{port:web}}"
+
+        [browser]
+        url = "http://localhost:{{port:web}}/app/{{worktree.slug}}"
+        """)
+        defer { f.server.stop() }
+        let wt = try await f.workspace.createWorktree(WorktreeRequest(project: f.project, branch: "feature/x", baseRef: "main"))
+        let web = try #require(wt.ports?["web"])
+        #expect(try f.workspace.browserURL(for: wt, in: f.project) == "http://localhost:\(web)/app/feature-x")
+    }
+
+    @Test func olderWorktreesGetAPortTheFirstTime() async throws {
+        let f = try await Fixture.make(config: "")
+        defer { f.server.stop() }
+        var wt = try await f.workspace.createWorktree(WorktreeRequest(project: f.project, branch: "old", baseRef: "main"))
+        wt.ports = nil
+        try f.workspace.database.save(wt)
+        let url = try f.workspace.browserURL(for: wt, in: f.project)
+        let saved = try #require(try f.workspace.database.offices().first?.worktrees.first { $0.id == wt.id })
+        #expect(url == "http://localhost:\(saved.ports?["preview"] ?? -1)")
+    }
+}
+
+@Suite struct OrcaActivityTests {
+    @Test func readsOrcasLiveState() {
+        let json = #"""
+        {"result":{"worktrees":[{"path":"/o/w","liveTerminalCount":1,"lastOutputAt":1791890441395,
+          "agents":[{"state":"done","agentType":"claude","prompt":"crea las PRs","lastAssistantMessage":"Las dos PRs están creadas."}]},
+          {"path":"/o/x","liveTerminalCount":0,"agents":[]}]}}
+        """#
+        let rows = OrcaActivity.parse(Data(json.utf8))
+        #expect(rows.count == 2)
+        #expect(rows[0].state() == .done)
+        #expect(rows[0].prompt == "crea las PRs" && rows[0].lastMessage == "Las dos PRs están creadas.")
+        #expect(rows[1].state() == .dead, "no live terminal")
+    }
+
+    @Test func mapsOrcasWordsAndFallsBackToOutput() {
+        func activity(_ state: String?, output: Date? = nil) -> OrcaActivity {
+            OrcaActivity(path: "/p", agentState: state, agentType: "claude", prompt: nil, lastMessage: nil, lastOutputAt: output, liveTerminals: 1)
+        }
+        #expect(activity("working").state() == .working)
+        #expect(activity("waiting").state() == .needsYou)
+        #expect(activity("error").state() == .error)
+        #expect(activity("something-new", output: Date()).state() == .working)
+        #expect(activity(nil, output: Date().addingTimeInterval(-60)).state() == .idle)
+    }
+}

@@ -6,6 +6,7 @@ import BPSessions
 import BPWorkspace
 import BPPersistence
 import Foundation
+import UserNotifications
 import Observation
 import os
 
@@ -83,6 +84,56 @@ final class BuildingStore {
             try database?.deleteProject(id: project.id)
         } catch {
             report(error, "Remove project failed")
+        }
+    }
+
+    // MARK: Automations
+
+    private(set) var automations: [Automation] = []
+
+    func reloadAutomations() {
+        automations = (try? database?.automations()) ?? []
+    }
+
+    func save(_ automation: Automation) {
+        do { try database?.save(automation) } catch { report(error, "Save automation failed") }
+        reloadAutomations()
+    }
+
+    func delete(_ automation: Automation) {
+        do { try database?.deleteAutomation(id: automation.id) } catch { report(error, "Delete automation failed") }
+        reloadAutomations()
+    }
+
+    /// Runs it now; nil (and `errorMessage`) if creating its worktree failed.
+    @discardableResult
+    func run(_ automation: Automation) async -> Worktree? {
+        guard let workspace else { return nil }
+        defer { reloadAutomations() }
+        do {
+            return try await workspace.run(automation, defaultAgent: PrimaryAgent.id,
+                                           globalPrompt: UserDefaults.standard.string(forKey: "globalInitialPrompt"))
+        } catch {
+            report(error, "Automation failed")
+            return nil
+        }
+    }
+
+    /// Every 30 s, runs what is due (and catches up once after the Mac was asleep or Bullpen closed).
+    func runAutomations() async {
+        while !Task.isCancelled {
+            reloadAutomations()
+            for automation in automations where automation.isDue(at: Date()) {
+                guard let worktree = await run(automation) else { continue }
+                let content = UNMutableNotificationContent()
+                content.title = "Automatización «\(automation.name)»"
+                content.body = "Worktree \(worktree.branch) creado con su tarea."
+                let request = UNNotificationRequest(identifier: "automation-\(automation.id)", content: content, trigger: nil)
+                if await UNUserNotificationCenter.current().notificationSettings().authorizationStatus == .authorized {
+                    try? await UNUserNotificationCenter.current().add(request)
+                }
+            }
+            try? await Task.sleep(for: .seconds(30))
         }
     }
 

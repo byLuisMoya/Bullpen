@@ -20,8 +20,22 @@ enum ModelService {
     }
 
     static func complete(_ job: ModelJob, _ request: CompletionRequest) async throws -> String {
-        let choice = choice(for: job)
-        return try await ModelClient(choice: choice, apiKey: keys.key(for: choice.provider)).complete(request)
+        try await ModelClient(choice: effectiveChoice(for: job), apiKey: keys.key(for: effectiveChoice(for: job).provider)).complete(request)
+    }
+
+    /// The configured model, or the user's own Claude Code when that provider has no key yet:
+    /// summaries and branch names then work out of the box with a Claude subscription.
+    static func effectiveChoice(for job: ModelJob) -> ModelChoice {
+        let configured = choice(for: job)
+        let missingKey = configured.provider.needsKey && (keys.key(for: configured.provider) ?? "").isEmpty
+        guard missingKey, ClaudeCodeCLI.locate() != nil else { return configured }
+        return ModelChoice(provider: .claudeCode, model: job == .quick ? "haiku" : "opus")
+    }
+
+    /// Something can answer: a key for the chosen provider, a local server, or Claude Code.
+    static func available(for job: ModelJob) -> Bool {
+        let choice = effectiveChoice(for: job)
+        return !choice.provider.needsKey || !(keys.key(for: choice.provider) ?? "").isEmpty
     }
 
     /// `fix/login-timeout` from a task description.

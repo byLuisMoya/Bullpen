@@ -48,3 +48,20 @@ import Testing
         #expect(try db.offices().first?.project.initialPrompt == "Lee CLAUDE.md")
     }
 }
+
+@Suite struct AutomationStorageTests {
+    @Test func savesAndReadsAutomations() throws {
+        let db = try AppDatabase.inMemory()
+        let project = Project(name: "app", path: "/tmp/app-\(UUID().uuidString)")
+        try db.save(project)
+        var auto = Automation(name: "Deps", projectID: project.id, agentID: "codex", task: "Revisa", weekdays: [2, 4], hour: 8, minute: 30)
+        try db.save(auto)
+        let read = try #require(try db.automations().first)
+        #expect(read.id == auto.id && read.weekdays == [2, 4] && read.hour == 8 && read.minute == 30 && read.agentID == "codex" && read.enabled)
+        auto.lastRun = Date(timeIntervalSince1970: 1_800_000_000)
+        try db.save(auto)
+        #expect(try db.automations().first?.lastRun == auto.lastRun)
+        try db.deleteAutomation(id: auto.id)
+        #expect(try db.automations().isEmpty)
+    }
+}

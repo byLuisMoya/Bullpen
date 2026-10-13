@@ -48,3 +48,20 @@ import Testing
         #expect(PlanLimits.codexSessionTokens(log) == 250)
     }
 }
+
+@Suite struct BalanceTests {
+    @Test func readsPrepaidBalances() {
+        let deepseek = #"{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"80.00"},{"currency":"USD","total_balance":"12.34","granted_balance":"0.00","topped_up_balance":"12.34"}]}"#
+        #expect(PlanLimits.parseDeepSeekBalance(Data(deepseek.utf8)) == .balance(remaining: 12.34, currency: "USD", spent: nil))
+        let openrouter = #"{"data":{"total_credits":20,"total_usage":7.5}}"#
+        #expect(PlanLimits.parseOpenRouterCredits(Data(openrouter.utf8)) == .balance(remaining: 12.5, currency: "USD", spent: 7.5))
+        #expect(PlanLimits.parseDeepSeekBalance(Data("{}".utf8)) == nil)
+    }
+
+    @Test func guessesTheAccountFromNameOrCommand() {
+        #expect(AgentProfile(id: "x", name: "DeepSeek", executable: "ds").effectiveUsageSource == "deepseek")
+        #expect(AgentProfile(id: "y", name: "Mío", executable: "aider", arguments: ["--model", "openrouter/qwen"]).effectiveUsageSource == "openrouter")
+        #expect(AgentProfile(id: "z", name: "DeepSeek", executable: "ds", usageSource: "none").effectiveUsageSource == nil)
+        #expect(AgentProfile.gemini.effectiveUsageSource == nil)
+    }
+}

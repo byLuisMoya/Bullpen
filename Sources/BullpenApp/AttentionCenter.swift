@@ -19,6 +19,9 @@ final class AttentionCenter {
         didSet { if let focusedWorktree { clear(focusedWorktree) } }
     }
 
+    /// Orca's agents, for the worktrees that came from Orca (set by the app).
+    @ObservationIgnored var orca: OrcaCenter?
+
     func start(store: BuildingStore, sessions: SessionManager) async {
         // UNUserNotificationCenter needs a real app bundle (not `swift run`).
         if Bundle.main.bundleIdentifier != nil, Bundle.main.bundleURL.pathExtension == "app" {
@@ -35,7 +38,9 @@ final class AttentionCenter {
         var next: [UUID: AgentStatus] = [:]
         for office in store.offices {
             for worktree in office.worktrees {
-                let status = sessions.status(for: worktree)
+                // A worktree from Orca without an agent of Bullpen's: its state is Orca's agent's
+                // (even with a plain terminal open here).
+                let status = (worktree.agentProfileID == nil ? orca?.status(for: worktree) : nil) ?? sessions.status(for: worktree)
                 next[worktree.id] = status
                 let old = statuses[worktree.id]?.state
                 if old != nil, old != status.state { changed(worktree, in: office.project, to: status) }

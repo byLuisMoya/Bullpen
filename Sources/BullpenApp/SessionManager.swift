@@ -66,21 +66,31 @@ final class SessionManager {
 
     func connection() async throws -> SessionClient {
         if let client { return client }
-        let client = try await connectOrLaunch()
+        var client = try await connectOrLaunch()
         let hello = try await client.hello()
-        if hello.protocolVersion != SessionProtocol.version {
-            if try await client.list().contains(where: \.isRunning) {
-                warning = "Hay un bpd de otra versión (\(hello.build)) con sesiones activas; se reemplazará cuando terminen."
-            } else {
+        if hello.build != Bullpen.version {
+            let running = try await client.list().filter(\.isRunning).count
+            if hello.protocolVersion >= 3 {
+                // A daemon that can hand its terminals over: replace it without closing anything.
+                log.info("Taking over from bpd \(hello.build, privacy: .public)")
+                client.close()
+                client = try await DaemonLauncher.takeOver(bpdPath: bpdPath, expectBuild: Bullpen.version)
+                warning = nil
+            } else if running == 0 {
                 log.info("Replacing bpd \(hello.build, privacy: .public)")
                 try? await client.shutdown()
                 client.close()
                 try await Task.sleep(for: .milliseconds(200))
                 return try await connection()
+            } else {
+                // Too old to hand over: say so, and let the user choose when (closes those terminals).
+                outdatedDaemon = (hello.build, running)
             }
         }
         self.client = client
         isConnected = true
+        // Terminals that were open on a previous connection (e.g. before a takeover) follow along.
+        for (id, handler) in handlers where handler.value != nil { try? await client.attach(id) }
         Task { [weak self] in
             for await event in client.events { self?.route(event) }
             self?.disconnected()
@@ -88,9 +98,26 @@ final class SessionManager {
         return client
     }
 
+    private var bpdPath: String {
+        Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("bpd").path ?? "bpd"
+    }
+
     private func connectOrLaunch() async throws -> SessionClient {
-        let bpd = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("bpd").path ?? "bpd"
-        return try await DaemonLauncher.connect(bpdPath: bpd)
+        try await DaemonLauncher.connect(bpdPath: bpdPath)
+    }
+
+    /// A bpd from before handovers existed, still running terminals: (its version, how many).
+    private(set) var outdatedDaemon: (build: String, running: Int)?
+
+    /// Restarts that old bpd so the current one runs; its terminals close (agents can be restarted).
+    func restartOutdatedDaemon() async {
+        guard let client else { return }
+        try? await client.shutdown()
+        client.close()
+        disconnected()
+        outdatedDaemon = nil
+        try? await Task.sleep(for: .milliseconds(300))
+        _ = try? await connection()
     }
 
     private func disconnected() {
@@ -124,7 +151,8 @@ final class SessionManager {
             // main terminal: swap it for the agent, but only while nothing is running in it.
             let idleShell = existing.command == nil
                 && existing.foregroundProcess.map { StatusEngine.isShell($0) } ?? true
-            if existing.isRunning, !(worktree.external && worktree.agentProfileID == nil && idleShell) { return id }
+            let swap = worktree.external && worktree.agentProfileID == nil && idleShell && !(agentRunsElsewhere?(worktree) ?? false)
+            if existing.isRunning, !swap { return id }
             if existing.isRunning {
                 try? await client.kill(id, signal: SIGHUP)
                 for _ in 0..<20 {
@@ -135,14 +163,16 @@ final class SessionManager {
             try await client.remove(id)
         }
         var agentID = worktree.agentProfileID
-        // Made in Orca or with git: it gets the main agent the first time it is opened here.
-        if agentID == nil, worktree.external {
+        // Made in Orca or with git: it gets the main agent the first time it is opened here,
+        // unless Orca already runs one there (two agents in one folder would step on each other).
+        if agentID == nil, worktree.external, !(agentRunsElsewhere?(worktree) ?? false) {
             agentID = PrimaryAgent.id
             adoptAgent?(worktree, PrimaryAgent.id)
         }
         guard let profile = AgentProfile.named(agentID) else {
             return try await ensureShell(for: worktree, environment: environment, cols: cols, rows: rows)
         }
+        hooks.prepare(profile, in: worktree.path)
         let launch = profile.launch(model: worktree.agentModel, prompt: nil, hooks: hooks)
         infos[id] = try await client.create(SessionSpec(id: id, cwd: worktree.path, command: launch.command,
                                                         environment: environment, cols: cols, rows: rows))
@@ -152,6 +182,9 @@ final class SessionManager {
     // MARK: Extra terminal tabs
 
     static func tabPrefix(for worktree: Worktree) -> String { sessionID(for: worktree) + "-t" }
+
+    /// Whether another tool (Orca) has a live agent in this worktree (set by the app).
+    @ObservationIgnored var agentRunsElsewhere: ((Worktree) -> Bool)?
 
     /// Saves the agent an outside worktree adopted (set by the app: the store owns the database).
     @ObservationIgnored var adoptAgent: ((Worktree, String) -> Void)?
@@ -263,6 +296,7 @@ final class SessionManager {
             _ = try await ensureShell(for: worktree, environment: environment)
             return
         }
+        hooks.prepare(profile, in: worktree.path)
         let launch = profile.launch(model: worktree.agentModel, prompt: nil, hooks: hooks)
         try await startAgent(for: worktree, command: launch.command, environment: environment)
     }

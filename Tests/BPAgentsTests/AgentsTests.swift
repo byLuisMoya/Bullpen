@@ -235,3 +235,44 @@ import Testing
         #expect(throws: (any Error).self) { try AgentProfile.saveCustom(name: "  ", command: "x", prompt: .positional, modelFlag: nil, in: dir) }
     }
 }
+
+@Suite struct CustomAgentMCPTests {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("bp-mcp-\(UUID().uuidString)")
+
+    @Test func customAgentsGetBullpenMCPTheirWay() throws {
+        let hooks = AgentHooks(bpPath: "/x/bp", claudeSettingsPath: dir.appendingPathComponent("s.json").path, offersBullpenMCP: true)
+        guard AgentHooks.coordinationEnabled else { return }
+        let json = try AgentProfile.saveCustom(name: "Uno", command: "uno", prompt: .positional, modelFlag: nil, mcp: .inlineJSON("--mcp"), in: dir)
+        #expect(json.command(model: nil, prompt: nil, hooks: hooks).contains("--mcp '{\"mcpServers\""))
+        let file = try AgentProfile.saveCustom(name: "Dos", command: "dos", prompt: .positional, modelFlag: nil, mcp: .file("--servers"), in: dir)
+        #expect(file.command(model: nil, prompt: nil, hooks: hooks).contains("--servers '\(hooks.mcpConfigPath)'"))
+        hooks.prepare(file, in: "/tmp")
+        #expect(FileManager.default.fileExists(atPath: hooks.mcpConfigPath))
+        // Read back from disk with the same delivery.
+        #expect(AgentProfile.loadCustom(from: dir).map(\.mcp) == [.file("--servers"), .inlineJSON("--mcp")])   // dos.toml, uno.toml
+    }
+
+    @Test func projectFileIsWrittenAndKeptOutOfGit() async throws {
+        let repo = dir.appendingPathComponent("repo")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        let run = { (args: [String]) in
+            let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/git"); p.arguments = args; p.currentDirectoryURL = repo
+            p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+            try p.run(); p.waitUntilExit()
+        }
+        try run(["init", "-q", "-b", "main"])
+        try run(["-c", "user.email=t@e.com", "-c", "user.name=T", "commit", "-q", "--allow-empty", "-m", "i"])
+        let wt = dir.appendingPathComponent("wt")
+        try run(["worktree", "add", "-q", "-b", "x", wt.path])
+        let hooks = AgentHooks(bpPath: "/x/bp", claudeSettingsPath: dir.appendingPathComponent("s.json").path, offersBullpenMCP: true)
+        guard AgentHooks.coordinationEnabled else { return }
+        let agent = AgentProfile(id: "tres", name: "Tres", executable: "tres", isCustom: true, mcp: .projectFile)
+        hooks.prepare(agent, in: wt.path)
+        let written = try String(contentsOf: wt.appendingPathComponent(".mcp.json"), encoding: .utf8)
+        #expect(written.contains("\"bullpen\""))
+        let exclude = try String(contentsOf: repo.appendingPathComponent(".git/info/exclude"), encoding: .utf8)
+        #expect(exclude.contains(".mcp.json"))
+        hooks.prepare(agent, in: wt.path)   // twice: excluded once
+        #expect(try String(contentsOf: repo.appendingPathComponent(".git/info/exclude"), encoding: .utf8).components(separatedBy: ".mcp.json").count == 2)
+    }
+}

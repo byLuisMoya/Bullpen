@@ -67,3 +67,30 @@ import Testing
         #expect(store.key(for: .openai) == nil)
     }
 }
+
+@Suite struct NewProviderTests {
+    @Test func claudeCodeRunsIsolatedWithoutTools() {
+        let args = ClaudeCodeCLI.arguments(CompletionRequest(system: "Resume", prompt: "hola"), model: "")
+        #expect(args.starts(with: ["-p", "--model", "haiku"]))
+        for flag in ["--strict-mcp-config", "--safe-mode", "--no-session-persistence"] { #expect(args.contains(flag)) }
+        #expect(args[args.firstIndex(of: "--tools")! + 1] == "")
+        #expect(args.last == "hola")
+        #expect(!ProviderID.claudeCode.needsKey)
+    }
+
+    @Test func deepSeekSpeaksTheOpenAIFormat() throws {
+        let client = ModelClient(choice: ModelChoice(provider: .deepseek, model: "deepseek-chat"), apiKey: "sk-x")
+        let request = try client.makeRequest(CompletionRequest(prompt: "hola"))
+        #expect(request.url?.absoluteString == "https://api.deepseek.com/chat/completions")
+        #expect(request.value(forHTTPHeaderField: "authorization") == "Bearer sk-x")
+    }
+}
+
+@Suite struct LiveClaudeCodeTests {
+    /// Calls the real `claude -p` (uses the subscription): `BULLPEN_LIVE=1 swift test --filter LiveClaudeCodeTests`.
+    @Test func answersWithTheUsersClaudeCode() async throws {
+        guard ProcessInfo.processInfo.environment["BULLPEN_LIVE"] == "1", ClaudeCodeCLI.locate() != nil else { return }
+        let answer = try await ClaudeCodeCLI.complete(CompletionRequest(system: "Responde solo con la palabra pedida.", prompt: "Di: bullpen"), model: "haiku")
+        #expect(answer.lowercased().contains("bullpen"))
+    }
+}

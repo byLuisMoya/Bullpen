@@ -1,5 +1,6 @@
 import BPAgents
 import BPHabitat
+import BPProviders
 import Foundation
 import SwiftUI
 
@@ -18,7 +19,37 @@ enum PlanUsageService {
         switch agent {
         case AgentProfile.claude.id: await claude(tokensToday: claudeTokensToday)
         case AgentProfile.codex.id: await codex()
-        default: .unavailable("Sin datos de uso para \(AgentProfile.named(agent)?.name ?? agent)")
+        default:
+            if let source = AgentProfile.named(agent)?.effectiveUsageSource {
+                await balance(source)
+            } else {
+                .unavailable("Sin datos de uso para \(AgentProfile.named(agent)?.name ?? agent)")
+            }
+        }
+    }
+
+    // MARK: Prepaid accounts
+
+    /// Balance of a pay-per-use account, with the key saved in Settings › Models.
+    private static func balance(_ source: String) async -> PlanUsage {
+        let (provider, url): (ProviderID, URL) = switch source {
+        case "openrouter": (.openrouter, URL(string: "https://openrouter.ai/api/v1/credits")!)
+        default: (.deepseek, URL(string: "https://api.deepseek.com/user/balance")!)
+        }
+        guard let key = ModelService.keys.key(for: provider), !key.isEmpty else {
+            return .unavailable("Añade la clave de \(provider.name) en Ajustes › Modelos")
+        }
+        var request = URLRequest(url: url, timeoutInterval: 10)
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let parsed = provider == .openrouter ? PlanLimits.parseOpenRouterCredits(data) : PlanLimits.parseDeepSeekBalance(data)
+            guard status == 200, let parsed else { return .unavailable("\(provider.name) no devolvió el saldo (HTTP \(status))") }
+            return parsed
+        } catch {
+            return .unavailable("Sin conexión con \(provider.name)")
         }
     }
 
@@ -158,6 +189,10 @@ struct PlanUsageBadge: View {
             let tokens = "\(UsageWindow.tokens(today)) tokens hoy"
             guard !compact, let cost, cost > 0 else { return tokens }
             return "\(tokens) · \(UsageWindow.money(cost))"
+        case let .balance(remaining, currency, spent):
+            let left = remaining.formatted(.currency(code: currency).precision(.fractionLength(2)))
+            if compact { return left }
+            return "Saldo \(left)" + (spent.map { " · gastado \($0.formatted(.currency(code: currency).precision(.fractionLength(2))))" } ?? "")
         case let .unavailable(reason):
             return compact ? "sin datos" : reason
         }

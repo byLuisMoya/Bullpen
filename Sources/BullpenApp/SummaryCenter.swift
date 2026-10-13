@@ -20,6 +20,8 @@ final class SummaryCenter {
 
     static let activeStates: Set<AgentState> = [.working, .thinking, .needsYou, .done]
 
+    @ObservationIgnored var orca: OrcaCenter?
+
     func start(store: BuildingStore, sessions: SessionManager, attention: AttentionCenter) async {
         while !Task.isCancelled {
             await refresh(store: store, sessions: sessions, attention: attention)
@@ -34,12 +36,19 @@ final class SummaryCenter {
             guard let state = attention.statuses[worktree.id]?.state, Self.activeStates.contains(state) else { continue }
             let transcript = sessions.infos[Workspace.sessionID(for: worktree)]?.agentActivity?.transcriptPath
             let log = SessionProtocol.outputFile(session: Workspace.sessionID(for: worktree)).path
-            let digest = await Task.detached {
-                if let transcript, let text = Self.tail(transcript, bytes: 96_000) {
-                    return ActivityDigest.fromClaudeTranscript(text)
-                }
-                return ActivityDigest.fromTerminal(Self.tail(log, bytes: 12_000) ?? "")
-            }.value
+            // Worktrees from Orca: what Orca's agent was asked and last said.
+            let fromOrca = worktree.agentProfileID == nil ? orca?.activity(for: worktree) : nil
+            let digest: ActivityDigest
+            if let fromOrca {
+                digest = ActivityDigest(request: fromOrca.prompt, lastMessage: fromOrca.lastMessage)
+            } else {
+                digest = await Task.detached {
+                    if let transcript, let text = Self.tail(transcript, bytes: 96_000) {
+                        return ActivityDigest.fromClaudeTranscript(text)
+                    }
+                    return ActivityDigest.fromTerminal(Self.tail(log, bytes: 12_000) ?? "")
+                }.value
+            }
             guard !digest.isEmpty, digest.modelPrompt != lastInput[worktree.id] else { continue }
             lastInput[worktree.id] = digest.modelPrompt
             if let quick = digest.quickSummary { summaries[worktree.id] = quick }
@@ -64,11 +73,8 @@ final class SummaryCenter {
         }
     }
 
-    /// The quick-tasks model can be called: a local server, or a provider with its key saved.
-    static var modelAvailable: Bool {
-        let choice = ModelService.choice(for: .quick)
-        return !choice.provider.needsKey || ModelService.keys.key(for: choice.provider)?.isEmpty == false
-    }
+    /// The quick-tasks model can be called: a key, a local server, or the user's Claude Code.
+    static var modelAvailable: Bool { ModelService.available(for: .quick) }
 
     /// The last `bytes` of a file, starting at a line boundary.
     nonisolated static func tail(_ path: String, bytes: Int) -> String? {

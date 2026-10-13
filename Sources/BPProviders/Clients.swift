@@ -13,6 +13,7 @@ public struct ModelClient: Sendable {
     }
 
     public func complete(_ request: CompletionRequest) async throws -> String {
+        if choice.provider == .claudeCode { return try await ClaudeCodeCLI.complete(request, model: choice.model) }
         if choice.provider.needsKey, (apiKey ?? "").isEmpty {
             throw ProviderError("Falta la clave de \(choice.provider.name). Añádela en Ajustes › Modelos.")
         }
@@ -51,7 +52,9 @@ public struct ModelClient: Sendable {
                 "generationConfig": ["maxOutputTokens": request.maxTokens],
             ]
             if let system = request.system { body["systemInstruction"] = ["parts": [["text": system]]] }
-        case .openai, .openrouter, .ollama, .lmstudio:
+        case .claudeCode:
+            throw ProviderError("Claude Code no usa HTTP")
+        case .openai, .openrouter, .ollama, .lmstudio, .deepseek:
             url = base.appendingPathComponent("chat/completions")
             if let apiKey, !apiKey.isEmpty { headers["authorization"] = "Bearer \(apiKey)" }
             var messages: [[String: String]] = []
@@ -93,7 +96,9 @@ public struct ModelClient: Sendable {
             let text = parts.compactMap { $0["text"] as? String }.joined()
             guard !text.isEmpty else { throw ProviderError("Respuesta vacía de Gemini (\(candidate?["finishReason"] as? String ?? "?"))") }
             return text
-        case .openai, .openrouter, .ollama, .lmstudio:
+        case .claudeCode:
+            throw ProviderError("Claude Code no usa HTTP")
+        case .openai, .openrouter, .ollama, .lmstudio, .deepseek:
             let choice = (json["choices"] as? [[String: Any]])?.first
             guard let text = (choice?["message"] as? [String: Any])?["content"] as? String, !text.isEmpty else {
                 throw ProviderError("Respuesta vacía de \(self.choice.provider.name)")

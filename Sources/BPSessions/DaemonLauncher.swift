@@ -14,7 +14,20 @@ public enum DaemonLauncher {
         throw SessionError(message: "No se pudo arrancar bpd")
     }
 
-    public static func launch(_ path: String, socketPath: String = SessionProtocol.defaultSocketPath) throws {
+    /// Replaces the running bpd with the one at `bpdPath` without closing its terminals (the new one
+    /// takes them over), then returns a client of the new one. Needs a daemon that speaks protocol 3.
+    public static func takeOver(socketPath: String = SessionProtocol.defaultSocketPath, bpdPath: String, expectBuild: String) async throws -> SessionClient {
+        try launch(bpdPath, socketPath: socketPath, extra: ["--takeover"])
+        for _ in 0..<100 {
+            try await Task.sleep(for: .milliseconds(100))
+            if let client = try? SessionClient.connect(socketPath: socketPath), let hello = try? await client.hello(), hello.build == expectBuild {
+                return client
+            }
+        }
+        throw SessionError(message: "El nuevo bpd no ha tomado el relevo")
+    }
+
+    public static func launch(_ path: String, socketPath: String = SessionProtocol.defaultSocketPath, extra: [String] = []) throws {
         guard FileManager.default.isExecutableFile(atPath: path) else { throw SessionError(message: "No encuentro bpd en \(path)") }
         var attr: posix_spawnattr_t?
         posix_spawnattr_init(&attr)
@@ -28,6 +41,7 @@ public enum DaemonLauncher {
         posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
         var args = [path]
         if socketPath != SessionProtocol.defaultSocketPath { args += ["--socket", socketPath] }
+        args += extra
         let argv: [UnsafeMutablePointer<CChar>?] = args.map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
         var pid: pid_t = 0

@@ -34,6 +34,52 @@ public struct AgentHooks: Sendable {
         return String(decoding: data, as: UTF8.self)
     }
 
+    /// The same servers as a file, for agents that take a path (next to the Claude settings).
+    public var mcpConfigPath: String {
+        URL(fileURLWithPath: claudeSettingsPath).deletingLastPathComponent().appendingPathComponent("bullpen-mcp.json").path
+    }
+
+    /// Writes what `profile` needs to find Bullpen's MCP server before it starts in `worktree`:
+    /// the shared servers file, or a `.mcp.json` in the worktree kept out of git.
+    public func prepare(_ profile: AgentProfile, in worktree: String) {
+        guard offersBullpenMCP, Self.coordinationEnabled, let mcp = profile.mcp else { return }
+        let json = Data(claudeMCPConfig.utf8)
+        switch mcp {
+        case .inlineJSON:
+            break
+        case .file:
+            let url = URL(fileURLWithPath: mcpConfigPath)
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? json.write(to: url, options: .atomic)
+        case .projectFile:
+            let dir = URL(fileURLWithPath: worktree)
+            let file = dir.appendingPathComponent(".mcp.json")
+            // Never overwrite the project's own servers.
+            guard !FileManager.default.fileExists(atPath: file.path) else { return }
+            try? json.write(to: file, options: .atomic)
+            Self.excludeFromGit(".mcp.json", worktree: dir)
+        }
+    }
+
+    /// Adds `pattern` to the repository's `info/exclude` (shared by its worktrees), once.
+    static func excludeFromGit(_ pattern: String, worktree: URL) {
+        // In a worktree `.git` is a file: "gitdir: <repo>/.git/worktrees/<name>".
+        let dotGit = worktree.appendingPathComponent(".git")
+        var gitDir = dotGit
+        if let text = try? String(contentsOf: dotGit, encoding: .utf8), text.hasPrefix("gitdir:") {
+            gitDir = URL(fileURLWithPath: text.dropFirst(7).trimmingCharacters(in: .whitespacesAndNewlines))
+            // `<repo>/.git/worktrees/<name>` → `<repo>/.git`
+            if gitDir.deletingLastPathComponent().lastPathComponent == "worktrees" {
+                gitDir = gitDir.deletingLastPathComponent().deletingLastPathComponent()
+            }
+        }
+        let exclude = gitDir.appendingPathComponent("info/exclude")
+        let current = (try? String(contentsOf: exclude, encoding: .utf8)) ?? ""
+        guard !current.split(separator: "\n").contains(Substring(pattern)) else { return }
+        try? FileManager.default.createDirectory(at: exclude.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? (current + (current.isEmpty || current.hasSuffix("\n") ? "" : "\n") + pattern + "\n").write(to: exclude, atomically: true, encoding: .utf8)
+    }
+
     /// `-c` overrides for Codex.
     public var codexMCPConfigs: [String] {
         ["mcp_servers.bullpen.command=\(tomlString(bpPath))", "mcp_servers.bullpen.args=[\"mcp\"]"]

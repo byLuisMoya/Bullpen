@@ -11,6 +11,17 @@ public enum PromptDelivery: Equatable, Sendable {
     case type
 }
 
+/// How an agent loads extra MCP servers (Bullpen's, for coordination). Claude Code and Codex
+/// are wired in their own way; custom agents say which of these they understand.
+public enum MCPDelivery: Equatable, Sendable {
+    /// `--flag '{"mcpServers": …}'`
+    case inlineJSON(String)
+    /// `--flag /path/to/servers.json`
+    case file(String)
+    /// A `.mcp.json` in the worktree (kept out of git through `.git/info/exclude`).
+    case projectFile
+}
+
 /// Which lifecycle hooks Bullpen can wire up for precise status (PLAN §8.2). Others fall back to
 /// process and output heuristics.
 public enum HookSupport: Equatable, Sendable { case claude, codex, none }
@@ -29,10 +40,23 @@ public struct AgentProfile: Identifiable, Hashable, Sendable {
     public var hooks: HookSupport
     /// Defined by the user in a `.toml` file.
     public var isCustom: Bool
+    /// How a custom agent takes Bullpen's MCP server (nil: it doesn't).
+    public var mcp: MCPDelivery?
+    /// Where its usage comes from ("deepseek", "openrouter"); nil guesses from name and command.
+    public var usageSource: String?
+
+    /// The account to read usage from: the one set, or one named in the agent's name or command.
+    public var effectiveUsageSource: String? {
+        if let usageSource { return usageSource.isEmpty || usageSource == "none" ? nil : usageSource }
+        let text = ([name, executable] + arguments).joined(separator: " ").lowercased()
+        return ["deepseek", "openrouter"].first { text.contains($0) }
+    }
 
     public init(id: String, name: String, executable: String, arguments: [String] = [], models: [String] = [],
                 processNames: [String] = [], prompt: PromptDelivery = .positional, modelFlag: String? = "--model",
-                hooks: HookSupport = .none, isCustom: Bool = false) {
+                hooks: HookSupport = .none, isCustom: Bool = false, mcp: MCPDelivery? = nil, usageSource: String? = nil) {
+        self.mcp = mcp
+        self.usageSource = usageSource
         self.id = id
         self.name = name
         self.executable = executable
@@ -101,12 +125,30 @@ public struct AgentProfile: Identifiable, Hashable, Sendable {
         return AgentProfile(
             id: id, name: root["name"]?.string ?? id, executable: words.first ?? command,
             arguments: Array(words.dropFirst()), processNames: [(words.first as NSString?)?.lastPathComponent ?? id],
-            prompt: prompt, modelFlag: root["model_flag"]?.string, isCustom: true
+            prompt: prompt, modelFlag: root["model_flag"]?.string, isCustom: true,
+            mcp: root["mcp"]?.string.flatMap(Self.mcpDelivery), usageSource: root["usage"]?.string
         )
     }
 
+    /// `json:--mcp-config`, `file:--mcp`, `project`.
+    static func mcpDelivery(_ value: String) -> MCPDelivery? {
+        if value == "project" { return .projectFile }
+        if value.hasPrefix("json:") { return .inlineJSON(String(value.dropFirst(5))) }
+        if value.hasPrefix("file:") { return .file(String(value.dropFirst(5))) }
+        return nil
+    }
+
+    static func mcpValue(_ mcp: MCPDelivery) -> String {
+        switch mcp {
+        case let .inlineJSON(flag): "json:" + flag
+        case let .file(flag): "file:" + flag
+        case .projectFile: "project"
+        }
+    }
+
     /// The `.toml` for a custom agent, as `custom(toml:)` reads it.
-    public static func customTOML(id: String, name: String, command: String, prompt: PromptDelivery, modelFlag: String?) -> String {
+    public static func customTOML(id: String, name: String, command: String, prompt: PromptDelivery, modelFlag: String?,
+                                  mcp: MCPDelivery? = nil, usage: String? = nil) -> String {
         func quoted(_ s: String) -> String {
             "\"" + s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
         }
@@ -117,20 +159,23 @@ public struct AgentProfile: Identifiable, Hashable, Sendable {
         }
         var lines = ["id = \(quoted(id))", "name = \(quoted(name))", "command = \(quoted(command))", "prompt = \(quoted(promptValue))"]
         if let modelFlag, !modelFlag.isEmpty { lines.append("model_flag = \(quoted(modelFlag))") }
+        if let mcp { lines.append("mcp = \(quoted(mcpValue(mcp)))") }
+        if let usage { lines.append("usage = \(quoted(usage))") }
         return lines.joined(separator: "\n") + "\n"
     }
 
     /// Saves a custom agent (any CLI: DeepSeek, a wrapper script…) next to the others.
     @discardableResult
     public static func saveCustom(name: String, command: String, prompt: PromptDelivery, modelFlag: String?,
-                                  in dir: URL = customDirectory) throws -> AgentProfile {
+                                  mcp: MCPDelivery? = nil, usage: String? = nil, in dir: URL = customDirectory) throws -> AgentProfile {
         let id = name.lowercased().unicodeScalars
             .map { CharacterSet.alphanumerics.contains($0) && $0.isASCII ? String($0) : "-" }.joined()
             .split(separator: "-").joined(separator: "-")
         guard !id.isEmpty, !command.trimmingCharacters(in: .whitespaces).isEmpty else {
             throw TOMLError(line: 1, message: "falta el nombre o el comando")
         }
-        let toml = customTOML(id: id, name: name, command: command.trimmingCharacters(in: .whitespaces), prompt: prompt, modelFlag: modelFlag)
+        let toml = customTOML(id: id, name: name, command: command.trimmingCharacters(in: .whitespaces), prompt: prompt,
+                              modelFlag: modelFlag, mcp: mcp, usage: usage)
         let profile = try custom(toml: toml)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try toml.write(to: dir.appendingPathComponent("\(id).toml"), atomically: true, encoding: .utf8)
@@ -168,7 +213,14 @@ public struct AgentProfile: Identifiable, Hashable, Sendable {
             parts += hooks.codexHookConfigs.flatMap { ["-c", shellQuote($0)] }
             if hooks.offersBullpenMCP, AgentHooks.coordinationEnabled { parts += hooks.codexMCPConfigs.flatMap { ["-c", shellQuote($0)] } }
         case .none:
-            break
+            // Custom agents: Bullpen's MCP server in whatever way they take it.
+            if let mcp, hooks.offersBullpenMCP, AgentHooks.coordinationEnabled {
+                switch mcp {
+                case let .inlineJSON(flag): parts += [flag, shellQuote(hooks.claudeMCPConfig)]
+                case let .file(flag): parts += [flag, shellQuote(hooks.mcpConfigPath)]
+                case .projectFile: break   // written into the worktree by `AgentHooks.prepare`
+                }
+            }
         }
         if let model, !model.isEmpty, let modelFlag { parts += [modelFlag, shellQuote(model)] }
         var typed: String?

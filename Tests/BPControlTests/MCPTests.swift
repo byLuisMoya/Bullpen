@@ -62,7 +62,8 @@ import Testing
         let tools = try #require((try await rpc(env.mcp, 2, "tools/list")["result"] as? [String: Any])?["tools"] as? [[String: Any]])
         #expect(Set(tools.compactMap { $0["name"] as? String }) ==
                 ["list_projects", "list_worktrees", "create_worktree", "send_message", "read_terminal", "remove_worktree",
-                 "current_worktree", "wait_for_worktree", "ask_worktree"])
+                 "current_worktree", "wait_for_worktree", "ask_worktree",
+                 "browser_open", "browser_snapshot", "browser_screenshot", "browser_click", "browser_type", "browser_eval", "browser_console"])
         #expect((try await rpc(env.mcp, 3, "nope")["error"] as? [String: Any])?["code"] as? Int == -32601)
     }
 

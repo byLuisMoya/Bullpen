@@ -13,6 +13,8 @@ struct BullpenApp: App {
     @State private var usage = UsageCenter()
     @State private var updater = Updater()
     @State private var summaries = SummaryCenter()
+    @State private var browsers = BrowserCenter()
+    @State private var orca = OrcaCenter()
 
     var body: some Scene {
         WindowGroup("Bullpen", id: "main") {
@@ -26,9 +28,23 @@ struct BullpenApp: App {
                 .environment(usage)
                 .environment(updater)
                 .environment(summaries)
+                .environment(browsers)
+                .environment(orca)
+                .task { browsers.start() }
+                .task {
+                    attention.orca = orca
+                    summaries.orca = orca
+                    sessions.agentRunsElsewhere = { [orca] worktree in (orca.activity(for: worktree)?.liveTerminals ?? 0) > 0 }
+                    await orca.start()
+                }
                 .task { await summaries.start(store: store, sessions: sessions, attention: attention) }
                 .task { await usage.start(store: store, sessions: sessions) }
                 .task { await updater.start() }
+                .task {
+                    // After the store has opened the database.
+                    while store.workspace == nil { try? await Task.sleep(for: .milliseconds(200)) }
+                    await store.runAutomations()
+                }
                 .task { await SeasonalIcon.keepUpdated() }
                 .task {
                     store.connectToDaemon = { [sessions] in try await sessions.connection() }
@@ -70,6 +86,7 @@ struct BullpenApp: App {
         }
         Settings {
             SettingsView()
+                .environment(store)
         }
         MenuBarExtra {
             MenuBarContent()

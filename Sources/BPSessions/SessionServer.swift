@@ -171,6 +171,9 @@ public final class SessionServer: @unchecked Sendable {
         case let .shutdown(request):
             client.send(.ok(request: request))
             queue.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.exitDaemon() }
+
+        case .handover:
+            handOver(to: client)
         }
     }
 
@@ -266,8 +269,15 @@ public final class SessionServer: @unchecked Sendable {
     private func reap(_ session: Session) {
         guard session.info.isRunning, session.waitStatus == nil else { return }
         var status: Int32 = 0
-        guard waitpid(session.info.pid, &status, WNOHANG) == session.info.pid else { return }
-        session.waitStatus = PTY.exitCode(fromWaitStatus: status)
+        let reaped = waitpid(session.info.pid, &status, WNOHANG)
+        if reaped == session.info.pid {
+            session.waitStatus = PTY.exitCode(fromWaitStatus: status)
+        } else if session.adopted, reaped == -1, Darwin.kill(session.info.pid, 0) != 0, errno == ESRCH {
+            // Taken over from an older bpd: gone, exit status unknown.
+            session.waitStatus = 0
+        } else {
+            return
+        }
         session.processSource?.cancel()
         session.processSource = nil
         finishIfDone(session)
@@ -292,6 +302,106 @@ public final class SessionServer: @unchecked Sendable {
         broadcast(.exited(session: session.info.id, status: status), to: session)
         session.subscribers.removeAll()
         lastActivity = Date()
+    }
+
+    // MARK: Handover (updating bpd without closing terminals)
+
+    /// Gives every session to a newer bpd and leaves: state and recent output as JSON (length
+    /// first), then each running session's PTY master over the socket. The processes keep
+    /// running; the new daemon reads their terminals from now on.
+    private func handOver(to client: Client) {
+        // Stop reading first so no output is lost between the snapshot and the switch.
+        for session in sessions.values {
+            session.readSource?.cancel()
+            session.readSource = nil
+            session.processSource?.cancel()
+            session.processSource = nil
+        }
+        let ordered = sessions.values.sorted { $0.info.startedAt < $1.info.startedAt }
+        let payload = HandoverPayload(build: build, sessions: ordered.map { .init(info: $0.info, replay: $0.replay) })
+        guard let json = try? Wire.encoder.encode(payload) else { return }
+        var header = UInt64(json.count).bigEndian
+        let fd = client.rawDescriptor
+        FDPassing.setBlocking(fd)
+        guard FDPassing.writeAll(Data(bytes: &header, count: 8) + json, to: fd) else { return }
+        for session in ordered where session.info.isRunning {
+            _ = FDPassing.send(session.master, over: fd)
+        }
+        log.info("bpd \(self.build, privacy: .public) handed \(ordered.count) session(s) over")
+        // No SIGHUP: the sessions belong to the new daemon now.
+        sessions.removeAll()
+        exitDaemon()
+    }
+
+    /// Takes the sessions of the bpd listening on `socketPath` before starting. Throws if it
+    /// doesn't answer a handover (too old): then it is still running and nothing changed.
+    @discardableResult
+    public func adopt(from socketPath: String) throws -> Int {
+        let fd = try UnixSocket.connect(to: socketPath)
+        defer { close(fd) }
+        FDPassing.setBlocking(fd)
+        var timeout = timeval(tv_sec: 10, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        guard FDPassing.writeAll(try Wire.frame(ClientMessage.handover(request: 1)), to: fd),
+              let header = FDPassing.readExactly(8, from: fd) else {
+            throw SessionError(message: "el bpd en marcha no admite el traspaso")
+        }
+        let length = header.withUnsafeBytes { UInt64(bigEndian: $0.loadUnaligned(as: UInt64.self)) }
+        guard length < 1 << 31, let json = FDPassing.readExactly(Int(length), from: fd) else {
+            throw SessionError(message: "traspaso incompleto")
+        }
+        let payload = try Wire.decoder.decode(HandoverPayload.self, from: json)
+        try FileManager.default.createDirectory(at: logDirectory, withIntermediateDirectories: true)
+        queue.sync {
+            for item in payload.sessions {
+                if item.info.isRunning {
+                    guard let master = FDPassing.receive(over: fd) else { continue }
+                    sessions[item.info.id] = adoptSession(item, master: master)
+                } else {
+                    let session = Session(info: item.info, master: -1, log: nil)
+                    session.seed(item.replay)
+                    sessions[item.info.id] = session
+                }
+            }
+        }
+        // The old daemon unlinks its socket as it exits; wait for that before listening here.
+        for _ in 0..<50 where (try? UnixSocket.connect(to: socketPath)).map({ close($0); return true }) == true {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        log.info("bpd \(self.build, privacy: .public) took over \(payload.sessions.count) session(s) from \(payload.build, privacy: .public)")
+        return payload.sessions.count
+    }
+
+    private func adoptSession(_ item: HandoverPayload.Item, master: Int32) -> Session {
+        _ = fcntl(master, F_SETFD, FD_CLOEXEC)
+        _ = fcntl(master, F_SETFL, fcntl(master, F_GETFL) | O_NONBLOCK)
+        let logURL = logDirectory.appendingPathComponent("\(safeFileName(item.info.id)).log")
+        let log = try? FileHandle(forWritingTo: logURL)
+        _ = try? log?.seekToEnd()
+        let session = Session(info: item.info, master: master, log: log)
+        session.adopted = true
+        session.seed(item.replay)
+        session.writer = FDWriter(fd: master, queue: queue)
+        let read = DispatchSource.makeReadSource(fileDescriptor: master, queue: queue)
+        read.setEventHandler { [weak self, weak session] in
+            guard let self, let session else { return }
+            self.readOutput(of: session)
+        }
+        read.resume()
+        session.readSource = read
+        // Not our child: kqueue still tells us when it exits, but its status is not ours to read.
+        let proc = DispatchSource.makeProcessSource(identifier: item.info.pid, eventMask: .exit, queue: queue)
+        proc.setEventHandler { [weak self, weak session] in
+            guard let self, let session else { return }
+            self.reap(session)
+        }
+        proc.resume()
+        session.processSource = proc
+        queue.async { [weak self, weak session] in
+            guard let self, let session else { return }
+            self.reap(session)
+        }
+        return session
     }
 
     // MARK: Lifetime
@@ -382,7 +492,11 @@ final class Session {
     var subscribers: Set<ObjectIdentifier> = []
     var waitStatus: Int32?
     var outputClosed = false
+    /// Taken over from an older bpd: its process is not our child.
+    var adopted = false
     private(set) var replay = Data()
+
+    func seed(_ data: Data) { replay = data }
 
     init(info: SessionInfo, master: Int32, log: FileHandle?) {
         self.info = info
@@ -402,6 +516,8 @@ final class Session {
 
 final class Client {
     private let fd: Int32
+    /// For the handover, which writes descriptors on the socket itself.
+    var rawDescriptor: Int32 { fd }
     private let queue: DispatchQueue
     private var readSource: DispatchSourceRead?
     private let writer: FDWriter

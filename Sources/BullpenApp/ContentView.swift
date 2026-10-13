@@ -102,6 +102,20 @@ struct ContentView: View {
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
             .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 0) {
+                if let outdated = sessions.outdatedDaemon {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("El servicio de terminales es de la versión \(outdated.build)", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.caption.bold())
+                        Text("No puede pasar sus \(outdated.running) terminal(es) a la versión nueva. Reinícialo cuando te venga bien: se cerrarán y los agentes se podrán reiniciar. Desde esta versión ya no hará falta.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("Reiniciar ahora") { Task { await sessions.restartOutdatedDaemon() } }
+                            .controlSize(.small)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.12))
+                }
                 HStack {
                     SettingsLink {
                         Image(systemName: "gearshape")
@@ -122,6 +136,7 @@ struct ContentView: View {
                 // splitting the footer in two.
                 .overlay(alignment: .top) {
                     Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1)
+                }
                 }
             }
             }
@@ -303,6 +318,14 @@ private struct WorktreeDetail: View {
     // BULLPEN_SNAPSHOT_TAB=changes opens the panel on that tab (for DebugSnapshots).
     @AppStorage("worktreePanel.shown") private var panelShown = ProcessInfo.processInfo.environment["BULLPEN_SNAPSHOT_TAB"] != nil
 
+    @Environment(OrcaCenter.self) private var orca
+
+    /// A worktree from Orca whose agent lives there: here it gets a plain terminal.
+    private var agentInOrca: OrcaActivity? {
+        guard worktree.agentProfileID == nil, let activity = orca.activity(for: worktree), activity.liveTerminals > 0 else { return nil }
+        return activity
+    }
+
     /// The worktree has an agent but it isn't running (it exited, or never started).
     private var agentStopped: Bool {
         worktree.agentProfileID != nil && attention.statuses[worktree.id]?.state == .dead
@@ -311,6 +334,28 @@ private struct WorktreeDetail: View {
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
+                if let inOrca = agentInOrca {
+                    HStack(spacing: 10) {
+                        Label("Su agente trabaja en Orca\(inOrca.agentState.map { " (\($0))" } ?? ""). Aquí tienes una terminal en su carpeta.",
+                              systemImage: "arrow.triangle.branch")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Arrancar \(AgentProfile.named(PrimaryAgent.id)?.name ?? "el agente") aquí también") {
+                            Task {
+                                store.setAgent(PrimaryAgent.id, for: worktree)
+                                var adopted = worktree
+                                adopted.agentProfileID = PrimaryAgent.id
+                                try? await sessions.restartAgent(adopted, environment: terminalEnvironment)
+                            }
+                        }
+                        .controlSize(.small)
+                    }
+                    .font(.callout)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.bar)
+                    .overlay(alignment: .bottom) { Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1) }
+                }
                 if agentStopped {
                     HStack(spacing: 10) {
                         Label("\(AgentProfile.named(worktree.agentProfileID)?.name ?? "El agente") no está en ejecución",
@@ -329,8 +374,12 @@ private struct WorktreeDetail: View {
                     .overlay(alignment: .bottom) { Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1) }
                 }
                 TerminalTabs(worktree: worktree, selection: $terminalTab) { Task { await openTab() } }
-                TerminalPane(worktree: worktree, environment: terminalEnvironment, tab: terminalTab)
-                    .id(terminalTab ?? "main")
+                if terminalTab == TerminalTabs.browser {
+                    BrowserPane(worktree: worktree, home: browserHome)
+                } else {
+                    TerminalPane(worktree: worktree, environment: terminalEnvironment, tab: terminalTab)
+                        .id(terminalTab ?? "main")
+                }
             }
         }
         .inspector(isPresented: $panelShown) {
@@ -363,6 +412,11 @@ private struct WorktreeDetail: View {
                 UpdateButton()
             }
         }
+    }
+
+    /// The worktree's own URL for its browser tab (`[browser] url`, or its preview port).
+    private var browserHome: String {
+        (try? store.workspace?.browserURL(for: worktree, in: project)) ?? "http://localhost:3000"
     }
 
     private var terminalEnvironment: [String: String] {
@@ -444,17 +498,29 @@ private struct SidebarMaterial: NSViewRepresentable {
 
 /// Tabs over the worktree's terminal: its agent first, then any extra terminals, and "+".
 private struct TerminalTabs: View {
+    /// The browser tab's id in `selection` (terminal tabs are session ids).
+    static let browser = "browser"
     let worktree: Worktree
     @Binding var selection: String?
     var onAdd: () -> Void
     @Environment(SessionManager.self) private var sessions
+    @Environment(OrcaCenter.self) private var orca
+
+    /// What the first tab runs: the worktree's agent, the main agent for an Orca worktree, or a
+    /// terminal (terminal-only, or Orca already has the agent).
+    private var mainTitle: (String, String) {
+        if let agent = AgentProfile.named(worktree.agentProfileID) { return (agent.name, "sparkles") }
+        if worktree.external, (orca.activity(for: worktree)?.liveTerminals ?? 0) == 0 {
+            return (AgentProfile.named(PrimaryAgent.id)?.name ?? "Agente", "sparkles")
+        }
+        return ("Terminal", "terminal")
+    }
 
     var body: some View {
         let extra = sessions.tabs(for: worktree)
         HStack(spacing: 2) {
-            tab(id: nil, title: AgentProfile.named(worktree.agentProfileID)?.name
-                    ?? (worktree.external ? AgentProfile.named(PrimaryAgent.id)?.name ?? "Agente" : "Terminal"),
-                icon: worktree.agentProfileID == nil && !worktree.external ? "terminal" : "sparkles", closable: false)
+            tab(id: nil, title: mainTitle.0, icon: mainTitle.1, closable: false)
+            tab(id: Self.browser, title: "Navegador", icon: "globe", closable: false)
             ForEach(Array(extra.enumerated()), id: \.element) { index, id in
                 tab(id: id, title: "Terminal \(index + 2)", icon: "terminal", closable: true)
             }
@@ -471,7 +537,9 @@ private struct TerminalTabs: View {
         .background(Color(white: 0.08))
         .overlay(alignment: .bottom) { Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1) }
         // A tab whose terminal was closed from inside (exit) falls back to the agent's.
-        .onChange(of: extra) { _, now in if let selection, !now.contains(selection) { self.selection = nil } }
+        .onChange(of: extra) { _, now in
+            if let selection, selection != Self.browser, !now.contains(selection) { self.selection = nil }
+        }
     }
 
     private func tab(id: String?, title: String, icon: String, closable: Bool) -> some View {

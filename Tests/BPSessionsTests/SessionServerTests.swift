@@ -233,3 +233,92 @@ func collect(_ client: SessionClient, session: String, timeout: Double = 5, unti
         #expect(path?.contains("/usr/bin") == true)
     }
 }
+
+@Suite(.serialized) struct HandoverTests {
+    @Test func aNewDaemonTakesOverRunningTerminals() async throws {
+        let id = UUID().uuidString.prefix(8)
+        let socket = "/tmp/bp-ho-\(id).sock"
+        let logs = FileManager.default.temporaryDirectory.appendingPathComponent("bp-ho-\(id)")
+        let old = SessionServer(socketPath: socket, logDirectory: logs, build: "old")
+        old.idleExit = nil
+        try old.start()
+        let first = try SessionClient.connect(socketPath: socket)
+        let live = try await first.create(SessionSpec(id: "live", cwd: NSTemporaryDirectory(), command: "echo antes; exec cat"))
+        _ = try await first.create(SessionSpec(id: "done", cwd: NSTemporaryDirectory(), command: "echo fin"))
+        try await first.attach("live")
+        #expect(await collect(first, session: "live") { text, _ in text.contains("antes") }.0.contains("antes"))
+        try await Task.sleep(for: .milliseconds(500))   // "done" has exited by now
+
+        // The new daemon takes everything; the old one stops listening without hanging up.
+        let new = SessionServer(socketPath: socket, logDirectory: logs, build: "new")
+        new.idleExit = nil
+        #expect(try new.adopt(from: socket) == 2)
+        try new.start()
+        defer { new.stop() }
+
+        let client = try SessionClient.connect(socketPath: socket)
+        #expect(try await client.hello().build == "new")
+        let sessions = try await client.list()
+        let adopted = try #require(sessions.first { $0.id == "live" })
+        #expect(adopted.isRunning)
+        #expect(adopted.pid == live.pid, "same process, untouched")
+        #expect(sessions.first { $0.id == "done" }?.isRunning == false)
+
+        // Its earlier output comes back, and it still answers.
+        try await client.attach("live")
+        client.input("live", Data("sigue-vivo\n".utf8))
+        let (text, _) = await collect(client, session: "live") { text, _ in text.contains("sigue-vivo") && text.contains("antes") }
+        #expect(text.contains("antes") && text.contains("sigue-vivo"))
+
+        // And it can still be closed.
+        try await client.kill("live", signal: SIGKILL)
+        let (_, status) = await collect(client, session: "live") { _, status in status != nil }
+        #expect(status != nil)
+    }
+
+    @Test func anOldDaemonThatCannotHandOverIsLeftAlone() throws {
+        let socket = "/tmp/bp-ho-none-\(UUID().uuidString.prefix(8)).sock"
+        // Something listening that never answers a handover.
+        let (fd, inode) = try UnixSocket.listen(at: socket)
+        defer { close(fd); UnixSocket.unlinkIfOurs(socket, inode: inode) }
+        let new = SessionServer(socketPath: socket, logDirectory: FileManager.default.temporaryDirectory, build: "new")
+        var timeoutHit = false
+        DispatchQueue.global().async { _ = accept(fd, nil, nil) }   // accept, then say nothing
+        do { try new.adopt(from: socket) } catch { timeoutHit = true }
+        #expect(timeoutHit)
+    }
+}
+
+@Suite struct BrowserBridgeTests {
+    @Test func requestsReachTheAppAndAnswersComeBack() async throws {
+        let path = "/tmp/bp-browser-\(UUID().uuidString.prefix(8)).sock"
+        let server = BrowserBridge.Server(path: path) { request in
+            BrowserResponse(ok: true, text: "\(request.action.rawValue) \(request.url ?? request.home)", image: Data([1, 2, 3]))
+        }
+        try server.start()
+        defer { server.stop() }
+        let answer = try await BrowserBridge.send(BrowserRequest(action: .open, worktree: "w", home: "http://localhost:4100", url: "/login"), socketPath: path)
+        #expect(answer.ok && answer.text == "open /login" && answer.image == Data([1, 2, 3]))
+    }
+
+    @Test func withoutTheAppItSaysSo() async {
+        await #expect(throws: SessionError.self) {
+            try await BrowserBridge.send(BrowserRequest(action: .snapshot, worktree: "w", home: "x"), socketPath: "/tmp/bp-nobody-\(UUID().uuidString.prefix(6)).sock")
+        }
+    }
+}
+
+@Suite(.serialized) struct ClientLifetimeTests {
+    /// Dropping the last reference while the server is talking to the client used to deadlock
+    /// (deinit → close → sync on its own queue).
+    @Test func clientsCanBeDroppedAnyTime() async throws {
+        let (server, keep) = try startServer()
+        defer { keep.close(); server.stop() }
+        for _ in 0..<40 {
+            var client: SessionClient? = try SessionClient.connect(socketPath: server.socketPath)
+            _ = try await client?.list()
+            client = nil
+        }
+        #expect(try await keep.list().isEmpty)
+    }
+}

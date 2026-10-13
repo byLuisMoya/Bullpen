@@ -31,6 +31,8 @@ public enum PlanUsage: Equatable, Sendable {
     case plan(session: LimitWindow?, weekly: LimitWindow?)
     /// Paid per token: today's tokens and estimated cost.
     case tokens(today: Int, costUSD: Double?)
+    /// Prepaid account (DeepSeek, OpenRouter): what is left, and what was spent if known.
+    case balance(remaining: Double, currency: String, spent: Double?)
     /// The agent's CLI isn't signed in, or Bullpen can't read its usage.
     case unavailable(String)
 }
@@ -65,6 +67,23 @@ public enum PlanLimits {
         let windows = [primary, secondary].compactMap { $0 }.sorted { $0.minutes < $1.minutes }
         return windows.count == 2 ? .plan(session: windows[0], weekly: windows[1])
             : windows[0].minutes >= 10080 ? .plan(session: nil, weekly: windows[0]) : .plan(session: windows[0], weekly: nil)
+    }
+
+    /// `GET https://api.deepseek.com/user/balance`: `{"balance_infos": [{"currency", "total_balance"}]}`.
+    public static func parseDeepSeekBalance(_ data: Data) -> PlanUsage? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let infos = json["balance_infos"] as? [[String: Any]], !infos.isEmpty else { return nil }
+        let info = infos.first { $0["currency"] as? String == "USD" } ?? infos[0]
+        guard let total = number(info["total_balance"]) else { return nil }
+        return .balance(remaining: total, currency: info["currency"] as? String ?? "USD", spent: nil)
+    }
+
+    /// `GET https://openrouter.ai/api/v1/credits`: `{"data": {"total_credits", "total_usage"}}` in USD.
+    public static func parseOpenRouterCredits(_ data: Data) -> PlanUsage? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let credits = json["data"] as? [String: Any],
+              let total = number(credits["total_credits"]), let used = number(credits["total_usage"]) else { return nil }
+        return .balance(remaining: total - used, currency: "USD", spent: used)
     }
 
     /// Claude Code's sign-in, as stored in the Keychain item "Claude Code-credentials" or
