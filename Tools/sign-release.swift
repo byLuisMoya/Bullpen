@@ -2,8 +2,9 @@
 //   swift Tools/sign-release.swift generate        once: creates ~/.bullpen/release-signing-key, prints the public key
 //   swift Tools/sign-release.swift sign <file>     writes <file>.sig (base64 signature of the file)
 //   swift Tools/sign-release.swift public          prints the public key again
-// The private key never goes in the repository. Back it up: without it, the next releases
-// can't be signed and installed apps will refuse them.
+// Transitional: only Bullpen 0.1.14 checks these signatures (later versions rely on the
+// repository being writable by its owner alone). `make release` signs while the key exists so
+// 0.1.14 installs can still update; once they are past it, delete the key and this tool.
 import CryptoKit
 import Foundation
 

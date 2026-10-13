@@ -20,8 +20,6 @@ final class Updater {
         var version: ReleaseVersion
         var zip: URL
         var sums: URL
-        /// Ed25519 signature of the zip (`<zip>.sig`); releases without one are not installed.
-        var signature: URL?
         var page: URL?
         var notes: String
     }
@@ -120,15 +118,6 @@ final class Updater {
             guard let expected, expected == actual else {
                 throw UpdateError("La descarga no coincide con SHA256SUMS.txt; no se instala.")
             }
-            // The checksum only proves the download is complete; the signature proves it is ours.
-            guard let signatureURL = release.signature else {
-                throw UpdateError("La versión \(release.version) no está firmada; no se instala.")
-            }
-            let (signature, _) = try await URLSession.shared.data(from: signatureURL)
-            let zipData = try Data(contentsOf: zip)
-            guard ReleaseSignature.isValid(zipData, signature: String(decoding: signature, as: UTF8.self)) else {
-                throw UpdateError("La firma de la versión \(release.version) no es válida; no se instala.")
-            }
 
             state = .installing("Preparando la nueva versión…")
             let extracted = work.appendingPathComponent("app")
@@ -167,7 +156,7 @@ final class Updater {
                     .flatMap { $0["browser_download_url"] as? String }.flatMap(URL.init(string:))
             }
             guard let zip = asset({ $0.hasSuffix("-universal.zip") }), let sums = asset({ $0 == "SHA256SUMS.txt" }) else { return nil }
-            return Release(version: version, zip: zip, sums: sums, signature: asset({ $0 == zip.lastPathComponent + ".sig" }),
+            return Release(version: version, zip: zip, sums: sums,
                            page: (release["html_url"] as? String).flatMap(URL.init(string:)),
                            notes: release["body"] as? String ?? "")
         }
