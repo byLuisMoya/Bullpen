@@ -213,7 +213,9 @@ public struct Workspace: Sendable {
     }
 
     /// Hangs up the terminal, runs `[teardown]`, removes the folder (the branch stays) and archives it.
-    public func removeWorktree(_ worktree: Worktree, in project: Project, force: Bool) async throws {
+    /// Closes its terminals and deletes it. A worktree made outside Bullpen is only hidden here
+    /// unless `deleteExternal`: then Orca deletes it (if it is Orca's), or git does.
+    public func removeWorktree(_ worktree: Worktree, in project: Project, force: Bool, deleteExternal: Bool = false) async throws {
         let id = Self.sessionID(for: worktree)
         if let client = try? await connect() {
             // Its agent's terminal and any extra tabs (`<id>-t2`…).
@@ -227,11 +229,22 @@ public struct Workspace: Sendable {
             for session in ids { try? await client.remove(session) }
         }
         let path = URL(fileURLWithPath: worktree.path)
-        // Not ours (Orca, plain git): stop showing it, leave its folder and branch alone.
-        if worktree.external {
+        // Not ours (Orca, plain git): stop showing it, leave its folder and branch alone…
+        if worktree.external, !deleteExternal {
             var hidden = worktree
             hidden.archivedAt = Date()
             try database.save(hidden)
+            return
+        }
+        // …or delete it where it was made: Orca keeps its own list in step.
+        if worktree.external, await OrcaWorktree.list().contains(where: { Self.canonical($0.path) == Self.canonical(worktree.path) }) {
+            try await OrcaWorktree.remove(path: worktree.path, force: force)
+            if let repo = try? await Repository.open(at: URL(fileURLWithPath: project.path)) {
+                try? await repo.deleteCheckpoints(of: worktree.id)
+            }
+            var gone = worktree
+            gone.archivedAt = Date()
+            try database.save(gone)
             return
         }
         if FileManager.default.fileExists(atPath: path.path) {

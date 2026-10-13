@@ -365,6 +365,20 @@ let fakeB = AgentProfile(id: "fake-b", name: "Fake B", executable: "/bin/echo")
         #expect(try f.workspace.database.offices().first?.worktrees.isEmpty == true)
     }
 
+    @Test func deletingAnExternalWorktreeRemovesItsFolder() async throws {
+        let f = try await Fixture.make(config: "")
+        defer { f.server.stop() }
+        let dir = f.root.appendingPathComponent("fuera/externo")
+        try await Git().run(["worktree", "add", "-q", "-b", "externo", dir.path, "main"], in: f.repoDir)
+        try await f.workspace.syncExternalWorktrees(orca: [])
+        let wt = try #require(try f.workspace.database.offices().first?.worktrees.first)
+        try await f.workspace.removeWorktree(wt, in: f.project, force: false, deleteExternal: true)
+        #expect(!FileManager.default.fileExists(atPath: dir.path))
+        #expect(try f.workspace.database.offices().first?.worktrees.isEmpty == true)
+        let listed = try await Repository.open(at: f.repoDir).worktrees().map { Workspace.canonical($0.path) }
+        #expect(!listed.contains(Workspace.canonical(dir.path)))
+    }
+
     @Test func archivedInOrcaStaysOut() async throws {
         let f = try await Fixture.make(config: "")
         defer { f.server.stop() }

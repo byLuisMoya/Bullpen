@@ -101,6 +101,7 @@ func officeModel(_ office: Office, statuses: [UUID: AgentStatus], warnings: [UUI
                  summaries: [UUID: String] = [:], turns: [UUID: Int] = [:], pullRequests: [UUID: PullRequest] = [:],
                  now: Date = Date()) -> OfficeModel {
     let looks = CharacterLook.distinctJackets(office.worktrees.map { .make(worktreeID: $0.id, agent: $0.agentProfileID) })
+    let theme = OfficeTheme(rawValue: office.project.officeTheme ?? "") ?? .basic
     return OfficeModel(desks: zip(office.worktrees, looks).map { worktree, look in
         let status = statuses[worktree.id]
         // Statuses refresh every second, so this flips on its own once the minute has passed.
@@ -117,7 +118,7 @@ func officeModel(_ office: Office, statuses: [UUID: AgentStatus], warnings: [UUI
             turns: turns[worktree.id] ?? 0,
             merged: pullRequests[worktree.id]?.state == .merged
         )
-    })
+    }, theme: theme)
 }
 
 /// The office strip shown above each project's worktrees in the sidebar. A plain SwiftUI image

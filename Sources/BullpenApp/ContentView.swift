@@ -20,10 +20,8 @@ struct ContentView: View {
     @Environment(SummaryCenter.self) private var summaries
     /// Projects folded in the sidebar (only the header shows), remembered between launches.
     @AppStorage("collapsedProjects") private var collapsedRaw = ""
-    private var collapsedProjects: Set<UUID> {
-        get { Set(collapsedRaw.split(separator: ",").compactMap { UUID(uuidString: String($0)) }) }
-        nonmutating set { collapsedRaw = newValue.map(\.uuidString).sorted().joined(separator: ",") }
-    }
+    /// Kept in @State (animated transactions) and mirrored to the stored list.
+    @State private var collapsedProjects: Set<UUID> = []
     @State private var pendingRemoval: PendingRemoval?
 
     private var selection: UUID? {
@@ -40,7 +38,29 @@ struct ContentView: View {
             SidebarColumn(visible: navigation.columnVisibility != .detailOnly, width: $sidebarWidth) {
             List(selection: $navigation.selection) {
                 ForEach(store.offices) { office in
-                    Section {
+                    // Plain rows, not a Section: a sidebar Section brings macOS's own hover chevron,
+                    // and ours (always visible, animated) is enough.
+                        OfficeHeader(office: office, collapsed: Binding(
+                            get: { collapsedProjects.contains(office.project.id) },
+                            set: { collapsed in
+                                withAnimation(.easeInOut(duration: 0.25)) {
+                                    if collapsed { collapsedProjects.insert(office.project.id) } else { collapsedProjects.remove(office.project.id) }
+                                }
+                            }
+                        )) { newWorktreeFor = office.project }
+                            .contextMenu {
+                                Button("Nuevo worktree…") { newWorktreeFor = office.project }
+                                Button("Prompt inicial…") { editingPromptFor = office.project }
+                                Button("Mostrar en Finder") {
+                                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: office.project.path)
+                                }
+                                Divider()
+                                Button("Quitar proyecto", role: .destructive) { store.removeProject(office.project) }
+                                    .disabled(!office.worktrees.isEmpty)
+                                    .help(office.worktrees.isEmpty ? "Deja de mostrarlo (no borra nada del disco)" : "Elimina antes sus worktrees")
+                            }
+                        .selectionDisabled()
+                        .listRowInsets(EdgeInsets(top: 10, leading: 8, bottom: 2, trailing: 8))
                         if !collapsedProjects.contains(office.project.id) {
                         MiniOffice(office: office, onSelect: { selection = $0 }, onOpen: { navigation.showOffice(office.project.id) })
                             .selectionDisabled()
@@ -66,6 +86,10 @@ struct ContentView: View {
                                             }
                                         }
                                         .help("Deja de mostrarlo; la carpeta y la rama siguen donde estén (Orca, git)")
+                                        Button(worktree.path.contains("/orca/") ? "Eliminar worktree (también en Orca)…" : "Eliminar worktree…",
+                                               role: .destructive) {
+                                            Task { await confirmRemoval(worktree, in: office.project) }
+                                        }
                                     } else {
                                         Button("Eliminar worktree…", role: .destructive) {
                                             Task { await confirmRemoval(worktree, in: office.project) }
@@ -74,33 +98,13 @@ struct ContentView: View {
                                 }
                         }
                         }
-                    } header: {
-                        OfficeHeader(office: office, collapsed: Binding(
-                            get: { collapsedProjects.contains(office.project.id) },
-                            set: { collapsed in
-                                withAnimation(.snappy(duration: 0.2)) {
-                                    if collapsed { collapsedProjects.insert(office.project.id) } else { collapsedProjects.remove(office.project.id) }
-                                }
-                            }
-                        )) { newWorktreeFor = office.project }
-                            .contextMenu {
-                                Button("Nuevo worktree…") { newWorktreeFor = office.project }
-                                Button("Prompt inicial…") { editingPromptFor = office.project }
-                                Button("Mostrar en Finder") {
-                                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: office.project.path)
-                                }
-                                Divider()
-                                Button("Quitar proyecto", role: .destructive) { store.removeProject(office.project) }
-                                    .disabled(!office.worktrees.isEmpty)
-                                    .help(office.worktrees.isEmpty ? "Deja de mostrarlo (no borra nada del disco)" : "Elimina antes sus worktrees")
-                            }
-                    }
-                    // Our own chevron in the header, always visible; not the hover-only system one.
-                    .collapsible(false)
+
                 }
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
+            .onAppear { collapsedProjects = Set(collapsedRaw.split(separator: ",").compactMap { UUID(uuidString: String($0)) }) }
+            .onChange(of: collapsedProjects) { _, now in collapsedRaw = now.map(\.uuidString).sorted().joined(separator: ",") }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
                 if let outdated = sessions.outdatedDaemon {
@@ -208,7 +212,8 @@ struct ContentView: View {
             Button(removal.guards.isEmpty && !removal.hasLiveSession ? "Eliminar" : "Eliminar igualmente", role: .destructive) {
                 Task {
                     if selection == removal.worktree.id { selection = nil }
-                    await store.removeWorktree(removal.worktree, in: removal.project, force: !removal.guards.isEmpty)
+                    await store.removeWorktree(removal.worktree, in: removal.project, force: !removal.guards.isEmpty,
+                                               deleteExternal: removal.worktree.external)
                 }
             }
             Button("Cancelar", role: .cancel) {}
@@ -257,6 +262,9 @@ private struct PendingRemoval {
         var lines: [String] = []
         if hasLiveSession { lines.append("• su terminal sigue abierta y se cerrará") }
         lines += guards.map { "• " + $0.message }
+        if worktree.external, worktree.path.contains("/orca/") {
+            lines.append("• se elimina también en Orca (y Orca borra su rama si ya está integrada)")
+        }
         if lines.isEmpty { return "Se borra la carpeta del worktree. La rama se conserva." }
         return "Atención:\n" + lines.joined(separator: "\n")
             + "\n\nLa rama se conserva" + (guards.isEmpty ? "." : ", pero los cambios sin commitear se pierden.")
@@ -273,6 +281,9 @@ private struct OfficeHeader: View {
             Image(systemName: icon)
                 .foregroundStyle(office.lighting == .off ? Color.secondary : Color.yellow)
             Text(office.project.name)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
             Spacer()
             Button {
                 collapsed.toggle()

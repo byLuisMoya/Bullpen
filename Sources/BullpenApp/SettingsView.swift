@@ -1,6 +1,7 @@
 import BPAgents
 import BPCore
 import BPGit
+import BPHabitat
 import BPProviders
 import BPSessions
 import SwiftUI
@@ -13,10 +14,11 @@ struct SettingsView: View {
             ModelSettings().tabItem { Label("Modelos", systemImage: "cpu") }
             LimitSettings().tabItem { Label("Límites", systemImage: "gauge.with.dots.needle.33percent") }
             AutomationSettings().tabItem { Label("Automatizaciones", systemImage: "clock.badge.checkmark") }
+            OfficeSettings().tabItem { Label("Oficinas", systemImage: "building.2") }
             IntegrationSettings().tabItem { Label("Integraciones", systemImage: "link") }
             CommandLineSettings().tabItem { Label("Terminal", systemImage: "terminal") }
         }
-        .frame(width: 600, height: 460)
+        .frame(width: 640, height: 520)
     }
 }
 
@@ -513,5 +515,77 @@ private struct AutomationEditor: View {
                           || automation.task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || automation.weekdays.isEmpty)
             }
         }
+    }
+}
+
+/// Each project's office style, picked from previews.
+private struct OfficeSettings: View {
+    @Environment(BuildingStore.self) private var store
+    @State private var projectID: UUID?
+
+    private var project: Project? {
+        store.offices.first { $0.project.id == projectID }?.project ?? store.offices.first?.project
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if store.offices.isEmpty {
+                ContentUnavailableView("Sin proyectos", systemImage: "building.2", description: Text("Añade un proyecto para elegir su oficina."))
+            } else if let project {
+                Picker("Proyecto", selection: Binding(get: { project.id }, set: { projectID = $0 })) {
+                    ForEach(store.offices) { Text($0.project.name).tag($0.project.id) }
+                }
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 270), spacing: 12)], spacing: 12) {
+                        ForEach(OfficeTheme.allCases) { theme in
+                            ThemeCard(theme: theme, selected: (project.officeTheme ?? OfficeTheme.basic.rawValue) == theme.rawValue) {
+                                var changed = project
+                                changed.officeTheme = theme == .basic ? nil : theme.rawValue
+                                store.updateProject(changed)
+                            }
+                        }
+                    }
+                    .padding(2)
+                }
+            }
+        }
+        .padding()
+    }
+}
+
+private struct ThemeCard: View {
+    let theme: OfficeTheme
+    let selected: Bool
+    var onPick: () -> Void
+
+    /// The same two people in every preview, so only the office changes.
+    private static let sample: [DeskModel] = [
+        (UUID(uuidString: "6F1C2A40-0000-4000-8000-000000000001")!, AgentState.working),
+        (UUID(uuidString: "6F1C2A40-0000-4000-8000-000000000002")!, AgentState.done),
+    ].map { DeskModel(id: $0.0, name: "", state: $0.1, look: .make(worktreeID: $0.0, agent: "claude")) }
+
+    var body: some View {
+        Button(action: onPick) {
+            VStack(alignment: .leading, spacing: 6) {
+                if let image = OfficeSnapshot.image(OfficeModel(desks: Self.sample, theme: theme), desks: 2, scale: 2) {
+                    Image(decorative: image, scale: 2)
+                        .interpolation(.none)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                HStack {
+                    Text(theme.name).font(.headline)
+                    Spacer()
+                    if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor) }
+                }
+                Text(theme.summary).font(.caption).foregroundStyle(.secondary).lineLimit(2, reservesSpace: true)
+            }
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(selected ? 0.15 : 0.06)))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 2))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
     }
 }

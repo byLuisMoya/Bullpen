@@ -199,9 +199,9 @@ final class BuildingStore {
     }
 
     /// Hangs up its terminal, runs teardown, removes the folder (the branch is kept) and archives it.
-    func removeWorktree(_ worktree: Worktree, in project: Project, force: Bool) async {
+    func removeWorktree(_ worktree: Worktree, in project: Project, force: Bool, deleteExternal: Bool = false) async {
         do {
-            try await workspace?.removeWorktree(worktree, in: project, force: force)
+            try await workspace?.removeWorktree(worktree, in: project, force: force, deleteExternal: deleteExternal)
         } catch {
             report(error, "Remove worktree failed")
         }

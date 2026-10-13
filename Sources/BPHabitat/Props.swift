@@ -20,6 +20,9 @@ public enum Props {
         static let monitorBack: UInt8 = 52, monitorRim: UInt8 = 53, led: UInt8 = 54, chairCushion: UInt8 = 55
         static let shadow: UInt8 = 56, lampShine: UInt8 = 57, coffeeLight: UInt8 = 58, lampGlow: UInt8 = 59
         static let card: UInt8 = 61, cardLight: UInt8 = 62, beer: UInt8 = 63, beerDark: UInt8 = 64
+        static let partition: UInt8 = 65, partitionLight: UInt8 = 66, partitionDark: UInt8 = 67
+        static let red: UInt8 = 68, redDark: UInt8 = 69, neon: UInt8 = 70, gold: UInt8 = 71, steel: UInt8 = 72, steelLight: UInt8 = 73
+        static let paper: UInt8 = 74, sky: UInt8 = 75, sea: UInt8 = 76
         /// Recoloured per sprite (bolt, bubble marks).
         static let special: UInt8 = 60
     }
@@ -40,15 +43,50 @@ public enum Props {
         P.deskTop: RGBA(0x50566A), P.deskRim: RGBA(0x6E7690), P.deskFront: RGBA(0x343947), P.deskMat: RGBA(0x2C303C), P.deskEdge: RGBA(0x3B4050),
         P.monitorBack: RGBA(0x30343F), P.monitorRim: RGBA(0x4A5060), P.led: RGBA(0x5BE37D), P.chairCushion: RGBA(0x4A5266),
         P.shadow: RGBA(0x000000, alpha: 50), P.lampShine: RGBA(0x5E6779), P.lampGlow: RGBA(0xFFF6CF),
-        P.card: RGBA(0x15131B), P.cardLight: RGBA(0x34303F), P.beer: RGBA(0xEBA53C), P.beerDark: RGBA(0xC97F22), P.coffeeLight: RGBA(0x9A6440),
+        P.card: RGBA(0x15131B), P.cardLight: RGBA(0x34303F), P.beer: RGBA(0xEBA53C), P.beerDark: RGBA(0xC97F22),
+        P.partition: RGBA(0x7F8A99), P.partitionLight: RGBA(0x99A3B1), P.partitionDark: RGBA(0x5F6876),
+        P.red: RGBA(0xD8463C), P.redDark: RGBA(0xA8302A), P.neon: RGBA(0xFF5FB7), P.gold: RGBA(0xD9B04C), P.steel: RGBA(0xA9B1B9), P.steelLight: RGBA(0xD3D9DF),
+        P.paper: RGBA(0xEFE6D2), P.sky: RGBA(0x7FB2D9), P.sea: RGBA(0x3E7CB1), P.coffeeLight: RGBA(0x9A6440),
     ])
+
+    /// The theme's colours over the base palette.
+    static func palette(for theme: OfficeTheme) -> Palette {
+        var p = palette
+        for (index, color) in theme.colors { p.colors[index] = color }
+        return p
+    }
+
+    static func paint(_ c: PixelCanvas, _ theme: OfficeTheme) -> CGImage? { c.image(palette: palette(for: theme)) }
 
     // MARK: Room
 
-    /// Back wall with a window behind every slot but `skipping` (where the board hangs).
-    static func wall(width: Int, height: Int, windows: Int, skipping: Int, margin: Int, slot: Int) -> CGImage? {
+    /// Back wall with a window behind every slot but `skipping` (where the board hangs), in the
+    /// theme's style: plain, concrete blocks, wood panels, metal plates or a coloured mural band.
+    static func wall(width: Int, height: Int, windows: Int, skipping: Int, margin: Int, slot: Int, theme: OfficeTheme = .basic) -> CGImage? {
         var c = PixelCanvas(width: width, height: height)
         c.rect(0, 0, width, height, P.wall)
+        switch theme.wall {
+        case .plain:
+            break
+        case .blocks:
+            for y in stride(from: 3, to: height - 3, by: 4) {
+                c.rect(0, y, width, 1, P.wallShade)
+                for x in stride(from: (y / 4) % 2 == 0 ? 0 : 6, to: width, by: 12) { c.rect(x, y, 1, 4, P.wallShade) }
+            }
+        case .panels:
+            for x in stride(from: 0, to: width, by: 8) { c.rect(x, 3, 1, height - 6, P.wallShade) }
+            c.rect(0, 11, width, 1, P.trim)                                   // chair rail
+        case .metal:
+            for x in stride(from: 0, to: width, by: 16) {
+                c.rect(x, 2, 1, height - 4, P.trim)
+                c.dot(x + 2, 4, P.frameShade); c.dot(x + 2, height - 6, P.frameShade)
+                c.dot(x + 13, 4, P.frameShade); c.dot(x + 13, height - 6, P.frameShade)
+            }
+        case .mural:
+            c.rect(0, 15, width, 1, P.accent)
+            c.rect(0, 16, width, 1, P.noteYellow)
+            for x in stride(from: 0, to: width, by: 18) { c.rect(x, 15, 6, 2, P.noteBlue) }
+        }
         c.rect(0, 0, width, 2, P.trim)
         c.rect(0, 2, width, 1, P.wallShade)
         c.rect(0, height - 3, width, 1, P.wallShade)
@@ -56,44 +94,103 @@ public enum Props {
         c.rect(0, height - 1, width, 1, P.baseboardDark)
         for i in 0..<windows where i != skipping {
             let x = margin + i * slot + 9
-            c.rect(x, 3, 16, 12, P.frame)
-            c.rect(x - 1, 14, 18, 1, P.frameShade)                 // sill
-            c.rect(x + 1, 4, 6, 9, P.glass)
-            c.rect(x + 9, 4, 6, 9, P.glass)
-            for pane in [x + 1, x + 9] {
-                c.rect(pane, 12, 6, 1, P.glassDark)
-                c.dot(pane + 3, 5, P.glassLight); c.dot(pane + 2, 6, P.glassLight); c.dot(pane + 1, 7, P.glassLight)
-                c.dot(pane + 5, 6, P.glassLight); c.dot(pane + 4, 7, P.glassLight)
+            switch theme.windows {
+            case .panes:
+                c.rect(x, 3, 16, 12, P.frame)
+                c.rect(x - 1, 14, 18, 1, P.frameShade)                 // sill
+                c.rect(x + 1, 4, 6, 9, P.glass)
+                c.rect(x + 9, 4, 6, 9, P.glass)
+                for pane in [x + 1, x + 9] {
+                    c.rect(pane, 12, 6, 1, P.glassDark)
+                    c.dot(pane + 3, 5, P.glassLight); c.dot(pane + 2, 6, P.glassLight); c.dot(pane + 1, 7, P.glassLight)
+                    c.dot(pane + 5, 6, P.glassLight); c.dot(pane + 4, 7, P.glassLight)
+                }
+                c.rect(x + 1, 8, 14, 1, P.frame)                       // transom
+            case .blinds:
+                c.rect(x, 3, 16, 12, P.frame)
+                c.rect(x + 1, 4, 14, 10, P.glass)
+                for y in stride(from: 4, to: 14, by: 2) { c.rect(x + 1, y, 14, 1, P.glassLight) }
+                c.rect(x + 12, 4, 1, 8, P.frameShade)                  // cord
+                c.rect(x - 1, 14, 18, 1, P.frameShade)
+            case .bars:
+                c.rect(x + 3, 4, 10, 8, P.frame)
+                c.rect(x + 4, 5, 8, 6, P.glass)
+                c.dot(x + 6, 6, P.glassLight)
+                for bar in stride(from: x + 5, to: x + 12, by: 2) { c.rect(bar, 5, 1, 6, P.frameShade) }
+            case .portholes:
+                c.stamp([
+                    "...FFFFFF...",
+                    ".FFggggggFF.",
+                    "FFggwggggggF",
+                    "FggggggggwgF",
+                    "FgggwgggggFF",
+                    "FgggggggggFF",
+                    "FFggggwgggF.",
+                    ".FFggggggFF.",
+                    "...FFFFFF...",
+                ], at: x + 2, 4, key: ["F": P.frame, "g": P.glass, "w": P.glassLight])
+                c.dot(x + 9, 7, P.glassDark); c.dot(x + 5, 10, P.glassDark)
             }
-            c.rect(x + 1, 8, 14, 1, P.frame)                       // transom
         }
-        return c.image(palette: palette)
+        return paint(c, theme)
     }
 
-    /// Wooden floor in staggered planks, with the wall's shadow along the top.
-    static func floor(width: Int, height: Int) -> CGImage? {
+    /// The floor in the theme's style, with the wall's shadow along the top.
+    static func floor(width: Int, height: Int, theme: OfficeTheme = .basic) -> CGImage? {
         var c = PixelCanvas(width: width, height: height)
-        let plankHeight = 5, plankLength = 30
-        for y in 0..<height {
-            let band = y / plankHeight, row = y % plankHeight
-            for x in 0..<width {
-                let along = x + band * 13 + (band % 3) * 7
-                let color: UInt8
-                if row == plankHeight - 1 {
-                    color = P.seam
-                } else if along % plankLength == 0 {
-                    color = P.joint
-                } else if row == 0 {
-                    color = P.plankLight
-                } else {
-                    color = (along / plankLength + band) % 2 == 0 ? P.plank : P.plankAlt
+        switch theme.floor {
+        case .planks:
+            let plankHeight = 5, plankLength = 30
+            for y in 0..<height {
+                let band = y / plankHeight, row = y % plankHeight
+                for x in 0..<width {
+                    let along = x + band * 13 + (band % 3) * 7
+                    let color: UInt8
+                    if row == plankHeight - 1 {
+                        color = P.seam
+                    } else if along % plankLength == 0 {
+                        color = P.joint
+                    } else if row == 0 {
+                        color = P.plankLight
+                    } else {
+                        color = (along / plankLength + band) % 2 == 0 ? P.plank : P.plankAlt
+                    }
+                    c[x, y] = color
                 }
-                c[x, y] = color
+            }
+        case .carpet:
+            c.rect(0, 0, width, height, P.plank)
+            for y in 0..<height {
+                for x in 0..<width where (x * 7 + y * 13) % 11 == 0 { c[x, y] = (x + y) % 2 == 0 ? P.plankLight : P.plankAlt }
+            }
+        case .concrete:
+            c.rect(0, 0, width, height, P.plank)
+            for y in stride(from: 0, to: height, by: 10) { c.rect(0, y, width, 1, P.seam) }
+            for x in stride(from: 0, to: width, by: 16) { c.rect(x, 0, 1, height, P.seam) }
+            for y in 0..<height {
+                for x in 0..<width where (x * 31 + y * 17) % 53 == 0 { c[x, y] = P.plankAlt }
+            }
+            for crack in stride(from: 9, to: width, by: 47) {                 // a few cracks
+                c.dot(crack, 4, P.seam); c.dot(crack + 1, 5, P.seam); c.dot(crack + 1, 6, P.seam); c.dot(crack + 2, 7, P.seam)
+            }
+        case .polished:
+            c.rect(0, 0, width, height, P.plank)
+            for y in stride(from: 0, to: height, by: 12) { c.rect(0, y, width, 1, P.joint) }
+            for x in stride(from: 0, to: width, by: 24) { c.rect(x, 0, 1, height, P.joint) }
+            for y in 0..<height {
+                for x in 0..<width where (x + y * 3) % 29 == 0 { c[x, y] = P.plankLight }
+            }
+        case .grating:
+            c.rect(0, 0, width, height, P.plank)
+            for y in stride(from: 0, to: height, by: 4) { c.rect(0, y, width, 1, P.seam) }
+            for x in stride(from: 0, to: width, by: 4) { c.rect(x, 0, 1, height, P.seam) }
+            for y in stride(from: 1, to: height, by: 4) {
+                for x in stride(from: 1, to: width, by: 4) { c.dot(x, y, P.plankLight) }
             }
         }
         c.rect(0, 0, width, 1, P.seam)
         c.rect(0, 1, width, 1, P.floorShadow)
-        return c.image(palette: palette)
+        return paint(c, theme)
     }
 
     // MARK: Workstation
@@ -102,7 +199,7 @@ public enum Props {
 
     /// Modern dark desk seen from above: a deep top (the view is aerial) with a mat under the
     /// screen, a sliver of the front panel, metal legs and its shadow on the floor.
-    public static func desk() -> CGImage? {
+    public static func desk(theme: OfficeTheme = .basic) -> CGImage? {
         var c = PixelCanvas(width: deskWidth, height: deskHeight)
         c.rect(1, 1, 30, 1, P.deskRim)
         c.rect(1, 2, 30, 12, P.deskTop)
@@ -123,13 +220,13 @@ public enum Props {
         c.outline(P.outline)
         c.rect(6, 18, 20, 1, P.shadow)                             // shadow under the desk
         c.rect(3, 20, 26, 1, P.shadow)
-        return c.image(palette: palette)
+        return paint(c, theme)
     }
 
     public static let chairWidth = 22, chairHeight = 13
 
     /// An office chair seen from above, behind the person: rounded backrest with a tufted cushion.
-    public static func chair() -> CGImage? {
+    public static func chair(theme: OfficeTheme = .basic) -> CGImage? {
         var c = PixelCanvas(width: chairWidth, height: chairHeight)
         c.stamp([
             "...BBBBBBBBBBBBBBBB...",
@@ -144,14 +241,14 @@ public enum Props {
             "...BBBBBBBBBBBBBBBB...",
         ], at: 0, 1, key: ["B": P.chair, "L": P.chairLight, "c": P.chairCushion, "d": P.chairDark, "t": P.chairDark])
         c.outline(P.outline)
-        return c.image(palette: palette)
+        return paint(c, theme)
     }
 
     public static let monitorWidth = 16, monitorHeight = 9
 
     /// A monitor seen from above and behind: the back of the screen and its round foot. `on`
     /// lights the power LED; `glow` spills the screen's light around its edges while the agent works.
-    public static func monitor(on: Bool, glow: Bool) -> CGImage? {
+    public static func monitor(on: Bool, glow: Bool, theme: OfficeTheme = .basic) -> CGImage? {
         var c = PixelCanvas(width: monitorWidth, height: monitorHeight)
         c.rect(2, 1, 12, 1, P.monitorRim)
         c.rect(2, 2, 12, 4, P.monitorBack)
@@ -165,7 +262,7 @@ public enum Props {
             c.rect(1, 2, 1, 3, P.screen)
             c.rect(14, 2, 1, 3, P.screen)
         }
-        return c.image(palette: palette)
+        return paint(c, theme)
     }
 
     public static let nameCardHeight = 7
@@ -250,7 +347,7 @@ public enum Props {
 
     /// A coffee mug from the side, like the rest of the room seen a little from above: the rim
     /// shows the coffee inside, the handle sticks out to the right.
-    public static func mug() -> CGImage? {
+    public static func mug(theme: OfficeTheme = .basic) -> CGImage? {
         var c = PixelCanvas(width: mugWidth, height: mugHeight)
         c.stamp([
             ".pppp...",
@@ -264,13 +361,13 @@ public enum Props {
         c.dot(2, 2, P.coffeeLight)                                 // light on the coffee
         c.outline(P.outline)
         c.rect(2, 9, 6, 1, P.shadow)
-        return c.image(palette: palette)
+        return paint(c, theme)
     }
 
     public static let notepadWidth = 10, notepadHeight = 7
 
     /// A notepad with a pencil, lying on the desk.
-    public static func notepad() -> CGImage? {
+    public static func notepad(theme: OfficeTheme = .basic) -> CGImage? {
         var c = PixelCanvas(width: notepadWidth, height: notepadHeight)
         c.rect(1, 1, 7, 5, P.white)
         c.rect(1, 1, 7, 1, P.noteYellow)
@@ -279,14 +376,14 @@ public enum Props {
         c.rect(8, 1, 1, 4, P.accent)                               // pencil
         c.dot(8, 5, P.ink)
         c.outline(P.outline)
-        return c.image(palette: palette)
+        return paint(c, theme)
     }
 
     public static let ceilingLampWidth = 14, ceilingLampHeight = 16
 
     /// Pendant lamp hanging from the ceiling over a desk: a cord, a metal dome and the bulb,
     /// glowing when `on`.
-    public static func ceilingLamp(on: Bool) -> CGImage? {
+    public static func ceilingLamp(on: Bool, theme: OfficeTheme = .basic) -> CGImage? {
         var c = PixelCanvas(width: ceilingLampWidth, height: ceilingLampHeight)
         c.rect(6, 0, 1, 9, P.metalDark)                            // cord
         c.stamp([
@@ -299,13 +396,13 @@ public enum Props {
         c.rect(4, 13, 6, 1, on ? P.lampOn : P.lampOff)             // bulb under the dome
         c.outline(P.outline)
         if on { c.rect(5, 14, 4, 1, P.lampGlow) }
-        return c.image(palette: palette)
+        return paint(c, theme)
     }
 
     public static let deskPlantWidth = 11, deskPlantHeight = 13
 
     /// Small bushy plant in a white pot, for the corner of the desk.
-    public static func deskPlant() -> CGImage? {
+    public static func deskPlant(theme: OfficeTheme = .basic) -> CGImage? {
         var c = PixelCanvas(width: deskPlantWidth, height: deskPlantHeight)
         c.stamp([
             "...lL.l..",
@@ -320,14 +417,14 @@ public enum Props {
         c.rect(6, 8, 1, 3, P.plastic)
         c.outline(P.outline, diagonals: true)
         c.rect(3, 12, 5, 1, P.shadow)
-        return c.image(palette: palette)
+        return paint(c, theme)
     }
 
     // MARK: Decor
 
     public static let plantWidth = 18, plantHeight = 28
 
-    public static func plant() -> CGImage? {
+    public static func plant(theme: OfficeTheme = .basic) -> CGImage? {
         var c = PixelCanvas(width: plantWidth, height: plantHeight)
         c.stamp([
             ".......l........",
@@ -353,12 +450,12 @@ public enum Props {
         c.rect(5, 19, 1, 4, P.accent)
         c.outline(P.outline, diagonals: true)
         c.rect(3, 26, 12, 1, P.shadow)
-        return c.image(palette: palette)
+        return paint(c, theme)
     }
 
     public static let coolerWidth = 12, coolerHeight = 29
 
-    public static func waterCooler() -> CGImage? {
+    public static func waterCooler(theme: OfficeTheme = .basic) -> CGImage? {
         var c = PixelCanvas(width: coolerWidth, height: coolerHeight)
         c.rect(4, 1, 4, 1, P.glassDark)
         c.rect(2, 2, 8, 8, P.water)
@@ -372,13 +469,13 @@ public enum Props {
         c.rect(2, 24, 8, 2, P.metalDark)
         c.outline(P.outline)
         c.rect(1, 27, 10, 1, P.shadow)
-        return c.image(palette: palette)
+        return paint(c, theme)
     }
 
     public static let boardWidth = 24, boardHeight = 13
 
     /// Cork board with sticky notes, hung on the wall.
-    public static func board() -> CGImage? {
+    public static func board(theme: OfficeTheme = .basic) -> CGImage? {
         var c = PixelCanvas(width: boardWidth, height: boardHeight)
         c.rect(1, 1, 22, 11, P.woodDark)
         c.rect(2, 2, 20, 9, P.cork)
@@ -389,7 +486,7 @@ public enum Props {
         c.rect(15, 7, 5, 3, P.noteYellow)
         c.dot(5, 3, P.accent); c.dot(11, 4, P.accent); c.dot(17, 3, P.accent)
         c.outline(P.outline)
-        return c.image(palette: palette)
+        return paint(c, theme)
     }
 
     // MARK: Signals

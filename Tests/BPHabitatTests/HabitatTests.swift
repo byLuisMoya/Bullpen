@@ -253,3 +253,38 @@ import UniformTypeIdentifiers
     }
 }
 
+
+@MainActor
+@Suite struct ThemePreviewTests {
+    /// Every theme draws, and renders to `themes.png` with BULLPEN_PREVIEW set.
+    @Test func everyThemeDraws() throws {
+        let width = OfficeLayer.preferredWidth(desks: 5), height = OfficeLayer.openHeight
+        let scale: CGFloat = 1
+        let total = CGFloat(OfficeTheme.allCases.count) * (height + 6)
+        let ctx = try #require(CGContext(data: nil, width: Int(width * scale), height: Int(total * scale), bitsPerComponent: 8, bytesPerRow: 0,
+                                         space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        ctx.interpolationQuality = .none
+        var y: CGFloat = 0
+        for theme in OfficeTheme.allCases {
+            let layer = OfficeLayer()
+            layer.frame = CGRect(x: 0, y: 0, width: width, height: height)
+            let desks: [DeskModel] = [AgentState.working, .done, .needsYou].map { state in
+                let id = UUID()
+                return DeskModel(id: id, name: theme.name, state: state, look: .make(worktreeID: id, agent: "claude"))
+            }
+            layer.update(OfficeModel(desks: desks, theme: theme))
+            #expect(layer.model.theme == theme)
+            ctx.saveGState()
+            ctx.translateBy(x: 0, y: total - y)
+            ctx.scaleBy(x: 1, y: -1)
+            layer.render(in: ctx)
+            ctx.restoreGState()
+            y += height + 6
+        }
+        guard let dir = ProcessInfo.processInfo.environment["BULLPEN_PREVIEW"] else { return }
+        let url = URL(fileURLWithPath: dir).appendingPathComponent("themes.png")
+        let dest = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(dest, try #require(ctx.makeImage()), nil)
+        #expect(CGImageDestinationFinalize(dest))
+    }
+}

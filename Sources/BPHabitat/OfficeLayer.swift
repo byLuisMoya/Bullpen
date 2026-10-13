@@ -42,9 +42,14 @@ public enum DeskWarning: Sendable {
 /// An office = a project, drawn as one floor of the building (PLAN §9).
 public struct OfficeModel: Equatable, Sendable {
     public var desks: [DeskModel]
+    /// The project's office style.
+    public var theme: OfficeTheme
     public var lighting: OfficeLighting { OfficeLighting(activeWorktrees: desks.count) }
 
-    public init(desks: [DeskModel]) { self.desks = desks }
+    public init(desks: [DeskModel], theme: OfficeTheme = .basic) {
+        self.desks = desks
+        self.theme = theme
+    }
 }
 
 /// Core Animation scene for one office: a back wall with windows, a wooden floor and one
@@ -68,7 +73,10 @@ public final class OfficeLayer: CALayer {
     private let beams = CALayer(), penumbra = CAShapeLayer()
     /// Furnished desks nobody uses yet, so even a closed office reads as an office.
     private var vacant: [CALayer] = []
-    private var room: (width: Int, boardSlot: Int) = (0, 0)
+    private var room: (width: Int, boardSlot: Int, theme: OfficeTheme) = (0, 0, .basic)
+    /// Cubicle panels or bars between desks, for themes that have them.
+    private let partitions = CALayer()
+    private var vacantTheme: OfficeTheme = .basic
     private var reduceMotion = false
 
     public override init() {
@@ -93,7 +101,7 @@ public final class OfficeLayer: CALayer {
         closedSign.alignmentMode = .left
         closedSign.zPosition = 11
         closedSign.contentsScale = 2
-        [wall, floorLayer, decor, beams, darkness, penumbra, closedSign].forEach(addSublayer)
+        [wall, floorLayer, decor, partitions, beams, darkness, penumbra, closedSign].forEach(addSublayer)
     }
 
     public override init(layer: Any) { super.init(layer: layer) }
@@ -147,6 +155,7 @@ public final class OfficeLayer: CALayer {
             let previous = old.desks.first { $0.id == desk.id }
             node.place(at: Self.slotX(index))
             node.compact = isCompact
+            node.setTheme(model.theme, state: desk.state)
             node.apply(desk, previous: previous, reduceMotion: reduceMotion)
             node.card.isHidden = isCompact
             nodes[desk.id] = node
@@ -222,18 +231,25 @@ public final class OfficeLayer: CALayer {
         wall.frame = CGRect(x: 0, y: 0, width: CGFloat(width) * s, height: CGFloat(Self.wallHeight) * s)
         floorLayer.frame = CGRect(x: 0, y: CGFloat(Self.wallHeight) * s, width: CGFloat(width) * s, height: CGFloat(Self.floorHeight) * s)
         let boardSlot = Self.slots(model.desks.count)
-        guard width != room.width || boardSlot != room.boardSlot else { return }
-        room = (width, boardSlot)
+        guard width != room.width || boardSlot != room.boardSlot || model.theme != room.theme else { return }
+        room = (width, boardSlot, model.theme)
         let windows = max((width - Self.margin * 2) / Self.slot, 1)
-        wall.contents = Props.wall(width: width, height: Self.wallHeight, windows: windows, skipping: boardSlot, margin: Self.margin, slot: Self.slot)
-        floorLayer.contents = Props.floor(width: width, height: Self.floorHeight)
+        wall.contents = Props.wall(width: width, height: Self.wallHeight, windows: windows, skipping: boardSlot,
+                                   margin: Self.margin, slot: Self.slot, theme: model.theme)
+        floorLayer.contents = Props.floor(width: width, height: Self.floorHeight, theme: model.theme)
     }
 
     private func layoutVacantDesks() {
         let wanted = Self.slots(model.desks.count) - model.desks.count
+        // Another theme: furnish them again.
+        if vacantTheme != model.theme {
+            vacant.forEach { $0.removeFromSuperlayer() }
+            vacant.removeAll()
+            vacantTheme = model.theme
+        }
         while vacant.count < wanted {
             let layer = CALayer()
-            DeskNode.furnish(layer)
+            DeskNode.furnish(layer, theme: model.theme)
             insertSublayer(layer, below: darkness)
             vacant.append(layer)
         }
@@ -248,9 +264,28 @@ public final class OfficeLayer: CALayer {
         decor.sublayers?.forEach { $0.removeFromSuperlayer() }
         let s = Self.scale
         let x = Self.slotX(Self.slots(model.desks.count)) + 2 * s
-        decor.addSublayer(sprite(Props.board(), x: x + 4 * s, y: 3 * s, w: Props.boardWidth, h: Props.boardHeight))
-        decor.addSublayer(sprite(Props.plant(), x: x - s, y: 34 * s, w: Props.plantWidth, h: Props.plantHeight))
-        decor.addSublayer(sprite(Props.waterCooler(), x: x + 17 * s, y: 33 * s, w: Props.coolerWidth, h: Props.coolerHeight))
+        let theme = model.theme
+        let onWall = Props.decor(theme.wallDecor, theme: theme)
+        decor.addSublayer(sprite(onWall.image, x: x + 4 * s, y: CGFloat(max(2, 18 - onWall.height)) * s, w: onWall.width, h: onWall.height))
+        // Standing on the floor, bottoms level with the desks' feet.
+        var left = x - s
+        for item in theme.floorDecor {
+            let piece = Props.decor(item, theme: theme)
+            decor.addSublayer(sprite(piece.image, x: left, y: CGFloat(Self.wallHeight + Self.floorHeight - 7 - piece.height) * s, w: piece.width, h: piece.height))
+            left += CGFloat(piece.width + 1) * s
+        }
+        layoutPartitions()
+    }
+
+    /// Between neighbouring desks (and before the first), for cubicle and prison themes.
+    private func layoutPartitions() {
+        partitions.sublayers?.forEach { $0.removeFromSuperlayer() }
+        guard let kind = model.theme.partition else { return }
+        let s = Self.scale
+        let image = Props.partition(kind, theme: model.theme)
+        for boundary in 0...Self.slots(model.desks.count) {
+            partitions.addSublayer(sprite(image, x: Self.slotX(boundary) - 3 * s, y: 24 * s, w: Props.partitionWidth, h: Props.partitionHeight))
+        }
     }
 
     /// Ceiling lamps over every desk (PLAN §9.2). 0 worktrees: all off, the room in the dark.
@@ -269,7 +304,7 @@ public final class OfficeLayer: CALayer {
         while lamps.count > slots { lamps.removeLast().removeFromSuperlayer() }
         let lit = (0..<slots).map { model.lighting == .allOn || (model.lighting == .singleDesk && $0 == 0) }
         for (i, lamp) in lamps.enumerated() {
-            lamp.contents = Props.ceilingLamp(on: lit[i])
+            lamp.contents = Props.ceilingLamp(on: lit[i], theme: model.theme)
             lamp.frame = CGRect(x: Self.slotX(i) + 10 * s, y: 0, width: CGFloat(Props.ceilingLampWidth) * s,
                                 height: CGFloat(Props.ceilingLampHeight) * s)
             // A lit lamp shines above the darkness; an unlit one sits in it.
@@ -409,13 +444,28 @@ final class DeskNode {
     static let personY = 22, deskY = 41
 
     /// Static furniture of a workstation without anybody (also used for the closed office).
-    static func furnish(_ layer: CALayer) {
-        layer.addSublayer(sprite(Props.chair(), x: 6 * OfficeLayer.scale, y: 26 * OfficeLayer.scale, w: Props.chairWidth, h: Props.chairHeight))
-        layer.addSublayer(sprite(Props.desk(), x: 1 * OfficeLayer.scale, y: CGFloat(deskY) * OfficeLayer.scale, w: Props.deskWidth, h: Props.deskHeight))
-        layer.addSublayer(sprite(Props.monitor(on: false, glow: false), x: 9 * OfficeLayer.scale, y: 37 * OfficeLayer.scale, w: Props.monitorWidth, h: Props.monitorHeight))
-        layer.addSublayer(sprite(Props.mug(), x: 24 * OfficeLayer.scale, y: 34 * OfficeLayer.scale, w: Props.mugWidth, h: Props.mugHeight))
-        layer.addSublayer(sprite(Props.deskPlant(), x: 22 * OfficeLayer.scale, y: 43 * OfficeLayer.scale, w: Props.deskPlantWidth, h: Props.deskPlantHeight))
-        layer.addSublayer(sprite(Props.notepad(), x: 4 * OfficeLayer.scale, y: 47 * OfficeLayer.scale, w: Props.notepadWidth, h: Props.notepadHeight))
+    static func furnish(_ layer: CALayer, theme: OfficeTheme = .basic) {
+        let s = OfficeLayer.scale
+        layer.addSublayer(sprite(Props.chair(theme: theme), x: 6 * s, y: 26 * s, w: Props.chairWidth, h: Props.chairHeight))
+        layer.addSublayer(sprite(Props.desk(theme: theme), x: 1 * s, y: CGFloat(deskY) * s, w: Props.deskWidth, h: Props.deskHeight))
+        layer.addSublayer(sprite(Props.monitor(on: false, glow: false, theme: theme), x: 9 * s, y: 37 * s, w: Props.monitorWidth, h: Props.monitorHeight))
+        layer.addSublayer(sprite(Props.mug(theme: theme), x: 24 * s, y: 34 * s, w: Props.mugWidth, h: Props.mugHeight))
+        layer.addSublayer(sprite(Props.deskPlant(theme: theme), x: 22 * s, y: 43 * s, w: Props.deskPlantWidth, h: Props.deskPlantHeight))
+        layer.addSublayer(sprite(Props.notepad(theme: theme), x: 4 * s, y: 47 * s, w: Props.notepadWidth, h: Props.notepadHeight))
+    }
+
+    /// The office's style for this desk's furniture.
+    private(set) var theme: OfficeTheme = .basic
+
+    func setTheme(_ theme: OfficeTheme, state: AgentState) {
+        guard theme != self.theme || desk.contents == nil else { return }
+        self.theme = theme
+        chair.contents = Props.chair(theme: theme)
+        desk.contents = Props.desk(theme: theme)
+        plant.contents = Props.deskPlant(theme: theme)
+        mug.contents = Props.mug(theme: theme)
+        notepad.contents = Props.notepad(theme: theme)
+        monitor.contents = Props.monitor(on: state != .dead, glow: state == .working, theme: theme)
     }
 
     init(parent: CALayer) {
@@ -503,7 +553,7 @@ final class DeskNode {
         person.removeAllAnimations()
         person.contents = animation == nil ? SpriteCache.jacket(look: model.look) : frames.last
         person.opacity = model.state == .unknown ? 0.5 : 1
-        monitor.contents = Props.monitor(on: model.state != .dead, glow: model.state == .working)
+        monitor.contents = Props.monitor(on: model.state != .dead, glow: model.state == .working, theme: theme)
         if let animation, frames.count > 1, !reduceMotion {
             let anim = CAKeyframeAnimation(keyPath: "contents")
             anim.values = frames

@@ -40,6 +40,29 @@ public struct OrcaWorktree: Equatable, Sendable {
         return output.map(parse) ?? []
     }
 
+    /// Deletes a worktree through Orca (folder, git registration and Orca's own entry), so Orca
+    /// isn't left pointing at a missing folder. `force` also drops uncommitted changes.
+    public static func remove(path: String, force: Bool) async throws {
+        guard let orca = locate() else { throw WorkspaceError(message: "No se encuentra el comando orca.") }
+        let (status, output) = await Task.detached { () -> (Int32, String) in
+            let process = Process()
+            process.executableURL = orca
+            process.arguments = ["worktree", "rm", "--worktree", "path:\(path)", "--json"] + (force ? ["--force"] : [])
+            let out = Pipe()
+            process.standardOutput = out
+            process.standardError = out
+            guard (try? process.run()) != nil else { return (-1, "") }
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+        }.value
+        guard status == 0 else {
+            let message = (try? JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
+                .flatMap { ($0["error"] as? [String: Any])?["message"] as? String ?? $0["error"] as? String }
+            throw WorkspaceError(message: "Orca no pudo eliminarlo: \(message ?? output.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+    }
+
     /// `{"result": {"worktrees": [...]}}` (or the bare list), with refs like `refs/remotes/origin/main`.
     static func parse(_ data: Data) -> [OrcaWorktree] {
         guard let json = try? JSONSerialization.jsonObject(with: data) else { return [] }

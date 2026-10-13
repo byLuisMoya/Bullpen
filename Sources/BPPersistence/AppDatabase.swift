@@ -90,6 +90,9 @@ public final class AppDatabase: Sendable {
                 t.column("createdAt", .datetime).notNull()
             }
         }
+        migrator.registerMigration("v9-office-themes") { db in
+            try db.alter(table: "project") { t in t.add(column: "officeTheme", .text) }
+        }
         return migrator
     }
 }
