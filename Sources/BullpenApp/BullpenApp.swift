@@ -33,6 +33,7 @@ struct BullpenApp: App {
                 .task {
                     store.connectToDaemon = { [sessions] in try await sessions.connection() }
                     store.hooks = sessions.hooks
+                    sessions.adoptAgent = { [store] worktree, agent in store.setAgent(agent, for: worktree) }
                     await store.start()
                 }
                 .task { await sessions.startPolling() }

@@ -1,6 +1,7 @@
 import BPAgents
 import BPGit
 import BPProviders
+import BPSessions
 import SwiftUI
 
 struct SettingsView: View {
@@ -210,19 +211,46 @@ private struct GeneralSettings: View {
     @AppStorage(BuildingName.key) private var buildingName = BuildingName.standard
     @AppStorage(PrimaryAgent.key) private var primaryAgent = AgentProfile.claude.id
     @AppStorage(AgentHooks.coordinationKey) private var coordination = true
+    @State private var addingAgent = false
+    /// Bumped after adding or removing a custom agent, to re-read the list.
+    @State private var agentsVersion = 0
 
     var body: some View {
+        let agents = { _ = agentsVersion; return AgentProfile.all }()
         Form {
             Section {
                 Picker("Agente principal", selection: $primaryAgent) {
-                    ForEach(AgentProfile.all) { Text($0.name).tag($0.id) }
+                    ForEach(agents) { Text($0.name).tag($0.id) }
                 }
                 Toggle("Los agentes pueden coordinarse entre worktrees", isOn: $coordination)
                     .help("Claude Code y Codex arrancan con el servidor MCP de Bullpen: pueden crear worktrees, delegar tareas en otros agentes y esperar sus respuestas. Se aplica a los agentes que arranquen a partir de ahora.")
             } header: {
                 Text("Agentes")
             } footer: {
-                Text("Los worktrees nuevos empiezan con él, y junto a Ajustes ves cuánto lleva usado: el porcentaje de la sesión de 5 h y de la semana si es una suscripción (Claude, ChatGPT), o los tokens de hoy si pagas por uso.")
+                Text("Se abre en los worktrees nuevos y en los que vengan de Orca. Junto a Ajustes ves cuánto lleva usado: el porcentaje de la sesión de 5 h y de la semana si es una suscripción (Claude, ChatGPT), o los tokens de hoy si pagas por uso (Claude, Codex).")
+            }
+            Section {
+                ForEach(agents.filter(\.isCustom)) { agent in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(agent.name)
+                            Text(([agent.executable] + agent.arguments).joined(separator: " "))
+                                .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer()
+                        Button("Quitar", role: .destructive) {
+                            try? AgentProfile.deleteCustom(agent.id)
+                            if primaryAgent == agent.id { primaryAgent = AgentProfile.claude.id }
+                            agentsVersion += 1
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+                Button("Añadir agente…", systemImage: "plus") { addingAgent = true }
+            } header: {
+                Text("Agentes personalizados")
+            } footer: {
+                Text("Cualquier agente de terminal que no venga de serie (por ejemplo DeepSeek): lo añades con su comando y puedes elegirlo como principal.")
             }
             Section {
                 TextField("Nombre de la vista general", text: $buildingName, prompt: Text(BuildingName.standard))
@@ -235,5 +263,80 @@ private struct GeneralSettings: View {
             }
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $addingAgent) {
+            CustomAgentSheet { saved in
+                agentsVersion += 1
+                primaryAgent = saved.id
+            }
+        }
+    }
+}
+
+/// Adds any terminal agent: a name, the command that starts it, and how it takes its first task.
+private struct CustomAgentSheet: View {
+    var onSaved: (AgentProfile) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var command = ""
+    @State private var delivery = 0
+    @State private var promptFlag = "--prompt"
+    @State private var modelFlag = ""
+    @State private var error: String?
+
+    private var found: Bool? {
+        guard let executable = command.split(separator: " ").first.map(String.init), !executable.isEmpty else { return nil }
+        return ShellEnvironment.locate(executable) != nil
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Nombre", text: $name, prompt: Text("DeepSeek"))
+                TextField("Comando", text: $command, prompt: Text("deepseek  ·  aider --model deepseek/deepseek-chat"))
+                    .font(.body.monospaced())
+                if let found {
+                    Label(found ? "Encontrado en tu PATH" : "No se encuentra en tu PATH (puedes guardarlo igualmente)",
+                          systemImage: found ? "checkmark.circle" : "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(found ? Color.secondary : Color.orange)
+                }
+            }
+            Section("La tarea inicial") {
+                Picker("Se la pasa", selection: $delivery) {
+                    Text("Como argumento (comando \"tarea\")").tag(0)
+                    Text("Con una opción").tag(1)
+                    Text("Escribiéndola cuando arranque").tag(2)
+                }
+                if delivery == 1 {
+                    TextField("Opción", text: $promptFlag, prompt: Text("--prompt"))
+                }
+                TextField("Opción del modelo (opcional)", text: $modelFlag, prompt: Text("--model"))
+            }
+            if let error { Text(error).foregroundStyle(.red) }
+        }
+        .formStyle(.grouped)
+        .frame(width: 460)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("Cancelar") { dismiss() } }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Añadir") { save() }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || command.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+    }
+
+    private func save() {
+        let prompt: PromptDelivery = switch delivery {
+        case 1: .flag(promptFlag.trimmingCharacters(in: .whitespaces))
+        case 2: .type
+        default: .positional
+        }
+        do {
+            let saved = try AgentProfile.saveCustom(name: name.trimmingCharacters(in: .whitespaces), command: command,
+                                                    prompt: prompt, modelFlag: modelFlag.trimmingCharacters(in: .whitespaces))
+            onSaved(saved)
+            dismiss()
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 }

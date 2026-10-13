@@ -379,3 +379,20 @@ let fakeB = AgentProfile(id: "fake-b", name: "Fake B", executable: "/bin/echo")
         #expect(items == [OrcaWorktree(path: "/w/a", baseRef: "origin/main", archived: false), OrcaWorktree(path: "/w/b", baseRef: nil, archived: true)])
     }
 }
+
+@Suite(.serialized) struct TerminalTabTests {
+    @Test func removingAWorktreeClosesItsExtraTerminals() async throws {
+        let f = try await Fixture.make(config: "")
+        defer { f.server.stop() }
+        let wt = try await f.workspace.createWorktree(WorktreeRequest(project: f.project, branch: "con-pestanas", baseRef: "main"))
+        let client = try await f.workspace.connect()
+        let main = Workspace.sessionID(for: wt)
+        _ = try await client.create(SessionSpec(id: main, cwd: wt.path))
+        _ = try await client.create(SessionSpec(id: main + "-t2", cwd: wt.path))
+        _ = try await client.create(SessionSpec(id: main + "-t3", cwd: wt.path))
+        try await f.workspace.removeWorktree(wt, in: f.project, force: true)
+        let left = try await client.list().map(\.id)
+        #expect(!left.contains { $0.hasPrefix(main) })
+        client.close()
+    }
+}

@@ -6,6 +6,8 @@ import SwiftUI
 struct TerminalPane: NSViewRepresentable {
     let worktree: Worktree
     var environment: [String: String] = [:]
+    /// An extra tab's session id; nil is the main tab (the worktree's agent).
+    var tab: String?
     @Environment(SessionManager.self) private var sessions
 
     func makeCoordinator() -> Coordinator { Coordinator(sessions: sessions) }
@@ -15,7 +17,7 @@ struct TerminalPane: NSViewRepresentable {
         // Recent history only; the full log stays on disk in the daemon (ADR 0002).
         view.getTerminal().changeHistorySize(2_000)
         view.terminalDelegate = context.coordinator
-        context.coordinator.start(view: view, worktree: worktree, environment: environment)
+        context.coordinator.start(view: view, worktree: worktree, environment: environment, tab: tab)
         return view
     }
 
@@ -33,14 +35,17 @@ struct TerminalPane: NSViewRepresentable {
 
         init(sessions: SessionManager) { self.sessions = sessions }
 
-        func start(view: TerminalView, worktree: Worktree, environment: [String: String]) {
+        func start(view: TerminalView, worktree: Worktree, environment: [String: String], tab: String?) {
             self.view = view
             Task {
                 do {
                     let terminal = view.getTerminal()
-                    let id = try await sessions.ensureShell(
-                        for: worktree, environment: environment, cols: UInt16(max(terminal.cols, 20)), rows: UInt16(max(terminal.rows, 5))
-                    )
+                    let cols = UInt16(max(terminal.cols, 20)), rows = UInt16(max(terminal.rows, 5))
+                    let id = if let tab {
+                        try await sessions.ensureTab(tab, for: worktree, environment: environment, cols: cols, rows: rows)
+                    } else {
+                        try await sessions.ensureMain(for: worktree, environment: environment, cols: cols, rows: rows)
+                    }
                     sessionID = id
                     try await sessions.attach(id, handler: self)
                     sessions.resize(id, cols: terminal.cols, rows: terminal.rows)

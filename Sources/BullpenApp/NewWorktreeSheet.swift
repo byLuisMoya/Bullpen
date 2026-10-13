@@ -52,7 +52,12 @@ struct NewWorktreeSheet: View {
     @FocusState private var queryFocused: Bool
     @Environment(AttentionCenter.self) private var attention
     @Environment(UsageCenter.self) private var usage
-    @State private var variants: [VariantRow] = [VariantRow(agentID: AgentProfile.claude.id), VariantRow(agentID: AgentProfile.codex.id)]
+    /// Comparing agents starts with the main one and another one.
+    @State private var variants: [VariantRow] = {
+        let main = PrimaryAgent.id
+        let other = main == AgentProfile.codex.id ? AgentProfile.claude.id : AgentProfile.codex.id
+        return [VariantRow(agentID: main), VariantRow(agentID: other)]
+    }()
 
     private var profile: AgentProfile? { AgentProfile.named(agentID) }
     private var path: String { WorktreeLocation.path(project: project.name, branch: branch).path }
@@ -579,7 +584,7 @@ struct NewWorktreeSheet: View {
                             }
                         }
                         HStack {
-                            Button("Añadir agente", systemImage: "plus") { variants.append(VariantRow(agentID: AgentProfile.claude.id)) }
+                            Button("Añadir agente", systemImage: "plus") { variants.append(VariantRow(agentID: PrimaryAgent.id)) }
                                 .disabled(variants.count >= 5)
                             Spacer()
                             Text("Ramas: " + Workspace.branchNames(base: branch.isEmpty ? "rama" : branch, variants: workspaceVariants).joined(separator: ", "))

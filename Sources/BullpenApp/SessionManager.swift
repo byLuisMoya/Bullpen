@@ -114,6 +114,87 @@ final class SessionManager {
 
     // MARK: Worktree shells
 
+    /// The worktree's main tab: its running session, or a new one with its agent (Claude by
+    /// default for worktrees made outside Bullpen), or a shell for terminal-only worktrees.
+    func ensureMain(for worktree: Worktree, environment: [String: String] = [:], cols: UInt16 = 120, rows: UInt16 = 40) async throws -> String {
+        let client = try await connection()
+        let id = Self.sessionID(for: worktree)
+        if let existing = try await client.list().first(where: { $0.id == id }) {
+            // An Orca worktree opened before agents started by default has an empty shell as its
+            // main terminal: swap it for the agent, but only while nothing is running in it.
+            let idleShell = existing.command == nil
+                && existing.foregroundProcess.map { StatusEngine.isShell($0) } ?? true
+            if existing.isRunning, !(worktree.external && worktree.agentProfileID == nil && idleShell) { return id }
+            if existing.isRunning {
+                try? await client.kill(id, signal: SIGHUP)
+                for _ in 0..<20 {
+                    guard let session = try? await client.list().first(where: { $0.id == id }), session.isRunning else { break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
+            try await client.remove(id)
+        }
+        var agentID = worktree.agentProfileID
+        // Made in Orca or with git: it gets the main agent the first time it is opened here.
+        if agentID == nil, worktree.external {
+            agentID = PrimaryAgent.id
+            adoptAgent?(worktree, PrimaryAgent.id)
+        }
+        guard let profile = AgentProfile.named(agentID) else {
+            return try await ensureShell(for: worktree, environment: environment, cols: cols, rows: rows)
+        }
+        let launch = profile.launch(model: worktree.agentModel, prompt: nil, hooks: hooks)
+        infos[id] = try await client.create(SessionSpec(id: id, cwd: worktree.path, command: launch.command,
+                                                        environment: environment, cols: cols, rows: rows))
+        return id
+    }
+
+    // MARK: Extra terminal tabs
+
+    static func tabPrefix(for worktree: Worktree) -> String { sessionID(for: worktree) + "-t" }
+
+    /// Saves the agent an outside worktree adopted (set by the app: the store owns the database).
+    @ObservationIgnored var adoptAgent: ((Worktree, String) -> Void)?
+
+    /// Extra terminals of a worktree (`wt-<id>-t2`, `-t3`…), in the order they were opened.
+    func tabs(for worktree: Worktree) -> [String] {
+        let prefix = Self.tabPrefix(for: worktree)
+        return infos.keys.filter { $0.hasPrefix(prefix) }
+            .sorted { (Int($0.dropFirst(prefix.count)) ?? 0) < (Int($1.dropFirst(prefix.count)) ?? 0) }
+    }
+
+    /// Opens one more terminal in the worktree's folder.
+    func openTab(for worktree: Worktree, environment: [String: String] = [:]) async throws -> String {
+        let client = try await connection()
+        let prefix = Self.tabPrefix(for: worktree)
+        let taken = try await client.list().compactMap { $0.id.hasPrefix(prefix) ? Int($0.id.dropFirst(prefix.count)) : nil }
+        let id = prefix + String((taken.max() ?? 1) + 1)
+        infos[id] = try await client.create(SessionSpec(id: id, cwd: worktree.path, environment: environment))
+        return id
+    }
+
+    /// An extra tab's session, restarted as a shell if it ended.
+    func ensureTab(_ id: String, for worktree: Worktree, environment: [String: String] = [:], cols: UInt16 = 120, rows: UInt16 = 40) async throws -> String {
+        let client = try await connection()
+        if let existing = try await client.list().first(where: { $0.id == id }) {
+            if existing.isRunning { return id }
+            try await client.remove(id)
+        }
+        infos[id] = try await client.create(SessionSpec(id: id, cwd: worktree.path, environment: environment, cols: cols, rows: rows))
+        return id
+    }
+
+    func closeTab(_ id: String) async {
+        guard let client = try? await connection() else { return }
+        try? await client.kill(id, signal: SIGHUP)
+        for _ in 0..<20 {
+            guard let session = try? await client.list().first(where: { $0.id == id }), session.isRunning else { break }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        try? await client.remove(id)
+        infos[id] = nil
+    }
+
     /// Returns the id of a running shell session for the worktree, starting one if needed.
     func ensureShell(for worktree: Worktree, environment: [String: String] = [:], cols: UInt16 = 120, rows: UInt16 = 40) async throws -> String {
         let client = try await connection()

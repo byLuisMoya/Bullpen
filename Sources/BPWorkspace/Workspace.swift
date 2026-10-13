@@ -214,12 +214,15 @@ public struct Workspace: Sendable {
     public func removeWorktree(_ worktree: Worktree, in project: Project, force: Bool) async throws {
         let id = Self.sessionID(for: worktree)
         if let client = try? await connect() {
-            try? await client.kill(id, signal: SIGHUP)
+            // Its agent's terminal and any extra tabs (`<id>-t2`…).
+            let ids = ((try? await client.list()) ?? []).map(\.id).filter { $0 == id || $0.hasPrefix(id + "-t") }
+            for session in ids { try? await client.kill(session, signal: SIGHUP) }
             for _ in 0..<20 {
-                guard let session = try? await client.list().first(where: { $0.id == id }), session.isRunning else { break }
+                let running = ((try? await client.list()) ?? []).filter { ids.contains($0.id) && $0.isRunning }
+                if running.isEmpty { break }
                 try? await Task.sleep(for: .milliseconds(100))
             }
-            try? await client.remove(id)
+            for session in ids { try? await client.remove(session) }
         }
         let path = URL(fileURLWithPath: worktree.path)
         // Not ours (Orca, plain git): stop showing it, leave its folder and branch alone.

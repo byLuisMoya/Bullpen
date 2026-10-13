@@ -298,6 +298,8 @@ private struct WorktreeDetail: View {
     @Environment(BuildingStore.self) private var store
     @Environment(AttentionCenter.self) private var attention
     @State private var restarting = false
+    /// The terminal tab shown: nil is the agent's, otherwise an extra terminal's session id.
+    @State private var terminalTab: String?
     // BULLPEN_SNAPSHOT_TAB=changes opens the panel on that tab (for DebugSnapshots).
     @AppStorage("worktreePanel.shown") private var panelShown = ProcessInfo.processInfo.environment["BULLPEN_SNAPSHOT_TAB"] != nil
 
@@ -326,7 +328,9 @@ private struct WorktreeDetail: View {
                     .background(.bar)
                     .overlay(alignment: .bottom) { Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1) }
                 }
-                TerminalPane(worktree: worktree, environment: (try? WorktreeEnvironment.load(project: project, worktree: worktree))?.environment ?? [:])
+                TerminalTabs(worktree: worktree, selection: $terminalTab) { Task { await openTab() } }
+                TerminalPane(worktree: worktree, environment: terminalEnvironment, tab: terminalTab)
+                    .id(terminalTab ?? "main")
             }
         }
         .inspector(isPresented: $panelShown) {
@@ -358,6 +362,16 @@ private struct WorktreeDetail: View {
                     .help(panelShown ? "Ocultar ficheros, cambios y bitácora" : "Ver ficheros, cambios y bitácora")
                 UpdateButton()
             }
+        }
+    }
+
+    private var terminalEnvironment: [String: String] {
+        (try? WorktreeEnvironment.load(project: project, worktree: worktree))?.environment ?? [:]
+    }
+
+    private func openTab() async {
+        do { terminalTab = try await sessions.openTab(for: worktree, environment: terminalEnvironment) } catch {
+            store.errorMessage = "No se pudo abrir otra terminal: \(error.localizedDescription)"
         }
     }
 
@@ -426,4 +440,61 @@ private struct SidebarMaterial: NSViewRepresentable {
     }
 
     func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+
+/// Tabs over the worktree's terminal: its agent first, then any extra terminals, and "+".
+private struct TerminalTabs: View {
+    let worktree: Worktree
+    @Binding var selection: String?
+    var onAdd: () -> Void
+    @Environment(SessionManager.self) private var sessions
+
+    var body: some View {
+        let extra = sessions.tabs(for: worktree)
+        HStack(spacing: 2) {
+            tab(id: nil, title: AgentProfile.named(worktree.agentProfileID)?.name
+                    ?? (worktree.external ? AgentProfile.named(PrimaryAgent.id)?.name ?? "Agente" : "Terminal"),
+                icon: worktree.agentProfileID == nil && !worktree.external ? "terminal" : "sparkles", closable: false)
+            ForEach(Array(extra.enumerated()), id: \.element) { index, id in
+                tab(id: id, title: "Terminal \(index + 2)", icon: "terminal", closable: true)
+            }
+            Button(action: onAdd) {
+                Image(systemName: "plus").frame(width: 24, height: 22).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Abrir otra terminal en este worktree")
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(Color(white: 0.08))
+        .overlay(alignment: .bottom) { Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1) }
+        // A tab whose terminal was closed from inside (exit) falls back to the agent's.
+        .onChange(of: extra) { _, now in if let selection, !now.contains(selection) { self.selection = nil } }
+    }
+
+    private func tab(id: String?, title: String, icon: String, closable: Bool) -> some View {
+        let selected = selection == id
+        return HStack(spacing: 5) {
+            Image(systemName: icon).font(.caption)
+            Text(title).font(.callout).lineLimit(1)
+            if closable, let id {
+                Button {
+                    if selection == id { selection = nil }
+                    Task { await sessions.closeTab(id) }
+                } label: {
+                    Image(systemName: "xmark").font(.caption2.weight(.bold)).frame(width: 14, height: 14)
+                }
+                .buttonStyle(.plain)
+                .help("Cerrar esta terminal")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .foregroundStyle(selected ? Color.white : Color.white.opacity(0.55))
+        .background(selected ? Color.white.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 6))
+        .contentShape(Rectangle())
+        .onTapGesture { selection = id }
+    }
 }

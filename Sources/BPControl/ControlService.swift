@@ -136,7 +136,8 @@ public struct ControlService: Sendable {
         guard let session, session.hasPrefix("wt-") else {
             throw ControlError("Este proceso no corre en la terminal de ningún worktree de Bullpen.")
         }
-        let (wt, project) = try find(String(session.dropFirst(3)))
+        // `wt-<uuid>`, or `wt-<uuid>-t2` for an extra terminal tab of the same worktree.
+        let (wt, project) = try find(String(session.dropFirst(3).prefix(36)))
         return WorktreeSummary(id: wt.id.uuidString, project: project.name, branch: wt.branch, path: wt.path,
                                baseRef: wt.baseRef, agent: wt.agentProfileID, state: "", detail: nil, ticket: wt.ticket?.key)
     }

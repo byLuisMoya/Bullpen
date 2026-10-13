@@ -27,6 +27,8 @@ public struct AgentStatus: Equatable, Sendable {
 public enum StatusEngine {
     static let shells: Set<String> = ["zsh", "bash", "fish", "sh", "dash", "tcsh", "csh", "nu", "-zsh", "-bash"]
 
+    public static func isShell(_ process: String) -> Bool { shells.contains(process) }
+
     public static func status(for session: SessionInfo?, profile: AgentProfile?, now: Date = Date()) -> AgentStatus {
         guard let session else { return AgentStatus(state: .unknown, detail: nil, confidence: .low, since: nil) }
         if let code = session.exitStatus {

@@ -86,6 +86,13 @@ final class BuildingStore {
         }
     }
 
+    /// Records which agent runs in a worktree (an Orca one adopting the main agent).
+    func setAgent(_ agent: String, for worktree: Worktree) {
+        var updated = worktree
+        updated.agentProfileID = agent
+        do { try database?.save(updated) } catch { report(error, "Update worktree failed") }
+    }
+
     func updateProject(_ project: Project) {
         do {
             try database?.save(project)

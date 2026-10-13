@@ -129,6 +129,7 @@ import Testing
 
         // Who am I: from the terminal's BULLPEN_SESSION_ID.
         #expect(try env.service.current(session: Workspace.sessionID(for: a)).branch == "coordina")
+        #expect(try env.service.current(session: Workspace.sessionID(for: a) + "-t2").branch == "coordina", "an extra tab of the same worktree")
         #expect(throws: ControlError.self) { try env.service.current(session: nil) }
 
         // A plain terminal settles to idle once its output goes quiet.

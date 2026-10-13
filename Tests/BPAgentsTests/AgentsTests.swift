@@ -215,3 +215,23 @@ import Testing
         #expect(command.contains(#"'mcp_servers.bullpen.args=["mcp"]'"#))
     }
 }
+
+@Suite struct CustomAgentTests {
+    @Test func savesReadsAndDeletesACustomAgent() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("bp-agents-\(UUID().uuidString)")
+        let saved = try AgentProfile.saveCustom(name: "DeepSeek", command: "aider --model deepseek/deepseek-chat",
+                                                prompt: .flag("--message"), modelFlag: "--model", in: dir)
+        #expect(saved.id == "deepseek")
+        let loaded = try #require(AgentProfile.loadCustom(from: dir).first)
+        #expect(loaded == saved)
+        #expect(loaded.name == "DeepSeek")
+        #expect(loaded.executable == "aider")
+        #expect(loaded.prompt == .flag("--message"))
+        let hooks = AgentHooks(bpPath: "/x/bp", claudeSettingsPath: "/tmp/s.json")
+        #expect(loaded.command(model: nil, prompt: "Arregla \"esto\"", hooks: hooks)
+                == "aider --model deepseek/deepseek-chat --message 'Arregla \"esto\"'; exec \"$SHELL\" -l")
+        try AgentProfile.deleteCustom("deepseek", in: dir)
+        #expect(AgentProfile.loadCustom(from: dir).isEmpty)
+        #expect(throws: (any Error).self) { try AgentProfile.saveCustom(name: "  ", command: "x", prompt: .positional, modelFlag: nil, in: dir) }
+    }
+}

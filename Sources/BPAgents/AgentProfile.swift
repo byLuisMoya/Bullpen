@@ -105,6 +105,42 @@ public struct AgentProfile: Identifiable, Hashable, Sendable {
         )
     }
 
+    /// The `.toml` for a custom agent, as `custom(toml:)` reads it.
+    public static func customTOML(id: String, name: String, command: String, prompt: PromptDelivery, modelFlag: String?) -> String {
+        func quoted(_ s: String) -> String {
+            "\"" + s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+        }
+        let promptValue = switch prompt {
+        case .positional: "positional"
+        case let .flag(flag): "flag:" + flag
+        case .type: "type"
+        }
+        var lines = ["id = \(quoted(id))", "name = \(quoted(name))", "command = \(quoted(command))", "prompt = \(quoted(promptValue))"]
+        if let modelFlag, !modelFlag.isEmpty { lines.append("model_flag = \(quoted(modelFlag))") }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Saves a custom agent (any CLI: DeepSeek, a wrapper script…) next to the others.
+    @discardableResult
+    public static func saveCustom(name: String, command: String, prompt: PromptDelivery, modelFlag: String?,
+                                  in dir: URL = customDirectory) throws -> AgentProfile {
+        let id = name.lowercased().unicodeScalars
+            .map { CharacterSet.alphanumerics.contains($0) && $0.isASCII ? String($0) : "-" }.joined()
+            .split(separator: "-").joined(separator: "-")
+        guard !id.isEmpty, !command.trimmingCharacters(in: .whitespaces).isEmpty else {
+            throw TOMLError(line: 1, message: "falta el nombre o el comando")
+        }
+        let toml = customTOML(id: id, name: name, command: command.trimmingCharacters(in: .whitespaces), prompt: prompt, modelFlag: modelFlag)
+        let profile = try custom(toml: toml)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try toml.write(to: dir.appendingPathComponent("\(id).toml"), atomically: true, encoding: .utf8)
+        return profile
+    }
+
+    public static func deleteCustom(_ id: String, in dir: URL = customDirectory) throws {
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("\(id).toml"))
+    }
+
     static func loadCustom(from dir: URL) -> [AgentProfile] {
         let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
         return files.filter { $0.pathExtension == "toml" }.sorted { $0.path < $1.path }
