@@ -299,6 +299,12 @@ final class SessionManager {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.client?.input(id, Data([0x03])) }
     }
 
+    /// Stops the agent's current turn without quitting it (Esc: Claude Code, Codex and OpenCode
+    /// drop what they are doing and wait for you).
+    func cancelTurn(_ worktree: Worktree) {
+        client?.input(Self.sessionID(for: worktree), Data([0x1B]))
+    }
+
     /// Closes the worktree's terminal and starts its agent again (no prompt; the conversation is new).
     func restartAgent(_ worktree: Worktree, environment: [String: String]) async throws {
         await close(worktree)

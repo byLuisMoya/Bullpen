@@ -433,9 +433,20 @@ private struct GeneralSettings: View {
 private struct NoticeSettings: View {
     @AppStorage(AlertSounds.volumeKey) private var volume = 0.6
     @AppStorage(AlertSounds.whileLookingKey) private var whileLooking = false
+    @AppStorage(AttentionCenter.stallMinutesKey) private var stallMinutes = 10
 
     var body: some View {
         Form {
+            Section {
+                Picker("Avisar si un agente no avanza en", selection: $stallMinutes) {
+                    Text("Nunca").tag(0)
+                    ForEach([5, 10, 15, 20, 30, 45, 60], id: \.self) { Text("\($0) min").tag($0) }
+                }
+            } header: {
+                Text("Agentes atascados")
+            } footer: {
+                Text("Cuenta desde su último paso (una herramienta que empieza o acaba, una respuesta): si dice que trabaja o piensa y no da ninguno más en ese tiempo, Bullpen avisa y te deja interrumpirlo. Súbelo si sueles lanzar comandos largos, como suites de tests enteras.")
+            }
             Section {
                 ForEach(AlertSounds.Event.allCases) { event in
                     SoundPicker(event: event)

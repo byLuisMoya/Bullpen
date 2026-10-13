@@ -13,6 +13,17 @@ import BPGit
 @Observable
 final class AttentionCenter {
     private(set) var statuses: [UUID: AgentStatus] = [:]
+    /// Agents that look stuck mid-turn (and the user hasn't dismissed).
+    private(set) var stalls: [UUID: Stall] = [:]
+    /// Stalls the user said to leave alone, by their start: a new hook ends them anyway.
+    @ObservationIgnored private var ignoredStalls: [UUID: Date] = [:]
+    /// Stalls already announced, so each one makes a single notification.
+    @ObservationIgnored private var announcedStalls: [UUID: Date] = [:]
+
+    static let stallMinutesKey = "stall.minutes"
+    static var stallMinutes: Int {
+        UserDefaults.standard.object(forKey: stallMinutesKey) == nil ? 10 : UserDefaults.standard.integer(forKey: stallMinutesKey)
+    }
     @ObservationIgnored private var notificationsEnabled = false
     /// Worktree being looked at: no banner for it.
     @ObservationIgnored var focusedWorktree: UUID? {
@@ -38,8 +49,19 @@ final class AttentionCenter {
 
     private func update(store: BuildingStore, sessions: SessionManager) {
         var next: [UUID: AgentStatus] = [:]
+        var nextStalls: [UUID: Stall] = [:]
+        let threshold = TimeInterval(Self.stallMinutes * 60)
         for office in store.offices {
             for worktree in office.worktrees {
+                if worktree.agentProfileID != nil,
+                   let stall = StatusEngine.stall(of: sessions.infos[SessionManager.sessionID(for: worktree)], after: threshold),
+                   ignoredStalls[worktree.id] != stall.since {
+                    nextStalls[worktree.id] = stall
+                    if announcedStalls[worktree.id] != stall.since {
+                        announcedStalls[worktree.id] = stall.since
+                        stalled(worktree, in: office.project, stall)
+                    }
+                }
                 // A worktree from Orca without an agent of Bullpen's: its state is Orca's agent's
                 // (even with a plain terminal open here).
                 let status = (worktree.agentProfileID == nil ? orca?.status(for: worktree) : nil) ?? sessions.status(for: worktree)
@@ -48,6 +70,7 @@ final class AttentionCenter {
                 if old != nil, old != status.state { changed(worktree, in: office.project, to: status) }
             }
         }
+        if nextStalls != stalls { stalls = nextStalls }
         guard next != statuses else { return }
         statuses = next
         let waiting = next.values.filter { $0.state == .needsYou }.count
@@ -86,6 +109,25 @@ final class AttentionCenter {
         // Same identifier per worktree: a new state replaces the previous banner.
         let request = UNNotificationRequest(identifier: worktree.id.uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
+    }
+
+    private func stalled(_ worktree: Worktree, in project: Project, _ stall: Stall) {
+        let looking = worktree.id == focusedWorktree && NSApp.isActive
+        if !looking || UserDefaults.standard.bool(forKey: AlertSounds.whileLookingKey) { AlertSounds.play(.stuck) }
+        guard notificationsEnabled, !looking else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "\(worktree.branch) parece atascado"
+        content.subtitle = project.name
+        content.body = "\(stall.description().prefix(1).uppercased())\(stall.description().dropFirst()). Ábrelo para interrumpirlo o dejarlo seguir."
+        content.threadIdentifier = worktree.id.uuidString
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: worktree.id.uuidString, content: content, trigger: nil))
+    }
+
+    /// "Let it be": no banner until it moves on and gets stuck again.
+    func ignoreStall(of worktree: UUID) {
+        guard let stall = stalls[worktree] else { return }
+        ignoredStalls[worktree] = stall.since
+        stalls[worktree] = nil
     }
 
     func clear(_ worktree: UUID) {

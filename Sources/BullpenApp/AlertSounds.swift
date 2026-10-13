@@ -6,7 +6,7 @@ import Foundation
 @MainActor
 enum AlertSounds {
     enum Event: String, CaseIterable, Identifiable {
-        case needsYou, done, error, message
+        case needsYou, done, error, stuck, message
         var id: String { rawValue }
         var key: String { "sound.\(rawValue)" }
         var title: String {
@@ -14,6 +14,7 @@ enum AlertSounds {
             case .needsYou: "Te pregunta algo o pide permiso"
             case .done: "Ha terminado"
             case .error: "Ha fallado"
+            case .stuck: "Parece atascado"
             case .message: "Un agente te escribe"
             }
         }
@@ -22,6 +23,7 @@ enum AlertSounds {
             case .needsYou: "bullpen.chime"
             case .done: "Pop"
             case .error: "Purr"
+            case .stuck: "bullpen.marimba"
             case .message: "bullpen.drop"
             }
         }

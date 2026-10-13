@@ -104,6 +104,23 @@ import Testing
         #expect(state(session(output: 5, activity: ("PreToolUse", "Bash", 900))) == .working)
     }
 
+    /// Stuck: mid-turn with no new hook for the threshold, whatever the spinner prints meanwhile.
+    @Test func stallsComeFromHooksNotOutput() {
+        let tenMinutes: TimeInterval = 600
+        let inTool = StatusEngine.stall(of: session(output: 1, activity: ("PreToolUse", "Bash", 720)), after: tenMinutes, now: now)
+        #expect(inTool?.tool == "Bash" && inTool?.minutes(at: now) == 12)
+        #expect(inTool?.description(at: now) == "lleva 12 min usando Bash sin avanzar")
+        #expect(StatusEngine.stall(of: session(output: 1, activity: ("PostToolUse", "Bash", 660)), after: tenMinutes, now: now)?.tool == nil,
+                "thinking for too long is a stall too")
+        #expect(StatusEngine.stall(of: session(activity: ("PreToolUse", "Bash", 300)), after: tenMinutes, now: now) == nil, "not yet")
+        // Stopped, waiting for the user or gone: not stuck.
+        #expect(StatusEngine.stall(of: session(activity: ("Stop", nil, 3600)), after: tenMinutes, now: now) == nil)
+        #expect(StatusEngine.stall(of: session(activity: ("PermissionRequest", "Bash", 3600)), after: tenMinutes, now: now) == nil)
+        #expect(StatusEngine.stall(of: session(activity: ("PreToolUse", "Bash", 3600), exit: 1), after: tenMinutes, now: now) == nil)
+        #expect(StatusEngine.stall(of: session(fg: "zsh", activity: ("PreToolUse", "Bash", 3600)), after: tenMinutes, now: now) == nil)
+        #expect(StatusEngine.stall(of: session(activity: ("PreToolUse", "Bash", 3600)), after: 0, now: now) == nil, "switched off")
+    }
+
     @Test func withoutHooksFallsBackToOutput() {
         #expect(state(session(output: 1)) == .working)
         #expect(state(session(output: 100)) == .unknown)

@@ -13,12 +13,14 @@ struct WorktreeRow: View {
     var summary: String?
     /// Its latest review (or, on a reviewer's row, its own).
     var review: ReviewInfo?
+    /// It looks stuck mid-turn (AttentionCenter).
+    var stall: Stall?
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: status?.state.symbol ?? "circle.dotted")
-                .foregroundStyle(status?.state.color ?? .secondary)
-                .symbolEffect(.pulse, isActive: status?.state == .needsYou)
+            Image(systemName: stall != nil ? "hourglass" : status?.state.symbol ?? "circle.dotted")
+                .foregroundStyle(stall != nil ? .orange : status?.state.color ?? .secondary)
+                .symbolEffect(.pulse, isActive: status?.state == .needsYou || stall != nil)
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(worktree.branch).lineLimit(1)
@@ -39,6 +41,7 @@ struct WorktreeRow: View {
     private var subtitle: String {
         let agent = AgentProfile.named(worktree.agentProfileID)?.name
             ?? (worktree.external ? (worktree.path.contains("/orca/") ? "Orca" : "Externo") : "Terminal")
+        if let stall { return "\(agent) · parece atascado (\(stall.minutes()) min)" }
         if let summary, let state = status?.state, SummaryCenter.activeStates.contains(state), state != .needsYou {
             return "\(agent) · \(summary)"
         }

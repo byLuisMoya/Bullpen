@@ -88,3 +88,31 @@ public enum StatusEngine {
         }
     }
 }
+
+/// An agent that says it is mid-turn but hasn't moved on for a while: one tool call that never
+/// returns (a dev server in the foreground, a command waiting for input) or a request that hangs.
+public struct Stall: Equatable, Sendable {
+    /// Its last hook: nothing has happened since.
+    public var since: Date
+    /// The tool it is stuck in; nil while "thinking".
+    public var tool: String?
+
+    public func minutes(at now: Date = Date()) -> Int { Int(now.timeIntervalSince(since) / 60) }
+
+    public func description(at now: Date = Date()) -> String {
+        let time = "\(minutes(at: now)) min"
+        return tool.map { "lleva \(time) usando \($0) sin avanzar" } ?? "lleva \(time) pensando sin avanzar"
+    }
+}
+
+public extension StatusEngine {
+    /// Claude Code redraws its spinner every second, so terminal output says nothing here: only
+    /// the hooks do. Working or thinking with no new hook for `threshold` seconds is a stall.
+    static func stall(of session: SessionInfo?, after threshold: TimeInterval, now: Date = Date()) -> Stall? {
+        guard threshold > 0, let session, session.isRunning, let activity = session.agentActivity else { return nil }
+        if let foreground = session.foregroundProcess, shells.contains(foreground) { return nil }
+        let state = fromHook(activity).state
+        guard state == .working || state == .thinking, now.timeIntervalSince(activity.at) >= threshold else { return nil }
+        return Stall(since: activity.at, tool: state == .working ? activity.detail : nil)
+    }
+}

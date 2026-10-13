@@ -78,7 +78,8 @@ struct ContentView: View {
                                 worktree: worktree, status: attention.statuses[worktree.id],
                                 sync: repoStatus.branches[worktree.id], pullRequest: repoStatus.pullRequests[worktree.id],
                                 warning: repoStatus.warnings[worktree.id], summary: summaries.summaries[worktree.id],
-                                review: worktree.review ?? reviews.latest[worktree.id]?.review
+                                review: worktree.review ?? reviews.latest[worktree.id]?.review,
+                                stall: attention.stalls[worktree.id]
                             )
                                 .sidebarRow(selected: selection == worktree.id) { selection = worktree.id }
                                 .contextMenu {
@@ -395,6 +396,31 @@ private struct WorktreeDetail: View {
                             }
                         }
                         .controlSize(.small)
+                    }
+                    .font(.callout)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.bar)
+                    .overlay(alignment: .bottom) { Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1) }
+                }
+                if let stall = attention.stalls[worktree.id] {
+                    HStack(spacing: 10) {
+                        TimelineView(.periodic(from: .now, by: 30)) { context in
+                            Label("Parece atascado: \(stall.description(at: context.date))", systemImage: "hourglass")
+                                .foregroundStyle(.orange)
+                        }
+                        Spacer()
+                        Button("Dejarlo seguir") { attention.ignoreStall(of: worktree.id) }
+                            .controlSize(.small)
+                            .help("No volver a avisar hasta que avance y se vuelva a atascar")
+                        Button("Interrumpir") {
+                            sessions.cancelTurn(worktree)
+                            // Not every agent reports an interrupt: don't keep the banner up waiting for one.
+                            attention.ignoreStall(of: worktree.id)
+                        }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .help("Para lo que está haciendo (Esc) sin cerrar el agente: luego puedes decirle cómo seguir")
                     }
                     .font(.callout)
                     .padding(.horizontal, 12)
