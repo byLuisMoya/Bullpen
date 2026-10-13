@@ -1,28 +1,38 @@
 @preconcurrency import AVFoundation
 import Observation
+import os
 @preconcurrency import Speech
 import SwiftUI
 
-/// Speech to text with macOS's recognizer (on the Mac when the language allows it): what you
-/// say ends up typed in the terminal, for any agent, without pressing Return.
+/// Speech to text with macOS's recognizer, for any agent: you record, check (and correct) the
+/// text, and send it to the terminal.
 @MainActor
 @Observable
 final class Dictation {
-    enum State: Equatable { case idle, listening, finishing }
+    enum State: Equatable {
+        case idle
+        case listening
+        /// Stopped: the text waits to be sent, recorded again or thrown away.
+        case ready
+    }
 
     private(set) var state = State.idle
-    /// What has been understood so far (shown while speaking).
-    private(set) var text = ""
-    /// Microphone level 0…1, for the button's pulse.
+    /// What has been understood (editable once stopped).
+    var text = ""
+    /// Microphone level 0…1, for the pulse.
     private(set) var level: Double = 0
     var problem: String?
 
     @ObservationIgnored private var engine: AVAudioEngine?
     @ObservationIgnored private var request: SFSpeechAudioBufferRecognitionRequest?
     @ObservationIgnored private var task: SFSpeechRecognitionTask?
-    @ObservationIgnored private var finished: CheckedContinuation<Void, Never>?
-    /// Which dictation is running: late callbacks of an earlier one must not touch it.
+    /// Which recording is running: late callbacks of an earlier one must not touch it.
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var startedAt = Date()
+    @ObservationIgnored private var onDevice = true
+    /// The recognizer's last text: once stopped, its late words only replace an unedited text.
+    @ObservationIgnored private var heard = ""
+    @ObservationIgnored private let log = Logger.bullpen("dictation")
 
     /// Language of the recognizer (Ajustes › General), Spanish by default.
     static var localeID: String {
@@ -30,27 +40,41 @@ final class Dictation {
     }
 
     func start() async {
-        guard state == .idle else { return }
+        guard state != .listening else { return }
         problem = nil
         text = ""
-        guard await Self.authorized() else {
-            problem = "Bullpen no tiene permiso para el micrófono o el reconocimiento de voz (Ajustes del Sistema › Privacidad y seguridad)."
+        heard = ""
+        guard await Self.speechAuthorized() else {
+            problem = "Bullpen no tiene permiso de reconocimiento de voz: actívalo en Ajustes del Sistema › Privacidad y seguridad › Reconocimiento de voz."
             return
         }
-        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: Self.localeID)), recognizer.isAvailable else {
-            problem = "El reconocimiento de voz no está disponible para \(Self.localeID)."
+        guard await AVCaptureDevice.requestAccess(for: .audio) else {
+            problem = "Bullpen no tiene permiso para el micrófono: actívalo en Ajustes del Sistema › Privacidad y seguridad › Micrófono."
+            return
+        }
+        onDevice = true
+        begin()
+    }
+
+    private func begin() {
+        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: Self.localeID)) else {
+            problem = "No hay reconocimiento de voz para \(Self.localeID). Cambia el idioma en Ajustes › General."
+            return
+        }
+        guard recognizer.isAvailable else {
+            problem = "El reconocimiento de voz no está disponible ahora mismo. Comprueba la conexión o activa el dictado en Ajustes del Sistema › Teclado."
             return
         }
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.addsPunctuation = true
-        // On the Mac when possible: private, free and without the one-minute limit.
-        if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
+        // On the Mac when it can (private, no time limit); falls back to Apple's servers below.
+        request.requiresOnDeviceRecognition = onDevice && recognizer.supportsOnDeviceRecognition
 
         let engine = AVAudioEngine()
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
-        guard format.channelCount > 0 else {
+        guard format.channelCount > 0, format.sampleRate > 0 else {
             problem = "No hay ningún micrófono disponible."
             return
         }
@@ -64,6 +88,7 @@ final class Dictation {
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
+            log.error("Microphone: \(error.localizedDescription, privacy: .public)")
             problem = "No se pudo abrir el micrófono: \(error.localizedDescription)"
             return
         }
@@ -71,67 +96,87 @@ final class Dictation {
         self.request = request
         generation += 1
         let current = generation
+        startedAt = Date()
         state = .listening
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             let heard = result?.bestTranscription.formattedString
-            let done = (result?.isFinal ?? false) || error != nil
+            let isFinal = result?.isFinal ?? false
+            let message = error.map { ($0 as NSError).localizedDescription }
             Task { @MainActor in
-                guard let self, self.generation == current, self.state != .idle else { return }
-                if let heard { self.text = heard }
-                if done { self.finish() }
+                guard let self, self.generation == current else { return }
+                if let heard, !heard.isEmpty, self.state == .listening || self.text == self.heard {
+                    self.text = heard
+                    self.heard = heard
+                }
+                if let message { self.recognitionFailed(message) } else if isFinal { self.stopAudio(); self.settle() }
             }
         }
     }
 
-    /// Stops listening and returns everything understood (empty if nothing was).
-    func stop() async -> String {
-        guard state == .listening else { return "" }
-        state = .finishing
-        engine?.stop()
-        engine?.inputNode.removeTap(onBus: 0)
+    /// The recognizer gave up. Right at the start on the Mac's own model (not downloaded,
+    /// language not supported there): try again through Apple's servers.
+    private func recognitionFailed(_ message: String) {
+        log.error("Recognition: \(message, privacy: .public)")
+        let early = Date().timeIntervalSince(startedAt) < 3 && text.isEmpty
+        stopAudio()
+        if state == .listening, early, onDevice {
+            onDevice = false
+            begin()
+            return
+        }
+        if state == .listening, text.isEmpty {
+            problem = "El reconocimiento de voz falló: \(message)"
+        }
+        settle()
+    }
+
+    /// Stop recording and keep the text to check it.
+    func stop() {
+        guard state == .listening else { return }
         request?.endAudio()
-        // The last words arrive just after the audio ends; don't wait forever for them.
+        stopAudio()
+        // The last words come right after the audio ends; the text is editable meanwhile anyway.
         let current = generation
-        await withCheckedContinuation { continuation in
-            finished = continuation
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(2))
-                guard let self, self.generation == current, self.state == .finishing else { return }
-                self.finish()
-            }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard let self, self.generation == current else { return }
+            self.task?.cancel()
+            self.task = nil
         }
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        settle()
     }
 
+    /// Throw the recording (or the text waiting) away.
     func cancel() {
+        generation += 1
         task?.cancel()
+        task = nil
+        stopAudio()
+        text = ""
+        state = .idle
+    }
+
+    private func settle() {
+        request = nil
+        state = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .idle : .ready
+    }
+
+    private func stopAudio() {
         engine?.stop()
         engine?.inputNode.removeTap(onBus: 0)
-        finish()
-        text = ""
-    }
-
-    private func finish() {
-        if state == .listening {
-            // The recognizer ended on its own (silence, error): stop the microphone too.
-            engine?.stop()
-            engine?.inputNode.removeTap(onBus: 0)
-        }
-        task = nil
-        request = nil
         engine = nil
         level = 0
-        if state != .idle { state = .idle }
-        finished?.resume()
-        finished = nil
     }
 
-    private static func authorized() async -> Bool {
-        let speech = await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0 == .authorized) }
+    private static func speechAuthorized() async -> Bool {
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized: return true
+        case .denied, .restricted: return false
+        default:
+            return await withCheckedContinuation { continuation in
+                SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0 == .authorized) }
+            }
         }
-        guard speech else { return false }
-        return await AVCaptureDevice.requestAccess(for: .audio)
     }
 
     nonisolated private static func level(of buffer: AVAudioPCMBuffer) -> Double {
@@ -143,97 +188,104 @@ final class Dictation {
     }
 }
 
-/// Floating microphone over the terminal. Click to start and click again to finish, or hold
-/// it while you speak and let go. The text is typed in the terminal, not sent.
+/// Floating microphone over the terminal. Recording: ■ stops, ✕ cancels. Stopped: the text can
+/// be corrected, then sent (typed and Return), recorded again, or thrown away.
 struct DictationButton: View {
-    /// Types the text into the terminal shown.
-    let insert: (String) -> Void
+    /// Types the text into the terminal shown; `submit` also presses Return.
+    let send: (_ text: String, _ submit: Bool) -> Void
     @State private var dictation = Dictation()
-    @State private var pressedAt: Date?
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
-            if dictation.state != .idle, !dictation.text.isEmpty {
-                Text(dictation.text)
-                    .font(.callout)
-                    .lineLimit(6)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .frame(maxWidth: 420, alignment: .leading)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-                    .transition(.opacity)
-            }
             if let problem = dictation.problem {
-                Label(problem, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .padding(8)
-                    .frame(maxWidth: 360, alignment: .leading)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-                    .onTapGesture { dictation.problem = nil }
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text(problem).font(.caption).fixedSize(horizontal: false, vertical: true)
+                    Button { dictation.problem = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.borderless)
+                }
+                .padding(8)
+                .frame(maxWidth: 380, alignment: .leading)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
             }
-            button
+            switch dictation.state {
+            case .idle:
+                round("mic.fill", color: .accentColor, help: "Dictar (⌘⇧D)") { Task { await dictation.start() } }
+            case .listening:
+                VStack(alignment: .trailing, spacing: 8) {
+                    if !dictation.text.isEmpty { bubble(Text(dictation.text).font(.callout).lineLimit(8)) }
+                    HStack(spacing: 10) {
+                        round("xmark", color: .secondary, size: 32, help: "Cancelar la grabación") { dictation.cancel() }
+                        ZStack {
+                            Circle().stroke(Color.red.opacity(0.5), lineWidth: 3)
+                                .frame(width: 44, height: 44)
+                                .scaleEffect(1 + dictation.level * 0.6)
+                                .animation(.easeOut(duration: 0.08), value: dictation.level)
+                            round("stop.fill", color: .red, help: "Parar la grabación (⌘⇧D)") { dictation.stop() }
+                        }
+                    }
+                }
+            case .ready:
+                VStack(alignment: .trailing, spacing: 8) {
+                    bubble(
+                        TextField("", text: $dictation.text, axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .font(.callout)
+                            .lineLimit(1...8)
+                            .onSubmit { submit() }
+                    )
+                    HStack(spacing: 10) {
+                        round("xmark", color: .secondary, size: 32, help: "Descartar") { dictation.cancel() }
+                        round("mic.fill", color: .accentColor, size: 32, help: "Grabar de nuevo") { Task { await dictation.start() } }
+                        round("arrow.up", color: .accentColor, help: "Enviar al agente (⌘↩)") { submit() }
+                            .keyboardShortcut(.return, modifiers: .command)
+                    }
+                }
+            }
         }
         .padding(14)
         .animation(.easeOut(duration: 0.15), value: dictation.state)
-    }
-
-    private var listening: Bool { dictation.state == .listening }
-
-    private var button: some View {
-        ZStack {
-            Circle()
-                .fill(listening ? Color.red : Color.accentColor)
-                .frame(width: 40, height: 40)
-                .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
-            Circle()
-                .stroke(Color.red.opacity(0.5), lineWidth: 3)
-                .frame(width: 40, height: 40)
-                .scaleEffect(1 + dictation.level * 0.6)
-                .opacity(listening ? 1 : 0)
-                .animation(.easeOut(duration: 0.08), value: dictation.level)
-            if dictation.state == .finishing {
-                ProgressView().controlSize(.small).tint(.white)
-            } else {
-                Image(systemName: listening ? "stop.fill" : "mic.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
-            }
-        }
-        .contentShape(Circle())
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in
-                    guard pressedAt == nil else { return }
-                    pressedAt = Date()
-                    startedBefore = listening
-                    if dictation.state == .idle { Task { await dictation.start() } }
-                }
-                .onEnded { _ in
-                    let held = Date().timeIntervalSince(pressedAt ?? Date())
-                    pressedAt = nil
-                    // A long press is push-to-talk; a click started (or now finishes) a dictation.
-                    if held > 0.5 || startedBefore { finish() }
-                }
-        )
-        .help(listening ? "Terminar y escribir en la terminal (⌘⇧D)" : "Dictar (⌘⇧D): pulsa y habla, o mantén pulsado mientras hablas")
         .background {
-            // Same toggle from the keyboard.
+            // ⌘⇧D: start, or stop while recording.
             Button("") {
-                if listening { finish() } else { Task { await dictation.start() } }
+                switch dictation.state {
+                case .listening: dictation.stop()
+                default: Task { await dictation.start() }
+                }
             }
-                .keyboardShortcut("d", modifiers: [.command, .shift])
-                .opacity(0)
-                .allowsHitTesting(false)
+            .keyboardShortcut("d", modifiers: [.command, .shift])
+            .opacity(0)
+            .allowsHitTesting(false)
         }
     }
 
-    /// Whether a dictation was already running when this click began.
-    @State private var startedBefore = false
+    private func submit() {
+        let text = dictation.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        send(text, true)
+        dictation.cancel()
+    }
 
-    private func finish() {
-        Task {
-            let said = await dictation.stop()
-            if !said.isEmpty { insert(said) }
+    private func bubble(_ content: some View) -> some View {
+        content
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .frame(width: 380, alignment: .leading)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .transition(.opacity)
+    }
+
+    private func round(_ symbol: String, color: Color, size: CGFloat = 40, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: size * 0.4, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: size, height: size)
+                .background(Circle().fill(color))
+                .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
+                .contentShape(Circle())
         }
+        .buttonStyle(.plain)
+        .help(help)
     }
 }

@@ -31,7 +31,7 @@ struct WorktreeRow: View {
                     .help(warning.tooltip)
             }
             if let review { ReviewBadge(review: review) }
-            BranchBadge(sync: sync, pullRequest: pullRequest)
+            BranchBadge(branch: worktree.branch, sync: sync, pullRequest: pullRequest)
         }
         .help(status.map { "\($0.state.label) · confianza \($0.confidence)" } ?? "")
     }

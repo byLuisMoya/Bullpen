@@ -415,8 +415,8 @@ private struct WorktreeDetail: View {
                     TerminalPane(worktree: worktree, environment: terminalEnvironment, tab: terminalTab)
                         .id(terminalTab ?? "main")
                         .overlay(alignment: .bottomTrailing) {
-                            DictationButton { text in
-                                sessions.typeText(text, into: terminalTab ?? SessionManager.sessionID(for: worktree))
+                            DictationButton { text, submit in
+                                sessions.typeText(text, into: terminalTab ?? SessionManager.sessionID(for: worktree), submit: submit)
                             }
                         }
                 }

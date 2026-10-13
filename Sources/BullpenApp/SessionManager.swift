@@ -267,8 +267,11 @@ final class SessionManager {
 
     /// Types `text` at the prompt as a paste (bracketed, so line breaks don't send it): the
     /// user reviews it and presses Return.
-    func typeText(_ text: String, into id: String) {
+    func typeText(_ text: String, into id: String, submit: Bool = false) {
         client?.input(id, Data(("\u{1B}[200~" + text + "\u{1B}[201~").utf8))
+        guard submit else { return }
+        // Return on its own, a moment later: TUIs read it as "send", not as part of the paste.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in self?.client?.input(id, Data([0x0D])) }
     }
 
     /// Sends `text` to the worktree's agent as one message.

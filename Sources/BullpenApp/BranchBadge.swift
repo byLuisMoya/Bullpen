@@ -4,8 +4,11 @@ import SwiftUI
 /// Orca's branch/PR glyph: PR state when there is one (open tinted by checks, draft, merged,
 /// closed), otherwise the branch glyph, dimmed while the branch only exists locally.
 struct BranchBadge: View {
+    let branch: String
     let sync: BranchSync?
     let pullRequest: PullRequest?
+    @State private var hovering = false
+    @State private var cardShown = false
 
     var body: some View {
         HStack(spacing: 3) {
@@ -14,10 +17,83 @@ struct BranchBadge: View {
             }
             GitGlyphView(glyph: glyph, color: color)
         }
-        .help(tooltip)
         .contentShape(Rectangle())
         .onTapGesture {
             if let url = pullRequest?.url { NSWorkspace.shared.open(url) }
+        }
+        // A card like GitHub's after a short hover: PR number, branch, state.
+        .onHover { inside in
+            hovering = inside
+            if inside {
+                Task {
+                    try? await Task.sleep(for: .milliseconds(350))
+                    if hovering { cardShown = true }
+                }
+            } else {
+                cardShown = false
+            }
+        }
+        .popover(isPresented: $cardShown, arrowEdge: .trailing) { card }
+    }
+
+    private var card: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                GitGlyphView(glyph: glyph, color: color)
+                Text(pullRequest.map { "PR #\($0.number)" } ?? "Rama")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            Text(pullRequest?.branch ?? branch)
+                .font(.body.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+            HStack(spacing: 6) {
+                pill(stateLabel, color: color)
+                if let checks = checksLabel { pill(checks, color: color) }
+            }
+            if let sync, pullRequest?.state != .merged, sync.ahead > 0 || sync.behind > 0 {
+                Text([sync.ahead > 0 ? "\(sync.ahead) commit(s) sin subir" : nil,
+                      sync.behind > 0 ? "\(sync.behind) nuevo(s) en remoto" : nil].compactMap { $0 }.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if pullRequest?.url != nil {
+                Text("Clic en el icono para abrirla en GitHub").font(.caption2).foregroundStyle(.tertiary)
+            }
+        }
+        .padding(12)
+        .frame(width: 280, alignment: .leading)
+    }
+
+    private func pill(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(color)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(color.opacity(0.7)))
+    }
+
+    private var stateLabel: String {
+        guard let pr = pullRequest else {
+            guard let sync else { return "Estado: desconocido" }
+            return sync.isPushed ? "Estado: subida" : "Estado: solo en local"
+        }
+        return switch pr.state {
+        case .open: "Estado: Abierto"
+        case .draft: "Estado: Borrador"
+        case .merged: "Estado: Fusionado"
+        case .closed: "Estado: Cerrado"
+        }
+    }
+
+    private var checksLabel: String? {
+        guard let pr = pullRequest, pr.state == .open else { return nil }
+        return switch pr.checks {
+        case .failure: "Checks fallando"
+        case .pending: "Checks en curso"
+        case .success: "Checks pasando"
+        case .none: nil
         }
     }
 
@@ -46,32 +122,5 @@ struct BranchBadge: View {
             case .success, .none: return Color(red: 0.06, green: 0.73, blue: 0.51).opacity(0.8)  // emerald
             }
         }
-    }
-
-    private var tooltip: String {
-        if let pr = pullRequest {
-            let state = switch pr.state {
-            case .open: "abierta"
-            case .draft: "borrador"
-            case .merged: "fusionada"
-            case .closed: "cerrada"
-            }
-            var text = "PR #\(pr.number) \(state)"
-            if pr.state == .open {
-                switch pr.checks {
-                case .failure: text += " · checks fallando"
-                case .pending: text += " · checks en curso"
-                case .success: text += " · checks pasando"
-                case .none: break
-                }
-            }
-            return text + " — clic para abrirla"
-        }
-        guard let sync else { return "Rama" }
-        guard sync.isPushed else { return "Rama solo en local (sin subir)" }
-        var text = "Rama subida"
-        if sync.ahead > 0 { text += " · \(sync.ahead) commit(s) sin subir" }
-        if sync.behind > 0 { text += " · \(sync.behind) commit(s) nuevos en remoto" }
-        return text
     }
 }
