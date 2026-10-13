@@ -43,5 +43,4 @@ release:
 	@version=$$(sed -n 's/.*static let version = "\(.*\)"/\1/p' Sources/BPCore/Bullpen.swift); \
 	rm -rf build/release && mkdir -p build/release && \
 	ditto -c -k --keepParent build/Bullpen.app "build/release/Bullpen-$$version-universal.zip" && \
-	(cd build/release && shasum -a 256 "Bullpen-$$version-universal.zip" > SHA256SUMS.txt && cat SHA256SUMS.txt) && \
-	if [ -f "$$HOME/.bullpen/release-signing-key" ]; then $(ENV) swift Tools/sign-release.swift sign "build/release/Bullpen-$$version-universal.zip"; fi
+	(cd build/release && shasum -a 256 "Bullpen-$$version-universal.zip" > SHA256SUMS.txt && cat SHA256SUMS.txt)
