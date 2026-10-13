@@ -22,6 +22,8 @@ final class Dictation {
     /// Microphone level 0…1, for the pulse.
     private(set) var level: Double = 0
     var problem: String?
+    /// macOS answered that Siri and Dictation are off: without them the recognizer hears nothing.
+    var dictationDisabled = false
 
     @ObservationIgnored private var engine: AVAudioEngine?
     @ObservationIgnored private var request: SFSpeechAudioBufferRecognitionRequest?
@@ -101,7 +103,10 @@ final class Dictation {
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             let heard = result?.bestTranscription.formattedString
             let isFinal = result?.isFinal ?? false
-            let message = error.map { ($0 as NSError).localizedDescription }
+            let message = error.map { error in
+                let error = error as NSError
+                return "\(error.localizedDescription) (\(error.domain) \(error.code))"
+            }
             Task { @MainActor in
                 guard let self, self.generation == current else { return }
                 if let heard, !heard.isEmpty, self.state == .listening || self.text == self.heard {
@@ -117,6 +122,13 @@ final class Dictation {
     /// language not supported there): try again through Apple's servers.
     private func recognitionFailed(_ message: String) {
         log.error("Recognition: \(message, privacy: .public)")
+        // Apple's servers need it too: retrying there only ends in "No speech detected".
+        if message.localizedCaseInsensitiveContains("Siri and Dictation are disabled") {
+            stopAudio()
+            dictationDisabled = true
+            settle()
+            return
+        }
         let early = Date().timeIntervalSince(startedAt) < 3 && text.isEmpty
         stopAudio()
         if state == .listening, early, onDevice {
@@ -245,6 +257,14 @@ struct DictationButton: View {
         }
         .padding(14)
         .animation(.easeOut(duration: 0.15), value: dictation.state)
+        .alert("El dictado de macOS está desactivado", isPresented: $dictation.dictationDisabled) {
+            Button("Abrir Ajustes de Teclado") {
+                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")!)
+            }
+            Button("Cancelar", role: .cancel) {}
+        } message: {
+            Text("Bullpen usa el reconocimiento de voz del sistema, que no funciona con el dictado apagado. Actívalo en Ajustes del Sistema › Teclado › Dictado (con el idioma de \(Dictation.localeID)) y vuelve a grabar.")
+        }
         .background {
             // ⌘⇧D: start, or stop while recording.
             Button("") {
@@ -287,5 +307,12 @@ struct DictationButton: View {
         }
         .buttonStyle(.plain)
         .help(help)
+        // The terminal underneath claims the I-beam through its cursor rect: set the hand on every move.
+        .onContinuousHover { phase in
+            switch phase {
+            case .active: NSCursor.pointingHand.set()
+            case .ended: NSCursor.iBeam.set()
+            }
+        }
     }
 }

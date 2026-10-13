@@ -39,7 +39,9 @@ public extension Workspace {
         let commit = try await headCommit(of: worktree)
         let name = "\(WorktreeLocation.slug(project.name))-\(WorktreeLocation.slug(worktree.branch))-\(commit.prefix(7))"
         var path = worktreeRoot.appendingPathComponent("Reviews", isDirectory: true).appendingPathComponent(name, isDirectory: true)
-        if FileManager.default.fileExists(atPath: path.path) {
+        // Archived reviewers keep their (unique) path in the database after their folder is gone.
+        let recorded = Set(try database.allWorktrees().map(\.path))
+        if FileManager.default.fileExists(atPath: path.path) || recorded.contains(path.path) {
             path = path.deletingLastPathComponent().appendingPathComponent("\(name)-\(Int(Date().timeIntervalSince1970))", isDirectory: true)
         }
         try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -53,7 +55,13 @@ public extension Workspace {
             taskDescription: "\(kind == .quick ? "Revisión rápida" : "Revisión exhaustiva") de \(worktree.branch) (\(project.name))",
             review: info
         )
-        try database.save(reviewer)
+        do {
+            try database.save(reviewer)
+        } catch {
+            // Don't leave a checkout no reviewer points at.
+            _ = try? await Git().run(["worktree", "remove", "--force", "--force", path.path], in: repo.root)
+            throw error
+        }
         if agent.id == AgentProfile.claude.id { try? claudeTrust?.trust(path.path) }
         hooks.prepare(agent, in: path.path)
         let launch = agent.launch(model: nil, prompt: prompt, hooks: hooks)
