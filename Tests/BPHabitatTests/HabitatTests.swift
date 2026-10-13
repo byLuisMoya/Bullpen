@@ -288,3 +288,20 @@ import UniformTypeIdentifiers
         #expect(CGImageDestinationFinalize(dest))
     }
 }
+
+@MainActor
+@Suite struct DarkOfficeWalkTests {
+    /// Removing the last worktree turns the lights off; the person walking out must not freeze.
+    @Test func aDarkOfficeKeepsRunningWhileSomeoneWalksOut() {
+        let layer = OfficeLayer()
+        layer.frame = CGRect(x: 0, y: 0, width: OfficeLayer.preferredWidth(desks: 4), height: OfficeLayer.openHeight)
+        let id = UUID()
+        layer.update(OfficeModel(desks: []))
+        layer.update(OfficeModel(desks: [DeskModel(id: id, name: "wt", state: .working, look: .make(worktreeID: id, agent: "claude"))]))
+        layer.update(OfficeModel(desks: []))          // removed: lights off, walking out
+        #expect(layer.model.lighting == .off && layer.isWalking)
+        #expect(!OfficeView.shouldPause(visible: true, lighting: .off, walking: true))
+        #expect(OfficeView.shouldPause(visible: true, lighting: .off, walking: false))
+        #expect(OfficeView.shouldPause(visible: false, lighting: .allOn, walking: true))
+    }
+}

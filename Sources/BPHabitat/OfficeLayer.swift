@@ -122,6 +122,10 @@ public final class OfficeLayer: CALayer {
     public var isCompact = false
     /// People walking in or out, in front of the desks.
     let walkers = CALayer()
+    /// Someone is walking in or out right now: the scene must keep running until they arrive.
+    public var isWalking: Bool { !(walkers.sublayers?.isEmpty ?? true) }
+    /// Called when the last walker has arrived (the view may pause the scene again).
+    public var onWalksFinished: (() -> Void)?
     /// The first update draws the office as it is; only later changes are walked.
     private var hasRendered = false
 
@@ -215,7 +219,10 @@ public final class OfficeLayer: CALayer {
         bob.repeatDuration = duration
 
         CATransaction.begin()
-        CATransaction.setCompletionBlock { walker.removeFromSuperlayer() }
+        CATransaction.setCompletionBlock { [weak self] in
+            walker.removeFromSuperlayer()
+            if self?.isWalking == false { self?.onWalksFinished?() }
+        }
         walkers.addSublayer(walker)
         walker.add(move, forKey: "walk")
         walker.add(steps, forKey: "steps")

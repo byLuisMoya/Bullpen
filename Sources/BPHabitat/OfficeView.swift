@@ -1,4 +1,5 @@
 import AppKit
+import BPCore
 import QuartzCore
 
 /// AppKit host for an `OfficeLayer`: clicks select a desk, tooltips explain it, and the scene
@@ -23,6 +24,10 @@ public final class OfficeView: NSView, NSViewToolTipOwner {
         office.setAffineTransform(CGAffineTransform(scaleX: zoom, y: zoom))
         host.isGeometryFlipped = false
         host.addSublayer(office)
+        // Once the last person has walked out of a dark office, it can stand still again.
+        office.onWalksFinished = { [weak self] in
+            MainActor.assumeIsolated { self?.updatePause() }
+        }
     }
 
     public override convenience init(frame: NSRect) { self.init(frame: frame, compact: false) }
@@ -97,9 +102,15 @@ public final class OfficeView: NSView, NSViewToolTipOwner {
     public override func viewDidHide() { super.viewDidHide(); updatePause() }
     public override func viewDidUnhide() { super.viewDidUnhide(); updatePause() }
 
+    /// Hidden windows don't animate; a dark office is still, but not while someone is walking
+    /// out of it (or in).
+    static func shouldPause(visible: Bool, lighting: OfficeLighting, walking: Bool) -> Bool {
+        !visible || (lighting == .off && !walking)
+    }
+
     private func updatePause() {
         let visible = window?.occlusionState.contains(.visible) == true && !isHiddenOrHasHiddenAncestor
-        office.isPaused = !visible || office.model.lighting == .off
+        office.isPaused = Self.shouldPause(visible: visible, lighting: office.model.lighting, walking: office.isWalking)
     }
 
     isolated deinit {
