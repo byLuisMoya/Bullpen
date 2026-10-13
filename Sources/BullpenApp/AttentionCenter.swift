@@ -5,6 +5,7 @@ import Foundation
 import Observation
 import UserNotifications
 import AppKit
+import BPGit
 
 /// Turns agent status changes into notifications and the Dock badge (PLAN §12).
 /// One notification per worktree, replaced instead of piling up, removed when you look at it.
@@ -46,6 +47,14 @@ final class AttentionCenter {
     }
 
     private func changed(_ worktree: Worktree, in project: Project, to status: AgentStatus) {
+        // Each finished turn leaves a checkpoint to compare with or go back to (PLAN §11.3).
+        if status.state == .done {
+            Task.detached {
+                let repo = try? await Repository.open(at: URL(fileURLWithPath: project.path))
+                let time = Date().formatted(date: .omitted, time: .shortened)
+                _ = try? await repo?.createCheckpoint(of: worktree.id, in: URL(fileURLWithPath: worktree.path), message: "Turno terminado · \(time)")
+            }
+        }
         let title: String
         switch status.state {
         case .needsYou: title = "\(worktree.branch) te necesita"

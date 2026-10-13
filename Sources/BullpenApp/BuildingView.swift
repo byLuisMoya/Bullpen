@@ -10,6 +10,7 @@ struct BuildingView: View {
     @Environment(AttentionCenter.self) private var attention
     @Environment(RepoStatusCenter.self) private var repoStatus
     @Environment(Navigation.self) private var navigation
+    @Environment(SummaryCenter.self) private var summaries
     var onSelect: (UUID) -> Void
     @State private var removingDemo = false
     /// The office just opened from the sidebar, outlined for a moment.
@@ -46,7 +47,8 @@ struct BuildingView: View {
                         // Each floor fills the window's width and scrolls sideways on its own when
                         // its desks need more room.
                         ScrollView(.horizontal) {
-                            OfficeFloor(model: officeModel(office, statuses: attention.statuses, warnings: repoStatus.warnings), compact: false, onSelect: onSelect)
+                            OfficeFloor(model: officeModel(office, statuses: attention.statuses, warnings: repoStatus.warnings,
+                                                           summaries: summaries.summaries), compact: false, onSelect: onSelect)
                                 .containerRelativeFrame(.horizontal) { visible, _ in
                                     max(visible, OfficeLayer.preferredWidth(desks: office.worktrees.count))
                                 }
@@ -94,7 +96,7 @@ struct BuildingView: View {
 let awayAfter: TimeInterval = 60
 
 func officeModel(_ office: Office, statuses: [UUID: AgentStatus], warnings: [UUID: WorktreeWarning] = [:],
-                 now: Date = Date()) -> OfficeModel {
+                 summaries: [UUID: String] = [:], now: Date = Date()) -> OfficeModel {
     let looks = CharacterLook.distinctJackets(office.worktrees.map { .make(worktreeID: $0.id, agent: $0.agentProfileID) })
     return OfficeModel(desks: zip(office.worktrees, looks).map { worktree, look in
         let status = statuses[worktree.id]
@@ -107,7 +109,8 @@ func officeModel(_ office: Office, statuses: [UUID: AgentStatus], warnings: [UUI
             detail: away ? "se ha ido: esperando instrucciones" : status.map { $0.detail ?? $0.state.label },
             look: look,
             warning: warnings[worktree.id].map { $0.isConflict ? .conflict : .overlap },
-            away: away
+            away: away,
+            summary: summaries[worktree.id]
         )
     })
 }

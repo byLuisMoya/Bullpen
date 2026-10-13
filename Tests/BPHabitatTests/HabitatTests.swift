@@ -51,7 +51,8 @@ import UniformTypeIdentifiers
         states.enumerated().map { i, state in
             let id = UUID()
             return DeskModel(id: id, name: i == 2 ? "feature/FKPI-1234-una-rama-con-nombre-muy-largo" : "wt-\(i)", state: state, look: .make(worktreeID: id, agent: i % 2 == 0 ? "claude" : "codex"),
-                             warning: i == 0 ? .conflict : i == 1 ? .overlap : nil, away: i == 4)
+                             warning: i == 0 ? .conflict : i == 1 ? .overlap : nil, away: i == 4,
+                             summary: i == 0 ? "Arregla el timeout del login" : i == 1 ? "Edita LoginForm.vue" : i == 3 ? "Tests de pagos en verde" : nil)
         }
     }
 

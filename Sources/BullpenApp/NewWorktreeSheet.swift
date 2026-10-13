@@ -28,6 +28,7 @@ struct NewWorktreeSheet: View {
     @State private var tickets: [Ticket] = []
     @State private var ticketProblems: [String] = []
     @State private var loadingTickets = true
+    @State private var pullRequests: [OpenPullRequest] = []
     @State private var localBranches: [String] = []
     @State private var remoteBranches: [String] = []
 
@@ -37,6 +38,7 @@ struct NewWorktreeSheet: View {
     @State private var branchEdited = false
     @State private var baseRef = ""
     @State private var editingBase = false
+    @State private var baseEdited = false
     @State private var model = ""
     @State private var task = ""
     @State private var setupScript = ""
@@ -131,7 +133,7 @@ struct NewWorktreeSheet: View {
             queryFocused = true
         }
         .onChange(of: task) { _, value in
-            if origin == nil, !branchEdited { branch = Self.branchName(from: value) }
+            if origin == nil, !branchEdited { branch = WorktreeSource.branchName(from: value) }
         }
         .onChange(of: query) { _, _ in pickFirstCandidate() }
         .onChange(of: source) { _, _ in pickFirstCandidate() }
@@ -257,12 +259,13 @@ struct NewWorktreeSheet: View {
         .help("Rama o commit de la que parte el worktree")
         .popover(isPresented: $editingBase, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 8) {
-                TextField("Base", text: $baseRef, prompt: Text("main"))
+                TextField("Base", text: Binding(get: { baseRef }, set: { baseRef = $0; baseEdited = true }), prompt: Text("main"))
                     .textFieldStyle(.roundedBorder)
                     .onSubmit { editingBase = false }
                 ForEach(localBranches.prefix(8), id: \.self) { b in
                     Button {
                         baseRef = b
+                        baseEdited = true
                         editingBase = false
                     } label: {
                         HStack {
@@ -273,6 +276,18 @@ struct NewWorktreeSheet: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                }
+                Divider()
+                if project.defaultBaseRef == baseRef {
+                    Label("Base por defecto de \(project.name)", systemImage: "checkmark.circle")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Button("Usar siempre «\(baseRef)» en \(project.name)") {
+                        project.defaultBaseRef = baseRef.nilIfBlank
+                        store.updateProject(project)
+                    }
+                    .disabled(baseRef.nilIfBlank == nil)
+                    .font(.caption)
                 }
             }
             .frame(width: 240)
@@ -318,6 +333,8 @@ struct NewWorktreeSheet: View {
 
     enum Origin: Hashable {
         case ticket(Ticket)
+        /// An open PR: its branch, checked out (fetched first if it was never pulled).
+        case pullRequest(OpenPullRequest)
         case branch(String)
         /// `origin/x`: a local `x` is created from it.
         case remote(String)
@@ -325,8 +342,10 @@ struct NewWorktreeSheet: View {
     }
 
     private var isExistingBranch: Bool {
-        if case .branch = origin { return true }
-        return false
+        switch origin {
+        case .branch, .pullRequest: true
+        default: false
+        }
     }
 
     /// What the search field matches in the current tab, best match first.
@@ -335,16 +354,24 @@ struct NewWorktreeSheet: View {
         func ticketsMatching(_ source: Ticket.Source?) -> [Origin] {
             let pool = tickets.filter { source == nil || $0.source == source }
             guard !q.isEmpty else { return source == nil ? [] : pool.prefix(6).map { .ticket($0) } }
-            if let key = Self.ticketKey(in: q) {
+            if let key = WorktreeSource.ticketKey(in: q) {
                 return pool.filter { $0.key.caseInsensitiveCompare(key) == .orderedSame }.map { .ticket($0) }
             }
             return pool.filter { $0.title.localizedCaseInsensitiveContains(q) || $0.key.localizedCaseInsensitiveContains(q) }
                 .prefix(6).map { .ticket($0) }
         }
+        func pullRequestsMatching() -> [Origin] {
+            guard !q.isEmpty else { return pullRequests.prefix(6).map { .pullRequest($0) } }
+            if let key = WorktreeSource.ticketKey(in: q) {
+                return pullRequests.filter { "#\($0.number)" == key }.map { .pullRequest($0) }
+            }
+            return pullRequests.filter { $0.title.localizedCaseInsensitiveContains(q) || $0.branch.localizedCaseInsensitiveContains(q) }
+                .prefix(6).map { .pullRequest($0) }
+        }
         func branchesMatching(limit: Int) -> [Origin] {
             let local = localBranches.filter { q.isEmpty || $0.localizedCaseInsensitiveContains(q) }.map { Origin.branch($0) }
             let remote = remoteBranches
-                .filter { r in (q.isEmpty || r.localizedCaseInsensitiveContains(q)) && !localBranches.contains(Self.localName(r)) }
+                .filter { r in (q.isEmpty || r.localizedCaseInsensitiveContains(q)) && !localBranches.contains(WorktreeSource.localName(r)) }
                 .map { Origin.remote($0) }
             return Array((local + remote).prefix(limit))
         }
@@ -352,13 +379,13 @@ struct NewWorktreeSheet: View {
         case .smart:
             guard !q.isEmpty else { return [] }
             let exact = localBranches.contains(q) ? [Origin.branch(q)] : []
-            var result = ticketsMatching(nil).prefix(3) + exact
-            if Self.ticketKey(in: q) == nil {
+            var result = ticketsMatching(nil).prefix(3) + (q.count > 1 || WorktreeSource.ticketKey(in: q) != nil ? pullRequestsMatching().prefix(3) : []) + exact
+            if WorktreeSource.ticketKey(in: q) == nil {
                 result += branchesMatching(limit: 3).filter { !exact.contains($0) }
                 if exact.isEmpty { result.append(.name(q)) }
             }
             return Array(result)
-        case .github: return ticketsMatching(.github)
+        case .github: return pullRequestsMatching() + ticketsMatching(.github)
         case .linear: return ticketsMatching(.linear)
         case .branch: return branchesMatching(limit: 8)
         case .name: return q.isEmpty ? [] : [.name(q)]
@@ -403,13 +430,14 @@ struct NewWorktreeSheet: View {
     private var hint: String {
         guard !loadingTickets else { return "" }
         switch source {
-        case .github where !tickets.contains { $0.source == .github }:
-            return ticketProblems.first { $0.hasPrefix("GitHub") } ?? (GitHubCLI.locate() == nil ? "Instala gh y ejecuta gh auth login para ver los issues." : "No hay issues abiertos.")
+        case .github where !tickets.contains { $0.source == .github } && pullRequests.isEmpty:
+            return ticketProblems.first { $0.hasPrefix("GitHub") }
+                ?? (GitHubCLI.locate() == nil ? "Instala gh y ejecuta gh auth login para ver issues y PR." : "No hay issues ni PR abiertas.")
         case .linear where Tickets.linearKey == nil:
             return "Añade tu clave de Linear en Ajustes › Integraciones."
         case .linear where !tickets.contains { $0.source == .linear }:
             return ticketProblems.first { !$0.hasPrefix("GitHub") } ?? "No tienes tickets abiertos en Linear."
-        case .smart where Self.ticketKey(in: query) != nil && candidates.isEmpty:
+        case .smart where WorktreeSource.ticketKey(in: query) != nil && candidates.isEmpty:
             return "No está entre los tickets abiertos."
         default:
             return ""
@@ -419,6 +447,7 @@ struct NewWorktreeSheet: View {
     private func icon(for origin: Origin) -> String {
         switch origin {
         case let .ticket(t): t.source == .github ? SourceTab.github.icon : SourceTab.linear.icon
+        case .pullRequest: "arrow.triangle.pull"
         case .branch, .remote: SourceTab.branch.icon
         case .name: "plus"
         }
@@ -427,9 +456,10 @@ struct NewWorktreeSheet: View {
     private func title(for origin: Origin) -> String {
         switch origin {
         case let .ticket(t): "\(t.key) · \(t.title)"
+        case let .pullRequest(pr): "PR #\(pr.number)\(pr.isDraft ? " (borrador)" : "") · \(pr.title)"
         case let .branch(b): b
         case let .remote(r): r
-        case let .name(n): "Rama nueva: \(Self.branchName(fromName: n))"
+        case let .name(n): "Rama nueva: \(WorktreeSource.branchName(fromName: n))"
         }
     }
 
@@ -438,7 +468,7 @@ struct NewWorktreeSheet: View {
             select(first)
         } else if candidates.isEmpty, case .name = origin {
             origin = nil
-            if !branchEdited { branch = Self.branchName(from: task) }
+            if !branchEdited { branch = WorktreeSource.branchName(from: task) }
         }
     }
 
@@ -450,52 +480,33 @@ struct NewWorktreeSheet: View {
         case let .ticket(t):
             branch = t.suggestedBranch
             if previous != new { task = Tickets.task(for: t, project: project) }
+        case let .pullRequest(pr):
+            branch = pr.branch
+            // Its own branch if it is already here; otherwise a local one from the remote's.
+            if !localBranches.contains(pr.branch) { baseRef = "origin/\(pr.branch)" }
         case let .branch(b):
             branch = b
         case let .remote(r):
-            branch = Self.localName(r)
+            branch = WorktreeSource.localName(r)
             baseRef = r
         case let .name(n):
-            branch = Self.branchName(fromName: n)
+            branch = WorktreeSource.branchName(fromName: n)
         }
         if case let .ticket(old)? = previous, previous != new, task == Tickets.task(for: old, project: project) {
             task = ""
         }
     }
 
-    /// `#123`, `123`, `ABC-123`, or a GitHub/Linear URL → the ticket key as the trackers write it.
-    static func ticketKey(in text: String) -> String? {
-        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let url = URL(string: t), let host = url.host {
-            let parts = url.pathComponents
-            if host.hasSuffix("github.com"), let i = parts.firstIndex(where: { $0 == "issues" || $0 == "pull" }), i + 1 < parts.count {
-                return "#" + parts[i + 1]
-            }
-            if host.hasSuffix("linear.app"), let i = parts.firstIndex(of: "issue"), i + 1 < parts.count {
-                return parts[i + 1].uppercased()
-            }
-            return nil
-        }
-        if t.range(of: #"^#?\d+$"#, options: .regularExpression) != nil { return t.hasPrefix("#") ? t : "#" + t }
-        if t.range(of: #"^[A-Za-z][A-Za-z0-9]*-\d+$"#, options: .regularExpression) != nil { return t.uppercased() }
-        return nil
-    }
-
-    /// `origin/feature/x` → `feature/x`.
-    static func localName(_ remote: String) -> String {
-        remote.split(separator: "/", maxSplits: 1).last.map(String.init) ?? remote
-    }
-
-    /// A typed name: used as is when it already looks like a branch, slugged when it's a phrase.
-    static func branchName(fromName name: String) -> String {
-        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return n.contains(" ") ? branchName(from: n) : n
-    }
-
     private func loadBranches() async {
         guard let repo = try? await Repository.open(at: URL(fileURLWithPath: project.path)) else { return }
         localBranches = (try? await repo.localBranches()) ?? []
         remoteBranches = (try? await repo.remoteBranches()) ?? []
+        // No base saved for the project: start from the remote's default branch.
+        if project.defaultBaseRef == nil, !baseEdited, let main = await repo.defaultRemoteBranch() { baseRef = main }
+        if let gh = GitHubCLI.locate() {
+            pullRequests = (try? await gh.openPullRequests(in: URL(fileURLWithPath: project.path))) ?? []
+            pickFirstCandidate()
+        }
     }
 
     // MARK: Avanzado
@@ -606,20 +617,6 @@ struct NewWorktreeSheet: View {
             && !(compare && task.nilIfBlank == nil) && (limitWarning == nil || overrideLimits)
     }
 
-    /// "Arregla el timeout del login" → `arregla-timeout-login`: a few meaningful words, ASCII.
-    static func branchName(from task: String) -> String {
-        let stop: Set<String> = ["el", "la", "los", "las", "de", "del", "en", "un", "una", "y", "a", "que", "the", "an", "of", "to", "and", "in", "for", "on", "con", "por", "para", "al"]
-        let folded = task.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current).lowercased()
-        let chars: [Character] = folded.unicodeScalars.map { scalar in
-            CharacterSet.alphanumerics.contains(scalar) && scalar.isASCII ? Character(scalar) : " "
-        }
-        let words: [String] = String(chars).split(separator: " ").map(String.init).filter { !stop.contains($0) }
-        var name = ""
-        for word in words.prefix(6) where name.count + word.count < 40 {
-            name += name.isEmpty ? word : "-" + word
-        }
-        return name
-    }
 
 }
 
@@ -700,6 +697,14 @@ extension NewWorktreeSheet {
     private func create() async {
         isCreating = true
         defer { isCreating = false }
+        // A PR branch that was never pulled: fetch it so origin/<branch> exists to start from.
+        if case let .pullRequest(pr) = origin, !localBranches.contains(pr.branch),
+           let repo = try? await Repository.open(at: URL(fileURLWithPath: project.path)) {
+            do { try await repo.fetchBranch(pr.branch) } catch {
+                store.errorMessage = "No se pudo traer la rama de la PR #\(pr.number): \(error.localizedDescription)"
+                return
+            }
+        }
         if compare {
             guard let worktrees = await store.createRun(request, variants: workspaceVariants), let first = worktrees.first else { return }
             onCreated(first)

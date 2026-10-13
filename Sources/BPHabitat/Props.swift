@@ -182,6 +182,21 @@ public enum Props {
         return c.image(palette: palette)
     }
 
+    public static let speechCardHeight = 9
+
+    /// White speech card over a desk, `width` art pixels wide, with a small tail pointing down
+    /// to the person's head.
+    public static func speechCard(width: Int) -> CGImage? {
+        var c = PixelCanvas(width: width, height: speechCardHeight)
+        let body = 7, mid = width / 2
+        c.rect(2, 1, width - 4, body - 2, P.white)
+        c.rect(1, 2, width - 2, body - 4, P.white)
+        c.rect(mid - 1, body - 1, 3, 1, P.white)
+        c.dot(mid, body, P.white)
+        c.outline(P.outline)
+        return c.image(palette: palette)
+    }
+
     public static let mugWidth = 9, mugHeight = 8
 
     /// A coffee mug seen from above: round rim, coffee inside, handle to the right.

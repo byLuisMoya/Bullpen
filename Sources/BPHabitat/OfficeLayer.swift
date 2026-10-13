@@ -13,10 +13,13 @@ public struct DeskModel: Equatable, Sendable, Identifiable {
     public var warning: DeskWarning?
     /// Waiting with nothing to do for a while: the person has left their jacket and gone.
     public var away: Bool
+    /// What they are doing, in a few words, for the speech card over their head.
+    public var summary: String?
 
     public init(id: UUID, name: String, state: AgentState, detail: String? = nil, look: CharacterLook, warning: DeskWarning? = nil,
-                away: Bool = false) {
+                away: Bool = false, summary: String? = nil) {
         self.away = away
+        self.summary = summary
         self.id = id
         self.name = name
         self.state = state
@@ -123,6 +126,7 @@ public final class OfficeLayer: CALayer {
             let node = nodes[desk.id] ?? DeskNode(parent: self)
             let previous = old.desks.first { $0.id == desk.id }
             node.place(at: Self.slotX(index))
+            node.compact = isCompact
             node.apply(desk, previous: previous, reduceMotion: reduceMotion)
             node.card.isHidden = isCompact
             nodes[desk.id] = node
@@ -308,8 +312,14 @@ final class DeskNode {
     let chair = CALayer(), person = CALayer(), desk = CALayer(), monitor = CALayer(), plant = CALayer()
     let mug = CALayer(), notepad = CALayer()
     let bubble = CALayer(), bolt = CALayer()
+    /// White speech card with the summary, over the head.
+    let speech = CALayer(), speechText = CATextLayer()
     /// Black pixel-art card under the desk with the branch name in white.
     let card = CALayer(), label = CATextLayer()
+
+    static let speaks: Set<AgentState> = [.working, .thinking, .done]
+    /// Sidebar size: no text on the desks.
+    var compact = false
 
     static func setup(_ l: CALayer, x: Int, y: Int, w: Int, h: Int) {
         let s = OfficeLayer.scale
@@ -341,7 +351,7 @@ final class DeskNode {
         Self.setup(mug, x: 23, y: 47, w: Props.mugWidth, h: Props.mugHeight)
         Self.setup(notepad, x: 4, y: 47, w: Props.notepadWidth, h: Props.notepadHeight)
         Self.setup(bubble, x: 21, y: 12, w: Props.bubbleSize, h: Props.bubbleSize)
-        Self.setup(bolt, x: 0, y: 17, w: Props.boltWidth, h: Props.boltHeight)
+        Self.setup(bolt, x: 0, y: 25, w: Props.boltWidth, h: Props.boltHeight)
         chair.contents = Props.chair()
         desk.contents = Props.desk()
         plant.contents = Props.deskPlant()
@@ -358,9 +368,21 @@ final class DeskNode {
         label.contentsScale = 2
         label.frame = CGRect(x: 2 * s, y: (card.bounds.height - 13) / 2, width: card.bounds.width - 4 * s, height: 13)
         card.addSublayer(label)
+        Self.setup(speech, x: 1, y: 15, w: OfficeLayer.slot - 2, h: Props.speechCardHeight)
+        speech.contents = Props.speechCard(width: OfficeLayer.slot - 2)
+        speechText.fontSize = 9
+        speechText.font = NSFont.systemFont(ofSize: 9, weight: .medium)
+        speechText.foregroundColor = CGColor(srgbRed: 0.16, green: 0.14, blue: 0.2, alpha: 1)
+        speechText.alignmentMode = .center
+        speechText.truncationMode = .end
+        speechText.isWrapped = false
+        speechText.contentsScale = 2
+        speechText.frame = CGRect(x: 2 * s, y: 4, width: speech.bounds.width - 4 * s, height: 12)
+        speech.addSublayer(speechText)
+        speech.isHidden = true
         // The person sits behind the desk but is drawn over it: their sprite stops at the desk
         // top, so only the arms resting on it overlap. Everything on the desk is in front of them.
-        [chair, desk, person, monitor, plant, mug, notepad, card, bubble, bolt].forEach(root.addSublayer)
+        [chair, desk, person, monitor, plant, mug, notepad, card, bubble, speech, bolt].forEach(root.addSublayer)
         root.frame = CGRect(x: 0, y: 0, width: CGFloat(OfficeLayer.slot) * s, height: OfficeLayer.openHeight)
         parent.addSublayer(root)
         root.opacity = 0
@@ -380,6 +402,11 @@ final class DeskNode {
         label.string = model.name
         bolt.isHidden = model.warning == nil
         if let warning = model.warning { bolt.contents = Props.bolt(conflict: warning == .conflict) }
+        // The summary replaces the icon bubble while they work, think or have just finished.
+        let says = model.away || !Self.speaks.contains(model.state) ? nil : model.summary
+        speech.isHidden = says == nil || compact
+        speechText.string = says
+        bubble.opacity = says == nil ? 1 : 0
         guard previous?.state != model.state || previous?.look != model.look || previous?.away != model.away
                 || person.contents == nil else { return }
 

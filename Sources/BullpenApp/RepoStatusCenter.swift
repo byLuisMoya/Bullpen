@@ -4,6 +4,7 @@ import BPPersistence
 import Foundation
 import Observation
 import os
+import UserNotifications
 
 /// Branch and pull-request state per worktree, shown to the right of each sidebar row like Orca.
 /// Branch sync is local git (cheap, every 15 s); PRs come from `gh` once a minute per project.
@@ -65,8 +66,32 @@ final class RepoStatusCenter {
         // Only count it as a full refresh once there was something to look at.
         if includePRs, !store.offices.isEmpty { lastPRFetch = Date() }
         branches = nextBranches
+        if includePRs { announceFinishedChecks(old: pullRequests, new: nextPRs, store: store) }
         pullRequests = nextPRs
         warnings = nextWarnings.filter { !$0.value.isEmpty }
+    }
+
+    /// A banner when a worktree's PR checks finish (were running, now pass or fail): the badge
+    /// colour alone is easy to miss while working in another app.
+    private func announceFinishedChecks(old: [UUID: PullRequest], new: [UUID: PullRequest], store: BuildingStore) {
+        for office in store.offices {
+            for worktree in office.worktrees {
+                guard let before = old[worktree.id], let after = new[worktree.id], before.number == after.number,
+                      before.checks == .pending, after.checks == .success || after.checks == .failure else { continue }
+                let content = UNMutableNotificationContent()
+                content.title = after.checks == .failure ? "Checks fallando en la PR #\(after.number)" : "Checks pasando en la PR #\(after.number)"
+                content.subtitle = office.project.name
+                content.body = worktree.branch
+                content.threadIdentifier = worktree.id.uuidString
+                content.sound = after.checks == .failure ? .default : nil
+                let request = UNNotificationRequest(identifier: "checks-\(worktree.id.uuidString)", content: content, trigger: nil)
+                Task {
+                    let settings = await UNUserNotificationCenter.current().notificationSettings()
+                    guard settings.authorizationStatus == .authorized else { return }
+                    try? await UNUserNotificationCenter.current().add(request)
+                }
+            }
+        }
     }
 }
 

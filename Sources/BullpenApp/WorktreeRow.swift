@@ -9,6 +9,8 @@ struct WorktreeRow: View {
     var sync: BranchSync?
     var pullRequest: PullRequest?
     var warning: WorktreeWarning?
+    /// What the agent is doing, in a few words (SummaryCenter).
+    var summary: String?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -33,6 +35,9 @@ struct WorktreeRow: View {
 
     private var subtitle: String {
         let agent = AgentProfile.named(worktree.agentProfileID)?.name ?? "Terminal"
+        if let summary, let state = status?.state, SummaryCenter.activeStates.contains(state), state != .needsYou {
+            return "\(agent) · \(summary)"
+        }
         let state = status.map { $0.detail ?? $0.state.label } ?? "—"
         return "\(agent) · \(state)"
     }

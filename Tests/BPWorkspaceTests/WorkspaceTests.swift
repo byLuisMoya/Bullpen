@@ -203,3 +203,122 @@ let fakeB = AgentProfile(id: "fake-b", name: "Fake B", executable: "/bin/echo")
         #expect(prompt.contains("Verificación: no ejecutada.") && prompt.contains("Sin cambios."))
     }
 }
+
+@Suite struct WorktreeSourceTests {
+    @Test func recognisesTicketKeysAndURLs() {
+        #expect(WorktreeSource.ticketKey(in: "#1234") == "#1234")
+        #expect(WorktreeSource.ticketKey(in: "1234") == "#1234")
+        #expect(WorktreeSource.ticketKey(in: "fkpi-12") == "FKPI-12")
+        #expect(WorktreeSource.ticketKey(in: "https://github.com/acme/app/issues/45") == "#45")
+        #expect(WorktreeSource.ticketKey(in: "https://github.com/acme/app/pull/7/files") == "#7")
+        #expect(WorktreeSource.ticketKey(in: "https://linear.app/acme/issue/fkpi-88/arreglar-login") == "FKPI-88")
+        #expect(WorktreeSource.ticketKey(in: "feature/login") == nil)
+        #expect(WorktreeSource.ticketKey(in: "arregla el login") == nil)
+    }
+
+    @Test func turnsTextIntoBranchNames() {
+        #expect(WorktreeSource.branchName(from: "Arregla el timeout del login") == "arregla-timeout-login")
+        #expect(WorktreeSource.branchName(from: "Añadir exportación a CSV") == "anadir-exportacion-csv")
+        #expect(WorktreeSource.branchName(fromName: "feature/FKPI-12-x") == "feature/FKPI-12-x")
+        #expect(WorktreeSource.branchName(fromName: "nueva pantalla de ajustes") == "nueva-pantalla-ajustes")
+        #expect(WorktreeSource.localName("origin/feature/x") == "feature/x")
+    }
+}
+
+/// The new-worktree flow end to end: the project's setup script, existing and remote branches.
+@Suite(.serialized) struct CreateFlowTests {
+    /// Stands in for an agent: leaves a file behind when it starts.
+    static let fakeAgent = AgentProfile(id: "fake", name: "Fake", executable: "touch", arguments: ["agent-started"],
+                                        prompt: .type, modelFlag: nil)
+    static let config = """
+    [setup]
+    run = ["echo toml >> order.txt"]
+    """
+
+    @Test func projectScriptRunsAfterTomlSetupAndBeforeTheAgent() async throws {
+        let f = try await Fixture.make(config: Self.config)
+        defer { f.server.stop() }
+        var project = f.project
+        project.setupScript = "echo script >> order.txt\ncp \"$BULLPEN_PROJECT_PATH/.env\" copied.env\necho 'it''s fine' >> order.txt"
+        let wt = try await f.workspace.createWorktree(WorktreeRequest(project: project, branch: "setup-ok", baseRef: "main", agent: Self.fakeAgent))
+        let path = URL(fileURLWithPath: wt.path)
+        let started = path.appendingPathComponent("agent-started")
+        let deadline = Date().addingTimeInterval(10)
+        while !FileManager.default.fileExists(atPath: started.path), Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
+        #expect(FileManager.default.fileExists(atPath: started.path))
+        #expect(try String(contentsOf: path.appendingPathComponent("order.txt"), encoding: .utf8) == "toml\nscript\nits fine\n")
+        #expect(try String(contentsOf: path.appendingPathComponent("copied.env"), encoding: .utf8) == "SECRET=42\n")
+    }
+
+    @Test func failingScriptKeepsTheAgentClosed() async throws {
+        let f = try await Fixture.make(config: Self.config)
+        defer { f.server.stop() }
+        var project = f.project
+        project.setupScript = "echo script >> order.txt\nfalse\necho never >> order.txt"
+        let wt = try await f.workspace.createWorktree(WorktreeRequest(project: project, branch: "setup-fails", baseRef: "main", agent: Self.fakeAgent))
+        let path = URL(fileURLWithPath: wt.path)
+        #expect(await f.waitForFile(path.appendingPathComponent("order.txt")) != nil)
+        try await Task.sleep(for: .seconds(1.5))
+        #expect(try String(contentsOf: path.appendingPathComponent("order.txt"), encoding: .utf8) == "toml\nscript\n")
+        #expect(!FileManager.default.fileExists(atPath: path.appendingPathComponent("agent-started").path))
+    }
+
+    @Test func opensAnExistingLocalBranch() async throws {
+        let f = try await Fixture.make(config: "")
+        defer { f.server.stop() }
+        let git = Git()
+        try await git.run(["branch", "feature/existing"], in: f.repoDir)
+        let wt = try await f.workspace.createWorktree(WorktreeRequest(project: f.project, branch: "feature/existing", baseRef: "main"))
+        let head = try await git.run(["rev-parse", "--abbrev-ref", "HEAD"], in: URL(fileURLWithPath: wt.path))
+        #expect(head.trimmingCharacters(in: .whitespacesAndNewlines) == "feature/existing")
+    }
+
+    @Test func remoteBranchBecomesALocalBranchTrackingIt() async throws {
+        let f = try await Fixture.make(config: "")
+        defer { f.server.stop() }
+        let git = Git()
+        // A remote with a branch the local repo has never checked out.
+        let remote = f.root.appendingPathComponent("remote.git")
+        try await git.run(["clone", "-q", "--bare", f.repoDir.path, remote.path], in: f.root)
+        try await git.run(["remote", "add", "origin", remote.path], in: f.repoDir)
+        try await git.run(["push", "-q", "origin", "main:feature/remote-only"], in: f.repoDir)
+        try await git.run(["fetch", "-q", "origin"], in: f.repoDir)
+
+        let repo = try await Repository.open(at: f.repoDir)
+        let remotes = try await repo.remoteBranches()
+        #expect(remotes.contains("origin/feature/remote-only"))
+        #expect(!remotes.contains { $0.hasSuffix("/HEAD") })
+
+        let branch = WorktreeSource.localName("origin/feature/remote-only")
+        let wt = try await f.workspace.createWorktree(WorktreeRequest(project: f.project, branch: branch, baseRef: "origin/feature/remote-only"))
+        let dir = URL(fileURLWithPath: wt.path)
+        let head = try await git.run(["rev-parse", "--abbrev-ref", "HEAD"], in: dir)
+        let upstream = try await git.run(["rev-parse", "--abbrev-ref", "@{upstream}"], in: dir)
+        #expect(head.trimmingCharacters(in: .whitespacesAndNewlines) == "feature/remote-only")
+        #expect(upstream.trimmingCharacters(in: .whitespacesAndNewlines) == "origin/feature/remote-only")
+        #expect(try await repo.localBranches().contains("feature/remote-only"))
+    }
+
+    /// A PR's branch that this clone has never fetched: fetch it, then start from origin/<branch>.
+    @Test func unfetchedPullRequestBranchCanBeFetchedAndOpened() async throws {
+        let f = try await Fixture.make(config: "")
+        defer { f.server.stop() }
+        let git = Git()
+        let remote = f.root.appendingPathComponent("remote.git")
+        try await git.run(["clone", "-q", "--bare", f.repoDir.path, remote.path], in: f.root)
+        try await git.run(["remote", "add", "origin", remote.path], in: f.repoDir)
+        try await git.run(["fetch", "-q", "origin"], in: f.repoDir)
+        try await git.run(["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], in: f.repoDir)
+        // Someone else pushes a PR branch after our last fetch.
+        try await git.run(["branch", "pr-branch", "main"], in: remote)
+
+        let repo = try await Repository.open(at: f.repoDir)
+        #expect(await repo.defaultRemoteBranch() == "main")
+        #expect(try await !repo.remoteBranches().contains("origin/pr-branch"))
+        try await repo.fetchBranch("pr-branch")
+        #expect(try await repo.remoteBranches().contains("origin/pr-branch"))
+        let wt = try await f.workspace.createWorktree(WorktreeRequest(project: f.project, branch: "pr-branch", baseRef: "origin/pr-branch"))
+        let head = try await git.run(["rev-parse", "--abbrev-ref", "HEAD"], in: URL(fileURLWithPath: wt.path))
+        #expect(head.trimmingCharacters(in: .whitespacesAndNewlines) == "pr-branch")
+    }
+}

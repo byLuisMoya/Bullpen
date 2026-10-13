@@ -17,7 +17,9 @@ enum Tickets {
             do {
                 tickets += try await GitHubIssues(gh: gh.executable).openIssues(in: URL(fileURLWithPath: project.path))
             } catch {
-                problems.append("GitHub: " + error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines))
+                let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Issues switched off in the repo is a setting, not a failure: the PRs still show.
+                if !message.contains("disabled issues") { problems.append("GitHub: " + message) }
             }
         }
         if let key = linearKey {

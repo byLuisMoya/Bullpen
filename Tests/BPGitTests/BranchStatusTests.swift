@@ -51,3 +51,11 @@ import Testing
         #expect(GitHubCLI.rollup([(nil, nil, "ERROR")]) == .failure)
     }
 }
+
+@Suite struct OpenPullRequestTests {
+    @Test func parsesOpenPullRequests() throws {
+        let json = #"[{"number":12,"title":"Arregla login","headRefName":"fix/login","url":"https://github.com/a/b/pull/12","isDraft":true}]"#
+        let prs = try GitHubCLI.parseOpen(Data(json.utf8))
+        #expect(prs == [OpenPullRequest(number: 12, title: "Arregla login", branch: "fix/login", url: URL(string: "https://github.com/a/b/pull/12"), isDraft: true)])
+    }
+}

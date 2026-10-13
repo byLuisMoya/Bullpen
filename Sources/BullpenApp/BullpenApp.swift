@@ -12,6 +12,7 @@ struct BullpenApp: App {
     @State private var reviewNotes = ReviewNotes()
     @State private var usage = UsageCenter()
     @State private var updater = Updater()
+    @State private var summaries = SummaryCenter()
 
     var body: some Scene {
         WindowGroup("Bullpen", id: "main") {
@@ -24,6 +25,8 @@ struct BullpenApp: App {
                 .environment(reviewNotes)
                 .environment(usage)
                 .environment(updater)
+                .environment(summaries)
+                .task { await summaries.start(store: store, sessions: sessions, attention: attention) }
                 .task { await usage.start(store: store, sessions: sessions) }
                 .task { await updater.start() }
                 .task { await SeasonalIcon.keepUpdated() }

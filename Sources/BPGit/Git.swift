@@ -21,7 +21,7 @@ public struct Git: Sendable {
 
     /// Runs git in `directory` and returns stdout. Throws `GitError` on a non-zero exit.
     @discardableResult
-    public func run(_ arguments: [String], in directory: URL) async throws -> String {
+    public func run(_ arguments: [String], in directory: URL, environment extra: [String: String] = [:]) async throws -> String {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
@@ -29,6 +29,7 @@ public struct Git: Sendable {
         var env = ProcessInfo.processInfo.environment
         env["GIT_TERMINAL_PROMPT"] = "0"  // never block on credential prompts
         env["LC_ALL"] = "C"               // stable, parseable output
+        env.merge(extra) { _, new in new }
         process.environment = env
 
         let out = Pipe(), err = Pipe()

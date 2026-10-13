@@ -45,6 +45,10 @@ struct ReviewView: View {
     @State private var showingPR = false
     @State private var verifying = false
     @State private var verifyResults: [CommandResult]?
+    /// Checkpoints of this worktree, newest first, and the one the diff starts from (nil = the base).
+    @State private var checkpoints: [Checkpoint] = []
+    @State private var since: Checkpoint?
+    @State private var restoring: Checkpoint?
 
     private var comments: [ReviewComment] { notes.comments[worktree.id] ?? [] }
 
@@ -57,6 +61,7 @@ struct ReviewView: View {
                 Button(verifying ? "Verificando…" : "Verificar", systemImage: "checkmark.seal") { Task { await verify() } }
                     .disabled(verifying)
                     .help("Ejecuta [verify] de .bullpen.toml en este worktree")
+                checkpointMenu
                 Spacer()
                 Button("Crear PR…", systemImage: "arrow.triangle.pull") { showingPR = true }
                     .disabled(repoStatus.pullRequests[worktree.id]?.state == .open || repoStatus.pullRequests[worktree.id]?.state == .draft)
@@ -95,7 +100,8 @@ struct ReviewView: View {
                     } else if let error {
                         ContentUnavailableView("No se pudo leer el diff", systemImage: "exclamationmark.triangle", description: Text(error))
                     } else if files.isEmpty {
-                        ContentUnavailableView("Sin cambios", systemImage: "checkmark.circle", description: Text("Nada distinto de \(worktree.baseRef)."))
+                        ContentUnavailableView("Sin cambios", systemImage: "checkmark.circle",
+                                               description: Text(since.map { "Nada distinto del punto \($0.number)." } ?? "Nada distinto de \(worktree.baseRef)."))
                     } else {
                         ContentUnavailableView("Elige un fichero", systemImage: "doc.text")
                     }
@@ -116,6 +122,15 @@ struct ReviewView: View {
             }
             .padding(8)
         }
+        .confirmationDialog(
+            "¿Volver al punto \(restoring?.number ?? 0)?",
+            isPresented: Binding(get: { restoring != nil }, set: { if !$0 { restoring = nil } }),
+            presenting: restoring
+        ) { checkpoint in
+            Button("Volver a este punto", role: .destructive) { Task { await restore(checkpoint) } }
+        } message: { checkpoint in
+            Text("Los ficheros del worktree quedarán como en «\(checkpoint.message)». Antes se guarda el estado actual como un punto nuevo, para poder deshacerlo. La rama y sus commits no cambian.")
+        }
         .sheet(isPresented: $showingPR) {
             CreatePRSheet(worktree: worktree, project: project)
         }
@@ -130,12 +145,67 @@ struct ReviewView: View {
         defer { loading = false }
         do {
             let repo = try await Repository.open(at: URL(fileURLWithPath: project.path))
-            files = try await repo.changes(in: URL(fileURLWithPath: worktree.path), baseRef: worktree.baseRef)
+            let path = URL(fileURLWithPath: worktree.path)
+            checkpoints = (try? await repo.checkpoints(of: worktree.id)) ?? []
+            if let current = since, !checkpoints.contains(current) { since = nil }
+            if let since {
+                files = try await repo.changes(in: path, since: since)
+            } else {
+                files = try await repo.changes(in: path, baseRef: worktree.baseRef)
+            }
             error = nil
             if selectedPath == nil || !files.contains(where: { $0.path == selectedPath }) { selectedPath = files.first?.path }
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    /// Points saved at the end of each agent turn: compare with one, or go back to it.
+    private var checkpointMenu: some View {
+        Menu {
+            Button {
+                since = nil
+                Task { await load() }
+            } label: {
+                if since == nil { Label("Cambios desde \(worktree.baseRef)", systemImage: "checkmark") } else { Text("Cambios desde \(worktree.baseRef)") }
+            }
+            Button("Guardar punto ahora") { Task { await saveCheckpoint() } }
+            if !checkpoints.isEmpty { Divider() }
+            ForEach(checkpoints) { checkpoint in
+                Menu("Punto \(checkpoint.number) · \(checkpoint.date.formatted(date: .abbreviated, time: .shortened))") {
+                    Text(checkpoint.message)
+                    Button("Ver cambios desde aquí") {
+                        since = checkpoint
+                        Task { await load() }
+                    }
+                    Button("Volver a este punto…") { restoring = checkpoint }
+                }
+            }
+        } label: {
+            Label(since.map { "Desde el punto \($0.number)" } ?? "Puntos (\(checkpoints.count))", systemImage: "clock.arrow.circlepath")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Puntos guardados al terminar cada turno del agente: ver qué cambió desde uno o volver a él")
+    }
+
+    private func saveCheckpoint() async {
+        do {
+            let repo = try await Repository.open(at: URL(fileURLWithPath: project.path))
+            let saved = try await repo.createCheckpoint(of: worktree.id, in: URL(fileURLWithPath: worktree.path),
+                                                        message: "Guardado a mano · \(Date().formatted(date: .omitted, time: .shortened))")
+            if saved == nil { store.errorMessage = "No hay cambios desde el último punto." }
+            await load()
+        } catch { store.errorMessage = error.localizedDescription }
+    }
+
+    private func restore(_ checkpoint: Checkpoint) async {
+        do {
+            let repo = try await Repository.open(at: URL(fileURLWithPath: project.path))
+            try await repo.restore(checkpoint, of: worktree.id, in: URL(fileURLWithPath: worktree.path))
+            since = nil
+            await load()
+        } catch { store.errorMessage = "No se pudo volver al punto \(checkpoint.number): \(error.localizedDescription)" }
     }
 
     private func verify() async {

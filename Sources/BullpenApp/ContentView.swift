@@ -17,6 +17,7 @@ struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var isImporting = false
     @State private var newWorktreeFor: Project?
+    @Environment(SummaryCenter.self) private var summaries
     /// Projects folded in the sidebar (only the header shows), remembered between launches.
     @AppStorage("collapsedProjects") private var collapsedRaw = ""
     private var collapsedProjects: Set<UUID> {
@@ -48,7 +49,7 @@ struct ContentView: View {
                             WorktreeRow(
                                 worktree: worktree, status: attention.statuses[worktree.id],
                                 sync: repoStatus.branches[worktree.id], pullRequest: repoStatus.pullRequests[worktree.id],
-                                warning: repoStatus.warnings[worktree.id]
+                                warning: repoStatus.warnings[worktree.id], summary: summaries.summaries[worktree.id]
                             )
                                 .tag(worktree.id)
                                 .contextMenu {

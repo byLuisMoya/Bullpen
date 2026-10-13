@@ -46,6 +46,18 @@ public struct Repository: Sendable {
         (try? await git.run(["rev-parse", "--verify", "--quiet", "refs/heads/\(name)"], in: root)) != nil
     }
 
+    /// The remote's default branch (`origin/HEAD` → `main`), if the clone knows it.
+    public func defaultRemoteBranch(remote: String = "origin") async -> String? {
+        guard let ref = try? await git.run(["symbolic-ref", "--short", "refs/remotes/\(remote)/HEAD"], in: root) else { return nil }
+        let name = ref.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.hasPrefix(remote + "/") ? String(name.dropFirst(remote.count + 1)) : nil
+    }
+
+    /// Fetches one branch so `origin/<branch>` exists locally (a PR branch never checked out).
+    public func fetchBranch(_ branch: String, remote: String = "origin") async throws {
+        try await git.run(["fetch", "-q", remote, "refs/heads/\(branch):refs/remotes/\(remote)/\(branch)"], in: root)
+    }
+
     /// Local branches, most recently committed first.
     public func localBranches() async throws -> [String] {
         try await refs("refs/heads")

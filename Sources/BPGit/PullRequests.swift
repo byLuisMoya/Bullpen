@@ -20,6 +20,23 @@ public struct PullRequest: Equatable, Sendable {
     }
 }
 
+/// An open pull request, to start a worktree on its branch.
+public struct OpenPullRequest: Hashable, Sendable {
+    public var number: Int
+    public var title: String
+    public var branch: String
+    public var url: URL?
+    public var isDraft: Bool
+
+    public init(number: Int, title: String, branch: String, url: URL?, isDraft: Bool) {
+        self.number = number
+        self.title = title
+        self.branch = branch
+        self.url = url
+        self.isDraft = isDraft
+    }
+}
+
 /// Reads pull requests through the GitHub CLI (`gh`), which the user already has signed in.
 public struct GitHubCLI: Sendable {
     public var executable: URL
@@ -42,6 +59,22 @@ public struct GitHubCLI: Sendable {
             "--json", "number,headRefName,state,isDraft,url,statusCheckRollup",
         ], in: directory)
         return try Self.parse(Data(json.utf8))
+    }
+
+    /// Open pull requests of the repository at `directory`, newest first.
+    public func openPullRequests(in directory: URL, limit: Int = 50) async throws -> [OpenPullRequest] {
+        let git = Git(executable: executable)
+        let json = try await git.run([
+            "pr", "list", "--state", "open", "--limit", "\(limit)", "--json", "number,title,headRefName,url,isDraft",
+        ], in: directory)
+        return try Self.parseOpen(Data(json.utf8))
+    }
+
+    static func parseOpen(_ data: Data) throws -> [OpenPullRequest] {
+        struct Item: Decodable { var number: Int; var title: String; var headRefName: String; var url: String; var isDraft: Bool }
+        return try JSONDecoder().decode([Item].self, from: data).map {
+            OpenPullRequest(number: $0.number, title: $0.title, branch: $0.headRefName, url: URL(string: $0.url), isDraft: $0.isDraft)
+        }
     }
 
     static func parse(_ data: Data) throws -> [String: PullRequest] {
