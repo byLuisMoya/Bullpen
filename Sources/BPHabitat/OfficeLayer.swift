@@ -413,8 +413,8 @@ final class DeskNode {
         layer.addSublayer(sprite(Props.chair(), x: 6 * OfficeLayer.scale, y: 26 * OfficeLayer.scale, w: Props.chairWidth, h: Props.chairHeight))
         layer.addSublayer(sprite(Props.desk(), x: 1 * OfficeLayer.scale, y: CGFloat(deskY) * OfficeLayer.scale, w: Props.deskWidth, h: Props.deskHeight))
         layer.addSublayer(sprite(Props.monitor(on: false, glow: false), x: 9 * OfficeLayer.scale, y: 37 * OfficeLayer.scale, w: Props.monitorWidth, h: Props.monitorHeight))
-        layer.addSublayer(sprite(Props.deskPlant(), x: 23 * OfficeLayer.scale, y: 35 * OfficeLayer.scale, w: Props.deskPlantWidth, h: Props.deskPlantHeight))
-        layer.addSublayer(sprite(Props.mug(), x: 23 * OfficeLayer.scale, y: 47 * OfficeLayer.scale, w: Props.mugWidth, h: Props.mugHeight))
+        layer.addSublayer(sprite(Props.mug(), x: 24 * OfficeLayer.scale, y: 34 * OfficeLayer.scale, w: Props.mugWidth, h: Props.mugHeight))
+        layer.addSublayer(sprite(Props.deskPlant(), x: 22 * OfficeLayer.scale, y: 43 * OfficeLayer.scale, w: Props.deskPlantWidth, h: Props.deskPlantHeight))
         layer.addSublayer(sprite(Props.notepad(), x: 4 * OfficeLayer.scale, y: 47 * OfficeLayer.scale, w: Props.notepadWidth, h: Props.notepadHeight))
     }
 
@@ -424,8 +424,9 @@ final class DeskNode {
         Self.setup(person, x: 5, y: Self.personY, w: CharacterSprite.width, h: CharacterSprite.height)
         Self.setup(desk, x: 1, y: Self.deskY, w: Props.deskWidth, h: Props.deskHeight)
         Self.setup(monitor, x: 9, y: 37, w: Props.monitorWidth, h: Props.monitorHeight)
-        Self.setup(plant, x: 23, y: 35, w: Props.deskPlantWidth, h: Props.deskPlantHeight)
-        Self.setup(mug, x: 23, y: 47, w: Props.mugWidth, h: Props.mugHeight)
+        // Mug at the back by the screen, plant at the front corner.
+        Self.setup(mug, x: 24, y: 34, w: Props.mugWidth, h: Props.mugHeight)
+        Self.setup(plant, x: 22, y: 43, w: Props.deskPlantWidth, h: Props.deskPlantHeight)
         Self.setup(notepad, x: 4, y: 47, w: Props.notepadWidth, h: Props.notepadHeight)
         Self.setup(bubble, x: 21, y: 12, w: Props.bubbleSize, h: Props.bubbleSize)
         Self.setup(bolt, x: 0, y: 25, w: Props.boltWidth, h: Props.boltHeight)
@@ -434,7 +435,7 @@ final class DeskNode {
         plant.contents = Props.deskPlant()
         Self.setup(notes, x: 10, y: 37, w: Props.notesWidth, h: Props.notesHeight)
         Self.setup(books, x: 1, y: 39, w: Props.booksWidth, h: Props.booksHeight)
-        Self.setup(beer, x: 13, y: 43, w: Props.beerWidth, h: Props.beerHeight)
+        Self.setup(beer, x: 12, y: 43, w: Props.beerWidth, h: Props.beerHeight)
         notes.contents = Props.stickyNotes()
         books.contents = Props.books()
         beer.contents = Props.beer()
@@ -465,7 +466,7 @@ final class DeskNode {
         speech.isHidden = true
         // The person sits behind the desk but is drawn over it: their sprite stops at the desk
         // top, so only the arms resting on it overlap. Everything on the desk is in front of them.
-        [chair, desk, person, monitor, notes, plant, books, mug, notepad, beer, card, bubble, speech, bolt].forEach(root.addSublayer)
+        [chair, desk, person, monitor, notes, mug, books, notepad, beer, plant, card, bubble, speech, bolt].forEach(root.addSublayer)
         root.frame = CGRect(x: 0, y: 0, width: CGFloat(OfficeLayer.slot) * s, height: OfficeLayer.openHeight)
         parent.addSublayer(root)
         root.opacity = 0

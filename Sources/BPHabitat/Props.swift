@@ -246,21 +246,24 @@ public enum Props {
         return c.image(palette: palette)
     }
 
-    public static let mugWidth = 9, mugHeight = 8
+    public static let mugWidth = 10, mugHeight = 10
 
-    /// A coffee mug seen from above: round rim, coffee inside, handle to the right.
+    /// A coffee mug from the side, like the rest of the room seen a little from above: the rim
+    /// shows the coffee inside, the handle sticks out to the right.
     public static func mug() -> CGImage? {
         var c = PixelCanvas(width: mugWidth, height: mugHeight)
         c.stamp([
-            ".www..",
-            "wcccwh",
-            "wcccw.h",
-            "wcccwh",
-            ".wpw..",
-        ], at: 1, 1, key: ["w": P.white, "c": P.coffee, "p": P.plastic, "h": P.white])
-        c.dot(3, 2, P.coffeeLight)
+            ".pppp...",
+            "pccccp..",
+            "wppppwhh",
+            "wwwwwS.h",
+            "wwwwwS.h",
+            "wwwwwShh",
+            ".wwwwS..",
+        ], at: 1, 1, key: ["p": P.plastic, "c": P.coffee, "w": P.white, "S": P.plastic, "h": P.white])
+        c.dot(2, 2, P.coffeeLight)                                 // light on the coffee
         c.outline(P.outline)
-        c.rect(2, 7, 4, 1, P.shadow)
+        c.rect(2, 9, 6, 1, P.shadow)
         return c.image(palette: palette)
     }
 

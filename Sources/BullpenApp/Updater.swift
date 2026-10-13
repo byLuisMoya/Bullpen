@@ -4,6 +4,7 @@ import CryptoKit
 import Foundation
 import Observation
 import SwiftUI
+import UserNotifications
 
 /// Updates Bullpen from its GitHub releases: finds a newer version, downloads the universal zip,
 /// checks it against the release's SHA256SUMS.txt, swaps the app bundle once Bullpen has quit
@@ -12,6 +13,8 @@ import SwiftUI
 @Observable
 final class Updater {
     static let repository = "byLuisMoya/Bullpen"
+    /// BULLPEN_PRETEND_VERSION=0.0.1 makes this build look old, to try the update flow while developing.
+    static var currentVersion: String { ProcessInfo.processInfo.environment["BULLPEN_PRETEND_VERSION"] ?? Bullpen.version }
 
     struct Release: Equatable {
         var version: ReleaseVersion
@@ -36,11 +39,18 @@ final class Updater {
         return nil
     }
 
-    /// Checks at launch and every six hours, so the toolbar button can say an update is waiting.
+    /// Checks at launch, every hour, and when Bullpen comes back to the front (at most every
+    /// half hour), so a new version shows up during the day without looking for it.
     func start() async {
+        Task { [weak self] in
+            for await _ in NotificationCenter.default.notifications(named: NSApplication.didBecomeActiveNotification) {
+                guard let self, Date().timeIntervalSince(self.lastChecked ?? .distantPast) > 1800 else { continue }
+                await self.check(quietly: true)
+            }
+        }
         while !Task.isCancelled {
             await check(quietly: true)
-            try? await Task.sleep(for: .seconds(6 * 3600))
+            try? await Task.sleep(for: .seconds(3600))
         }
     }
 
@@ -50,13 +60,30 @@ final class Updater {
         do {
             let latest = try await Self.latestRelease()
             lastChecked = Date()
-            if let latest, let current = ReleaseVersion(Bullpen.version), latest.version > current {
+            if let latest, let current = ReleaseVersion(Self.currentVersion), latest.version > current {
                 state = .available(latest)
+                announce(latest)
             } else {
                 state = quietly && state != .checking ? .idle : .upToDate
             }
         } catch {
             if !quietly { state = .failed("No se pudo consultar GitHub: \(error.localizedDescription)") }
+        }
+    }
+
+    /// One notification per new version, the first time it is seen.
+    private func announce(_ release: Release) {
+        let key = "updater.announced"
+        guard ProcessInfo.processInfo.environment["BULLPEN_PRETEND_VERSION"] == nil,
+              UserDefaults.standard.string(forKey: key) != release.version.description else { return }
+        UserDefaults.standard.set(release.version.description, forKey: key)
+        let content = UNMutableNotificationContent()
+        content.title = "Bullpen \(release.version) disponible"
+        content.body = "Pulsa «Actualizar» en la barra de herramientas para instalarla."
+        let request = UNNotificationRequest(identifier: "bullpen-update", content: content, trigger: nil)
+        Task {
+            guard await UNUserNotificationCenter.current().notificationSettings().authorizationStatus == .authorized else { return }
+            try? await UNUserNotificationCenter.current().add(request)
         }
     }
 
@@ -188,14 +215,37 @@ struct UpdateButton: View {
     @State private var showing = false
 
     var body: some View {
-        Button {
-            showing = true
-            if updater.available == nil, !isBusy { Task { await updater.check() } }
-        } label: {
-            Label("Actualizar", systemImage: updater.available == nil ? "arrow.down.circle" : "arrow.down.circle.fill")
+        Group {
+            if let release = updater.available {
+                // Hard to miss: a purple pill with the word, not just a tinted icon.
+                Button {
+                    showing = true
+                } label: {
+                    // Drawn by hand: the toolbar greys out system "prominent" buttons when the
+                    // window isn't active, and this must stay purple.
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.down.circle.fill")
+                        Text("Actualizar")
+                    }
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color(red: 0.49, green: 0.30, blue: 0.86)))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Hay una versión nueva: \(release.version)")
+            } else {
+                Button {
+                    showing = true
+                    if !isBusy { Task { await updater.check() } }
+                } label: {
+                    Label("Actualizar", systemImage: "arrow.down.circle")
+                }
+                .help("Buscar actualizaciones")
+            }
         }
-        .foregroundStyle(updater.available == nil ? Color.primary : Color.accentColor)
-        .help(updater.available.map { "Hay una versión nueva: \($0.version)" } ?? "Buscar actualizaciones")
         .popover(isPresented: $showing, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 10) {
                 content
