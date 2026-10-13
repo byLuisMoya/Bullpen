@@ -35,7 +35,7 @@ struct BullpenApp: App {
                     attention.orca = orca
                     summaries.orca = orca
                     sessions.agentRunsElsewhere = { [orca] worktree in (orca.activity(for: worktree)?.liveTerminals ?? 0) > 0 }
-                    await orca.start()
+                    await orca.start(store: store)
                 }
                 .task { await summaries.start(store: store, sessions: sessions, attention: attention) }
                 .task { await usage.start(store: store, sessions: sessions) }

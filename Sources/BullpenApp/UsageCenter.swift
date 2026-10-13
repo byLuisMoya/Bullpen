@@ -17,12 +17,10 @@ final class UsageCenter {
     @ObservationIgnored private let reader = TranscriptUsageReader()
 
     func start(store: BuildingStore, sessions: SessionManager) async {
-        var tick = 0
         while !Task.isCancelled {
             await refresh(store: store, sessions: sessions)
-            if tick % 6 == 0 { await refreshPlan() }
-            tick += 1
-            try? await Task.sleep(for: .seconds(20))
+            if Date().timeIntervalSince(planUpdated ?? .distantPast) >= 120 { await refreshPlan() }
+            await Pacing.pause(active: 20, background: 60)
         }
     }
 
@@ -40,8 +38,10 @@ final class UsageCenter {
         let result = await Task.detached {
             paths.map { id, path in (id, reader.totals(for: path), reader.totals(for: path, since: startOfDay)) }
         }.value
-        usage = Dictionary(result.map { ($0.0, $0.1) }, uniquingKeysWith: { a, _ in a })
-        today = result.reduce(UsageTotals()) { $0 + $1.2 }
+        let nextUsage = Dictionary(result.map { ($0.0, $0.1) }, uniquingKeysWith: { a, _ in a })
+        if nextUsage != usage { usage = nextUsage }
+        let nextToday = result.reduce(UsageTotals()) { $0 + $1.2 }
+        if nextToday != today { today = nextToday }
     }
 }
 

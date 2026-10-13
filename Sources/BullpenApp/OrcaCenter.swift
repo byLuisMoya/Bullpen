@@ -10,20 +10,35 @@ import Observation
 @Observable
 final class OrcaCenter {
     private(set) var activity: [String: OrcaActivity] = [:]
+    /// `Workspace.canonical` touches the disk; worktree paths don't change, so once per path.
+    @ObservationIgnored private var canonicalPaths: [String: String] = [:]
 
-    func start() async {
+    func start(store: BuildingStore) async {
         guard OrcaWorktree.locate() != nil else { return }
         while !Task.isCancelled {
-            let rows = await OrcaActivity.list()
-            activity = Dictionary(rows.map { (Workspace.canonical($0.path), $0) }, uniquingKeysWith: { a, _ in a })
-            try? await Task.sleep(for: .seconds(4))
+            // `orca worktree ps` is a whole CLI run: only while some worktree came from outside.
+            if store.offices.contains(where: { $0.worktrees.contains(where: \.external) }) {
+                let rows = await OrcaActivity.list()
+                let next = Dictionary(rows.map { (Workspace.canonical($0.path), $0) }, uniquingKeysWith: { a, _ in a })
+                if next != activity { activity = next }
+            } else if !activity.isEmpty {
+                activity = [:]
+            }
+            await Pacing.pause(active: 4, background: 15)
         }
     }
 
     /// Orca's view of a worktree made there, while Bullpen has no terminal of its own in it.
     func activity(for worktree: Worktree) -> OrcaActivity? {
-        guard worktree.external else { return nil }
-        return activity[Workspace.canonical(worktree.path)]
+        guard worktree.external, !activity.isEmpty else { return nil }
+        return activity[canonical(worktree.path)]
+    }
+
+    private func canonical(_ path: String) -> String {
+        if let known = canonicalPaths[path] { return known }
+        let resolved = Workspace.canonical(path)
+        canonicalPaths[path] = resolved
+        return resolved
     }
 
     func status(for worktree: Worktree) -> AgentStatus? {

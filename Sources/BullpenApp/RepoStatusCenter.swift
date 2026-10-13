@@ -24,7 +24,7 @@ final class RepoStatusCenter {
     func start(store: BuildingStore) async {
         while !Task.isCancelled {
             await refresh(store: store, includePRs: Date().timeIntervalSince(lastPRFetch) > 60)
-            try? await Task.sleep(for: .seconds(15))
+            await Pacing.pause(active: 15, background: 60)
         }
     }
 
@@ -69,11 +69,12 @@ final class RepoStatusCenter {
         }
         // Only count it as a full refresh once there was something to look at.
         if includePRs, !store.offices.isEmpty { lastPRFetch = Date() }
-        branches = nextBranches
+        if nextBranches != branches { branches = nextBranches }
         if nextTurns != turns { turns = nextTurns }
         if includePRs { announceFinishedChecks(old: pullRequests, new: nextPRs, store: store) }
-        pullRequests = nextPRs
-        warnings = nextWarnings.filter { !$0.value.isEmpty }
+        if nextPRs != pullRequests { pullRequests = nextPRs }
+        let nextWarningsShown = nextWarnings.filter { !$0.value.isEmpty }
+        if nextWarningsShown != warnings { warnings = nextWarningsShown }
     }
 
     /// A banner when a worktree's PR checks finish (were running, now pass or fail): the badge

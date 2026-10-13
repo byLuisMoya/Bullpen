@@ -46,9 +46,11 @@ final class AttentionCenter {
                 if old != nil, old != status.state { changed(worktree, in: office.project, to: status) }
             }
         }
+        guard next != statuses else { return }
         statuses = next
         let waiting = next.values.filter { $0.state == .needsYou }.count
-        NSApp.dockTile.badgeLabel = waiting > 0 ? "\(waiting)" : nil
+        let badge = waiting > 0 ? "\(waiting)" : nil
+        if NSApp.dockTile.badgeLabel != badge { NSApp.dockTile.badgeLabel = badge }
     }
 
     private func changed(_ worktree: Worktree, in project: Project, to status: AgentStatus) {

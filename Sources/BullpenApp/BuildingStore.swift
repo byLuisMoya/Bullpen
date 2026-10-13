@@ -32,7 +32,7 @@ final class BuildingStore {
             Task { [weak self] in
                 while !Task.isCancelled {
                     if let workspace = self?.workspace { _ = try? await workspace.syncExternalWorktrees() }
-                    try? await Task.sleep(for: .seconds(20))
+                    await Pacing.pause(active: 20, background: 60)
                 }
             }
             // GRDB observes this process's writes; `bp` writes from another process, so re-read now and then.

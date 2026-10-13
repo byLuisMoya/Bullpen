@@ -25,7 +25,7 @@ final class SummaryCenter {
     func start(store: BuildingStore, sessions: SessionManager, attention: AttentionCenter) async {
         while !Task.isCancelled {
             await refresh(store: store, sessions: sessions, attention: attention)
-            try? await Task.sleep(for: .seconds(15))
+            await Pacing.pause(active: 15, background: 45)
         }
     }
 

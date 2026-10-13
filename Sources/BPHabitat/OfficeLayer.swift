@@ -649,6 +649,29 @@ public enum OfficeSnapshot {
     /// `width` (in those points) widens the room to fill the space it is shown in.
     @MainActor
     public static func image(_ model: OfficeModel, desks: Int, width fill: CGFloat? = nil, scale: CGFloat = 2) -> CGImage? {
+        // The sidebar asks again on every redraw; most of the time nothing in the room changed.
+        let key = Key(model: model, desks: desks, width: fill, scale: scale)
+        if let hit = cache.first(where: { $0.key == key }) { return hit.image }
+        let image = render(model, desks: desks, width: fill, scale: scale)
+        if let image {
+            cache.removeAll { $0.key.model.desks.map(\.id) == model.desks.map(\.id) && $0.key.width == fill }
+            cache.append((key, image))
+            if cache.count > 24 { cache.removeFirst(cache.count - 24) }
+        }
+        return image
+    }
+
+    private struct Key: Equatable {
+        var model: OfficeModel
+        var desks: Int
+        var width: CGFloat?
+        var scale: CGFloat
+    }
+
+    @MainActor private static var cache: [(key: Key, image: CGImage)] = []
+
+    @MainActor
+    private static func render(_ model: OfficeModel, desks: Int, width fill: CGFloat?, scale: CGFloat) -> CGImage? {
         let layer = OfficeLayer()
         layer.isCompact = true
         let natural = OfficeLayer.preferredWidth(desks: desks)

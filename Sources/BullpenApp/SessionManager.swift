@@ -56,7 +56,8 @@ final class SessionManager {
     func startPolling() async {
         while !Task.isCancelled {
             if let client = try? await connection(), let sessions = try? await client.list() {
-                infos = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+                let next = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+                if next != infos { infos = next }
             }
             try? await Task.sleep(for: .milliseconds(1500))
         }

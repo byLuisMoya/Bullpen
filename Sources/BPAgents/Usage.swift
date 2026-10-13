@@ -69,7 +69,8 @@ public final class TranscriptUsageReader: @unchecked Sendable {
         offsets[path] = start + UInt64(complete.count)
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        for line in complete.split(separator: 0x0A) {
+        let usageKey = Data(#""usage""#.utf8)
+        for line in complete.split(separator: 0x0A) where line.range(of: usageKey) != nil {
             guard let json = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
                   let message = json["message"] as? [String: Any],
                   let usage = message["usage"] as? [String: Any] else { continue }
