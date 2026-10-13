@@ -21,7 +21,8 @@ public struct LinearClient: Sendable {
         let teamFilter = team.map { #", team: { key: { eq: "\#($0)" } }"# } ?? ""
         let query = """
         query { viewer { assignedIssues(first: 50, orderBy: updatedAt, filter: { state: { type: { nin: ["completed", "canceled"] } }\(teamFilter) }) {
-          nodes { id identifier title description url branchName state { name } team { id } labels { nodes { name } } }
+          nodes { id identifier title description url branchName state { name } team { id } labels { nodes { name } }
+                 comments(first: 25) { nodes { body createdAt user { name displayName } botActor { name } } } }
         } } }
         """
         return try Self.parseIssues(try await graphQL(query))
@@ -97,6 +98,19 @@ public struct LinearClient: Sendable {
         return payload
     }
 
+    static func parseComments(_ value: Any?) -> [Ticket.Comment] {
+        let nodes = (value as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return nodes.compactMap { c -> Ticket.Comment? in
+            guard let body = c["body"] as? String else { return nil }
+            let user = c["user"] as? [String: Any], bot = c["botActor"] as? [String: Any]
+            let author = (user?["displayName"] as? String) ?? (user?["name"] as? String) ?? (bot?["name"] as? String) ?? "?"
+            return Ticket.Comment(author: author, body: body, date: (c["createdAt"] as? String).flatMap(iso.date(from:)))
+        }
+        .sorted { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) }
+    }
+
     static func parseIssues(_ data: [String: Any]) throws -> [Ticket] {
         let nodes = (((data["viewer"] as? [String: Any])?["assignedIssues"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
         return nodes.compactMap { n in
@@ -106,7 +120,8 @@ public struct LinearClient: Sendable {
                 source: .linear, trackerID: id, key: key, title: title, body: n["description"] as? String ?? "",
                 url: (n["url"] as? String).flatMap(URL.init(string:)), branchName: n["branchName"] as? String,
                 labels: labels, state: (n["state"] as? [String: Any])?["name"] as? String,
-                teamID: (n["team"] as? [String: Any])?["id"] as? String
+                teamID: (n["team"] as? [String: Any])?["id"] as? String,
+                comments: parseComments(n["comments"])
             )
         }
     }

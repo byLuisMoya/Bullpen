@@ -56,6 +56,13 @@ public final class SessionClient: @unchecked Sendable {
         if spec.environment["PATH"] == nil, let path = await Task.detached(operation: { ShellEnvironment.userPath }).value {
             spec.environment["PATH"] = path
         }
+        // `bp` (next to this program inside Bullpen.app) on the PATH, last, so scripts and agents
+        // can call it (`bp open …`) without installing it.
+        if let dir = Bundle.main.executableURL?.deletingLastPathComponent().path,
+           FileManager.default.isExecutableFile(atPath: dir + "/bp"),
+           let path = spec.environment["PATH"], !path.split(separator: ":").contains(Substring(dir)) {
+            spec.environment["PATH"] = path + ":" + dir
+        }
         guard case let .created(_, info) = try await request({ .create(request: $0, spec: spec) }) else {
             throw SessionError(message: "unexpected reply to create")
         }

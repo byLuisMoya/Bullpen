@@ -37,8 +37,10 @@ enum Tickets {
         let config = (try? BullpenConfig.load(from: URL(fileURLWithPath: project.path))) ?? BullpenConfig()
         let key = ticket.source == .github ? "github_issue" : "linear"
         let template = config.sourceTemplates[key] ?? Ticket.defaultTemplate
-        return (try? PromptComposer.render(template, variables: ticket.variables))
+        let text = (try? PromptComposer.render(template, variables: ticket.variables))
             ?? (try? PromptComposer.render(Ticket.defaultTemplate, variables: ticket.variables)) ?? ticket.title
+        // Without comments, `{{ticket.comments}}` leaves an empty last line.
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func started(_ ref: TicketRef) async throws {

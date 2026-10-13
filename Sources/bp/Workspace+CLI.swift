@@ -155,6 +155,27 @@ struct WorktreeCommand: AsyncParsableCommand {
     }
 }
 
+/// `bp open http://…` from a worktree's terminal or setup script: the page opens in that
+/// worktree's "Navegador" tab in Bullpen, not in the system browser.
+struct OpenCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "open",
+        abstract: "Open a URL in the worktree's browser tab in Bullpen (default: the worktree's own URL)."
+    )
+    @Argument(help: "URL, or a path like /login on the worktree's URL.") var url: String?
+    @Option(help: "Worktree (branch or id); default: the one this terminal belongs to.") var worktree: String?
+
+    func run() async throws {
+        do {
+            let response = try await CLIContext.service().browser(.open, worktree: worktree, url: url)
+            print(response.text ?? "")
+        } catch {
+            // Never stops a setup script: say why and carry on.
+            FileHandle.standardError.write(Data("bp open: \(error.localizedDescription)\n".utf8))
+        }
+    }
+}
+
 struct MCPCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "mcp",

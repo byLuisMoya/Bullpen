@@ -33,11 +33,25 @@ cp Resources/AppIcon.icns Resources/AppIcon-halloween.png Resources/AppIcon-chri
 # Local builds get the demo script ("Probar con una demo"); releases (DIST=1) don't.
 if [[ "${DIST:-0}" != "1" ]]; then cp Scripts/demo.sh "$APP/Contents/Resources/demo.sh"; fi
 
-# No Apple Developer ID: ad-hoc locally, stable self-signed certificate in release CI (PLAN §4.4).
-codesign --force --sign - --options runtime "$APP/Contents/MacOS/bpd"
-codesign --force --sign - --options runtime "$APP/Contents/MacOS/bp"
-codesign --force --sign - --options runtime "$APP"
-codesign --force --sign - --options runtime "$OUT/bp"
+# No Apple Developer ID: signed with a fixed self-signed certificate (Scripts/signing-identity.sh)
+# so every version keeps the same identity and macOS doesn't ask for Keychain and privacy
+# permissions again after each update. Ad-hoc only when the certificate isn't there; releases need it.
+IDENTITY=${BULLPEN_SIGN_IDENTITY:-Bullpen Self-Signed}
+SIGNING_KEYCHAIN="$HOME/Library/Keychains/bullpen-signing.keychain-db"
+if [[ -f "$SIGNING_KEYCHAIN" ]] && security find-certificate -c "$IDENTITY" "$SIGNING_KEYCHAIN" >/dev/null 2>&1; then
+    security unlock-keychain -p bullpen "$SIGNING_KEYCHAIN"
+    SIGN=(--sign "$IDENTITY" --keychain "$SIGNING_KEYCHAIN")
+elif [[ "${DIST:-0}" == "1" ]]; then
+    echo "Falta el certificado de firma: ejecuta Scripts/signing-identity.sh" >&2
+    exit 1
+else
+    echo "warning: sin certificado de firma, firma ad-hoc (los permisos se pedirán de nuevo)" >&2
+    SIGN=(--sign -)
+fi
+codesign --force "${SIGN[@]}" --options runtime "$APP/Contents/MacOS/bpd"
+codesign --force "${SIGN[@]}" --options runtime "$APP/Contents/MacOS/bp"
+codesign --force "${SIGN[@]}" --options runtime "$APP"
+codesign --force "${SIGN[@]}" --options runtime "$OUT/bp"
 
 lipo -info "$APP/Contents/MacOS/Bullpen" "$APP/Contents/MacOS/bpd" "$OUT/bp"
 echo "Built $APP and $OUT/bp ($VERSION)"

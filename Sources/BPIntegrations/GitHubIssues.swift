@@ -8,7 +8,7 @@ public struct GitHubIssues: Sendable {
 
     public func openIssues(in directory: URL, limit: Int = 50) async throws -> [Ticket] {
         let output = try await CLI.run(gh, ["issue", "list", "--state", "open", "--limit", "\(limit)",
-                                            "--json", "number,title,body,url,labels"], in: directory)
+                                            "--json", "number,title,body,url,labels,comments"], in: directory)
         return try Self.parse(Data(output.utf8))
     }
 
@@ -20,10 +20,21 @@ public struct GitHubIssues: Sendable {
             var body: String?
             var url: String
             var labels: [Label]?
+            var comments: [Comment]?
         }
-        return try JSONDecoder().decode([Issue].self, from: data).map {
-            Ticket(source: .github, trackerID: String($0.number), key: "#\($0.number)", title: $0.title,
-                   body: $0.body ?? "", url: URL(string: $0.url), labels: $0.labels?.map(\.name) ?? [])
+        struct Comment: Decodable {
+            struct Author: Decodable { var login: String }
+            var author: Author?
+            var body: String
+            var createdAt: Date?
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode([Issue].self, from: data).map {
+            var ticket = Ticket(source: .github, trackerID: String($0.number), key: "#\($0.number)", title: $0.title,
+                                body: $0.body ?? "", url: URL(string: $0.url), labels: $0.labels?.map(\.name) ?? [])
+            ticket.comments = ($0.comments ?? []).map { .init(author: $0.author?.login ?? "?", body: $0.body, date: $0.createdAt) }
+            return ticket
         }
     }
 }
