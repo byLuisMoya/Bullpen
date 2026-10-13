@@ -241,5 +241,15 @@ import UniformTypeIdentifiers
         #expect(layer.walkers.sublayers?.count == 3, "a removed worktree walks out")
         layer.update(OfficeModel(desks: [desk(b, away: true)]), reduceMotion: true)
         #expect(layer.walkers.sublayers?.count == 3)
+        // Every walker's animations end with the walk, so it is removed once there.
+        for walker in layer.walkers.sublayers ?? [] {
+            let walk = try! #require(walker.animation(forKey: "walk"))
+            for key in walker.animationKeys() ?? [] {
+                let animation = try! #require(walker.animation(forKey: key))
+                #expect(animation.repeatCount != .infinity, "\(key) never ends")
+                #expect(max(animation.repeatDuration, animation.duration) <= walk.duration + 0.001, "\(key) outlasts the walk")
+            }
+        }
     }
 }
+

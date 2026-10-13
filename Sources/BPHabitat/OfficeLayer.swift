@@ -197,12 +197,13 @@ public final class OfficeLayer: CALayer {
         steps.values = frames
         steps.calculationMode = .discrete
         steps.duration = 0.32
-        steps.repeatCount = .infinity
+        // Only for the walk: an endless animation would keep the walker (and its completion) alive.
+        steps.repeatDuration = duration
         let bob = CABasicAnimation(keyPath: "position.y")
         bob.byValue = -s
         bob.duration = 0.16
         bob.autoreverses = true
-        bob.repeatCount = .infinity
+        bob.repeatDuration = duration
 
         CATransaction.begin()
         CATransaction.setCompletionBlock { walker.removeFromSuperlayer() }
