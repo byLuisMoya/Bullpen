@@ -222,6 +222,13 @@ public struct Workspace: Sendable {
             try? await client.remove(id)
         }
         let path = URL(fileURLWithPath: worktree.path)
+        // Not ours (Orca, plain git): stop showing it, leave its folder and branch alone.
+        if worktree.external {
+            var hidden = worktree
+            hidden.archivedAt = Date()
+            try database.save(hidden)
+            return
+        }
         if FileManager.default.fileExists(atPath: path.path) {
             if let env = try? WorktreeEnvironment.load(project: project, worktree: worktree), !env.config.teardown.isEmpty {
                 let results = await CommandRunner.run(env.config.teardown, in: path, environment: env.environment, timeout: 120, stopOnFailure: false)

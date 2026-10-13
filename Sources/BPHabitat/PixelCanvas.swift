@@ -49,6 +49,13 @@ public struct PixelCanvas: Equatable, Sendable {
         }
     }
 
+    /// Flipped left to right (a person walking the other way).
+    public func mirrored() -> PixelCanvas {
+        var copy = self
+        for y in 0..<height { for x in 0..<width { copy[x, y] = self[width - 1 - x, y] } }
+        return copy
+    }
+
     public var isEmpty: Bool { !pixels.contains { $0 != 0 } }
 
     /// Renders at 1 pixel per cell; layers scale it up with nearest-neighbour filtering.

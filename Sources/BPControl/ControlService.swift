@@ -55,6 +55,7 @@ public struct ControlService: Sendable {
     }
 
     public func worktrees(project: String? = nil) async throws -> [WorktreeSummary] {
+        _ = try? await workspace.syncExternalWorktrees()
         let sessions = (try? await workspace.connect().list()) ?? []
         let byID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         return try workspace.database.offices()

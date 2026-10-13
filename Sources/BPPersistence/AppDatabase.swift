@@ -72,6 +72,9 @@ public final class AppDatabase: Sendable {
         migrator.registerMigration("v6-setup-script") { db in
             try db.alter(table: "project") { t in t.add(column: "setupScript", .text) }
         }
+        migrator.registerMigration("v7-external-worktrees") { db in
+            try db.alter(table: "worktree") { t in t.add(column: "external", .boolean).notNull().defaults(to: false) }
+        }
         return migrator
     }
 }
@@ -118,6 +121,11 @@ public extension AppDatabase {
     /// Every worktree of a run, archived ones included (the losers stay listed after a pick).
     func worktrees(inRun id: UUID) throws -> [Worktree] {
         try writer.read { try Worktree.filter(Column("runID") == id).order(Column("createdAt")).fetchAll($0) }
+    }
+
+    /// Every worktree ever recorded, archived ones included (their paths are not imported again).
+    func allWorktrees() throws -> [Worktree] {
+        try writer.read { try Worktree.fetchAll($0) }
     }
 
     func deleteProject(id: UUID) throws {

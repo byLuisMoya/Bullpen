@@ -57,8 +57,19 @@ struct ContentView: View {
                                         NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: worktree.path)
                                     }
                                     Button("Abrir en Terminal") { AppActions.openInTerminal(worktree) }
-                                    Button("Eliminar worktree…", role: .destructive) {
-                                        Task { await confirmRemoval(worktree, in: office.project) }
+                                    if worktree.external {
+                                        // Made in Orca or with git: only stop showing it here.
+                                        Button("Quitar de Bullpen") {
+                                            Task {
+                                                if selection == worktree.id { selection = nil }
+                                                await store.removeWorktree(worktree, in: office.project, force: false)
+                                            }
+                                        }
+                                        .help("Deja de mostrarlo; la carpeta y la rama siguen donde estén (Orca, git)")
+                                    } else {
+                                        Button("Eliminar worktree…", role: .destructive) {
+                                            Task { await confirmRemoval(worktree, in: office.project) }
+                                        }
                                     }
                                 }
                         }

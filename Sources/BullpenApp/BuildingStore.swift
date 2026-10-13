@@ -27,6 +27,13 @@ final class BuildingStore {
             let database = try AppDatabase.onDisk()
             self.database = database
             workspace = Workspace(database: database, connect: connectToDaemon, hooks: hooks)
+            // Worktrees made with Orca (or plain git) in these projects show up here too.
+            Task { [weak self] in
+                while !Task.isCancelled {
+                    if let workspace = self?.workspace { _ = try? await workspace.syncExternalWorktrees() }
+                    try? await Task.sleep(for: .seconds(20))
+                }
+            }
             // GRDB observes this process's writes; `bp` writes from another process, so re-read now and then.
             Task { [weak self] in
                 while !Task.isCancelled {

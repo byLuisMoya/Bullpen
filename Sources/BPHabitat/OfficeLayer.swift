@@ -156,7 +156,8 @@ public final class OfficeLayer: CALayer {
                 let arrival = walk(look: desk.look, slot: index, entering: true)
                 node.revealPerson(after: arrival)
             } else if !present, wasPresent {
-                walk(look: desk.look, slot: index, entering: false)
+                // Nothing to do for a while: out for a smoke.
+                walk(look: desk.look, slot: index, entering: false, smoking: true)
             }
         }
         hasRendered = true
@@ -172,9 +173,10 @@ public final class OfficeLayer: CALayer {
     /// Walks someone along the front of the office between the right-hand edge and their desk.
     /// Returns how long it takes.
     @discardableResult
-    private func walk(look: CharacterLook, slot index: Int, entering: Bool) -> CFTimeInterval {
+    private func walk(look: CharacterLook, slot index: Int, entering: Bool, smoking: Bool = false) -> CFTimeInterval {
         let s = Self.scale
-        let frames = [0, 1].compactMap { SpriteCache.walking($0, look: look) }
+        // The door is on the right: coming in they walk left, going out they walk right.
+        let frames = [0, 1].compactMap { SpriteCache.walking($0, look: look, leftwards: entering, smoking: smoking) }
         let walker = CALayer()
         walker.magnificationFilter = .nearest
         walker.minificationFilter = .nearest
@@ -546,10 +548,11 @@ final class DeskNode {
 enum SpriteCache {
     nonisolated(unsafe) private static var images: [String: CGImage] = [:]
 
-    static func walking(_ frame: Int, look: CharacterLook) -> CGImage? {
-        let key = "walk\(frame)-\(look.skin)-\(look.hair)-\(look.hairStyle)-\(look.shirt)-\(look.jacket)"
+    static func walking(_ frame: Int, look: CharacterLook, leftwards: Bool, smoking: Bool) -> CGImage? {
+        let key = "walk\(frame)-\(leftwards)-\(smoking)-\(look.skin)-\(look.hair)-\(look.hairStyle)-\(look.shirt)-\(look.jacket)"
         if let cached = images[key] { return cached }
-        let image = CharacterSprite.walking(frame: frame, look: look).image(palette: look.palette)
+        let canvas = CharacterSprite.walking(frame: frame, look: look, smoking: smoking)
+        let image = (leftwards ? canvas.mirrored() : canvas).image(palette: look.palette)
         images[key] = image
         return image
     }

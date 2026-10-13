@@ -56,6 +56,8 @@ public struct Worktree: Identifiable, Hashable, Codable, Sendable {
     public var runID: UUID?
     /// The ticket it was created from (GitHub issue, Linear issue).
     public var ticket: TicketRef?
+    /// Made outside Bullpen (Orca, plain git) and shown here: removing it only hides it.
+    public var external: Bool
 
     public init(
         id: UUID = UUID(),
@@ -70,8 +72,10 @@ public struct Worktree: Identifiable, Hashable, Codable, Sendable {
         taskDescription: String? = nil,
         ports: [String: Int]? = nil,
         runID: UUID? = nil,
-        ticket: TicketRef? = nil
+        ticket: TicketRef? = nil,
+        external: Bool = false
     ) {
+        self.external = external
         self.id = id
         self.projectID = projectID
         self.branch = branch

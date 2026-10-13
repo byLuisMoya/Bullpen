@@ -14,6 +14,13 @@ public struct AgentStatus: Equatable, Sendable {
     public var detail: String?
     public var confidence: StatusConfidence
     public var since: Date?
+
+    public init(state: AgentState, detail: String? = nil, confidence: StatusConfidence, since: Date? = nil) {
+        self.state = state
+        self.detail = detail
+        self.confidence = confidence
+        self.since = since
+    }
 }
 
 /// Pure rules turning what `bpd` knows about a session into an `AgentState` (PLAN §8, "the state never lies").

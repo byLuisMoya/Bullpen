@@ -43,7 +43,13 @@ final class SessionManager {
     }
 
     func status(for worktree: Worktree) -> AgentStatus {
-        StatusEngine.status(for: infos[Self.sessionID(for: worktree)], profile: AgentProfile.named(worktree.agentProfileID))
+        let info = infos[Self.sessionID(for: worktree)]
+        // A worktree from Orca whose terminal lives there: nothing to watch from here.
+        if worktree.external, info == nil {
+            return AgentStatus(state: .idle, detail: worktree.path.contains("/orca/") ? "abierto en Orca" : "creado fuera de Bullpen",
+                               confidence: .low, since: nil)
+        }
+        return StatusEngine.status(for: info, profile: AgentProfile.named(worktree.agentProfileID))
     }
 
     /// Keeps `infos` fresh (foreground process and output activity are only visible through `list`).

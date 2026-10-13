@@ -322,3 +322,60 @@ let fakeB = AgentProfile(id: "fake-b", name: "Fake B", executable: "/bin/echo")
         #expect(head.trimmingCharacters(in: .whitespacesAndNewlines) == "pr-branch")
     }
 }
+
+/// Worktrees made with Orca or plain git show up in the project's office.
+@Suite(.serialized) struct ExternalWorktreeTests {
+    @Test func importsUpdatesAndLetsGo() async throws {
+        let f = try await Fixture.make(config: "")
+        defer { f.server.stop() }
+        let git = Git()
+        let orcaDir = f.root.appendingPathComponent("orca/workspaces/app/ejemplo-1")
+        try await git.run(["worktree", "add", "-q", "-b", "ejemplo-1", orcaDir.path, "main"], in: f.repoDir)
+        // A repository Bullpen doesn't know: its worktrees stay out.
+        let other = f.root.appendingPathComponent("abc")
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        try await git.run(["init", "-q", "-b", "main"], in: other)
+        try await git.run(["-c", "user.email=t@e.com", "-c", "user.name=T", "commit", "-q", "--allow-empty", "-m", "i"], in: other)
+        try await git.run(["worktree", "add", "-q", "-b", "ejemplo-1", f.root.appendingPathComponent("abc-wt").path], in: other)
+
+        let orca = [OrcaWorktree(path: orcaDir.path, baseRef: "origin/develop", archived: false)]
+        #expect(try await f.workspace.syncExternalWorktrees(orca: orca).added == 1)
+        let imported = try #require(try f.workspace.database.offices().first?.worktrees.first)
+        #expect(imported.branch == "ejemplo-1")
+        #expect(imported.external)
+        #expect(imported.baseRef == "origin/develop")
+        #expect(try await f.workspace.syncExternalWorktrees(orca: orca).added == 0, "no duplicates")
+
+        // Gone from git (removed in Orca): it leaves Bullpen too.
+        try await git.run(["worktree", "remove", orcaDir.path], in: f.repoDir)
+        #expect(try await f.workspace.syncExternalWorktrees(orca: []).gone == 1)
+        #expect(try f.workspace.database.offices().first?.worktrees.isEmpty == true)
+    }
+
+    @Test func removingFromBullpenKeepsTheFolderAndDoesNotComeBack() async throws {
+        let f = try await Fixture.make(config: "")
+        defer { f.server.stop() }
+        let dir = f.root.appendingPathComponent("orca/workspaces/app/ejemplo-2")
+        try await Git().run(["worktree", "add", "-q", "-b", "ejemplo-2", dir.path, "main"], in: f.repoDir)
+        try await f.workspace.syncExternalWorktrees(orca: [])
+        let wt = try #require(try f.workspace.database.offices().first?.worktrees.first)
+        try await f.workspace.removeWorktree(wt, in: f.project, force: false)
+        #expect(FileManager.default.fileExists(atPath: dir.path))
+        #expect(try await f.workspace.syncExternalWorktrees(orca: []).added == 0)
+        #expect(try f.workspace.database.offices().first?.worktrees.isEmpty == true)
+    }
+
+    @Test func archivedInOrcaStaysOut() async throws {
+        let f = try await Fixture.make(config: "")
+        defer { f.server.stop() }
+        let dir = f.root.appendingPathComponent("orca/workspaces/app/viejo")
+        try await Git().run(["worktree", "add", "-q", "-b", "viejo", dir.path, "main"], in: f.repoDir)
+        #expect(try await f.workspace.syncExternalWorktrees(orca: [OrcaWorktree(path: dir.path, baseRef: nil, archived: true)]).added == 0)
+    }
+
+    @Test func readsOrcasJSON() {
+        let json = #"{"result":{"worktrees":[{"path":"/w/a","baseRef":"refs/remotes/origin/main","isArchived":false},{"path":"/w/b","isArchived":true}]}}"#
+        let items = OrcaWorktree.parse(Data(json.utf8))
+        #expect(items == [OrcaWorktree(path: "/w/a", baseRef: "origin/main", archived: false), OrcaWorktree(path: "/w/b", baseRef: nil, archived: true)])
+    }
+}

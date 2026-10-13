@@ -210,7 +210,8 @@ import UniformTypeIdentifiers
         ctx.fill(CGRect(x: 0, y: 0, width: w * zoom * 6, height: h * zoom))
         for i in 0..<6 {
             let look = CharacterLook.make(worktreeID: UUID(), agent: i % 2 == 0 ? "claude" : "codex")
-            let image = try #require(CharacterSprite.walking(frame: i % 2, look: look).image(palette: look.palette))
+            let canvas = CharacterSprite.walking(frame: i % 2, look: look, smoking: i >= 3)
+            let image = try #require((i == 1 || i == 4 ? canvas.mirrored() : canvas).image(palette: look.palette))
             ctx.draw(image, in: CGRect(x: i * w * zoom, y: 0, width: w * zoom, height: h * zoom))
         }
         let url = URL(fileURLWithPath: dir).appendingPathComponent("walking.png")

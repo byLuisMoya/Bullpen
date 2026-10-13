@@ -34,7 +34,8 @@ struct WorktreeRow: View {
     }
 
     private var subtitle: String {
-        let agent = AgentProfile.named(worktree.agentProfileID)?.name ?? "Terminal"
+        let agent = AgentProfile.named(worktree.agentProfileID)?.name
+            ?? (worktree.external ? (worktree.path.contains("/orca/") ? "Orca" : "Externo") : "Terminal")
         if let summary, let state = status?.state, SummaryCenter.activeStates.contains(state), state != .needsYou {
             return "\(agent) · \(summary)"
         }

@@ -8,7 +8,7 @@ enum Ink {
     static let shirt: UInt8 = 5, shirtShade: UInt8 = 6, eye: UInt8 = 7, mouth: UInt8 = 8
     static let outline: UInt8 = 9, eyeLight: UInt8 = 10, blush: UInt8 = 11, hairLight: UInt8 = 12, collar: UInt8 = 13
     static let jacket: UInt8 = 14, jacketShade: UInt8 = 15, jacketDark: UInt8 = 16, lining: UInt8 = 17, button: UInt8 = 18
-    static let pants: UInt8 = 19, pantsShade: UInt8 = 20, shoe: UInt8 = 21
+    static let pants: UInt8 = 19, pantsShade: UInt8 = 20, shoe: UInt8 = 21, ember: UInt8 = 22, smoke: UInt8 = 23
 }
 
 /// How a worktree's person looks. Derived deterministically from the worktree id, with the
@@ -108,7 +108,7 @@ public struct CharacterLook: Equatable, Sendable {
             Ink.lining: RGBA(lining), Ink.button: RGBA(0xC9A45C),
             // Trousers go with the jacket; plain dark shoes.
             Ink.pants: RGBA(Self.mix(jacket, 0x1E2230, 0.55)), Ink.pantsShade: RGBA(Self.mix(jacket, 0x101218, 0.7)),
-            Ink.shoe: RGBA(0x2E2626),
+            Ink.shoe: RGBA(0x2E2626), Ink.ember: RGBA(0xFF6A2B), Ink.smoke: RGBA(0xC9CDD4, alpha: 200),
         ])
     }
 
@@ -291,28 +291,126 @@ public enum CharacterSprite {
     /// Standing height, for walking in and out of the office.
     public static let walkHeight = 36
 
-    /// The whole person walking (two frames, legs and arms swinging): coming in to sit down, or
-    /// leaving their desk.
-    public static func walking(frame: Int, look: CharacterLook) -> PixelCanvas {
+    /// The whole person seen from the side, walking to the right (mirror it to go left): two
+    /// frames with the legs and the near arm swinging. `smoking` puts a cigarette in their
+    /// mouth, with smoke going up: off for a smoke while their agent waits.
+    public static func walking(frame: Int, look: CharacterLook, smoking: Bool = false) -> PixelCanvas {
         var c = PixelCanvas(width: width, height: walkHeight)
-        let step = frame % 2
-        // Legs first: the body covers their tops.
-        let (front, back) = step == 0 ? (8, 13) : (13, 8)
-        c.rect(front, 25, 3, 9, Ink.pants); c.rect(front, 33, 4, 2, Ink.shoe)
-        c.rect(back, 25, 3, 8, Ink.pantsShade); c.rect(back, 32, 4, 2, Ink.shoe)
-        // Body: the seated torso, carried on down to the belt.
-        torso(&c)
-        c.rect(headX - 1, 20, 16, 5, Ink.shirt)
-        c.rect(headX + 13, 20, 2, 5, Ink.shirtShade)
-        c.rect(headX - 1, 24, 16, 1, Ink.pantsShade)                          // belt
-        face(&c, dy: 0, pose: .rest)
-        hair(&c, dy: 0, style: look.hairStyle)
-        // Arms swing against the legs.
-        let (left, right) = step == 0 ? (1, 0) : (0, 1)
-        c.rect(2, 16 + left, 2, 7, Ink.shirtShade); c.rect(2, 23 + left, 2, 2, Ink.skin)
-        c.rect(20, 16 + right, 2, 7, Ink.shirtShade); c.rect(20, 23 + right, 2, 2, Ink.skin)
+        let stride = frame % 2 == 0
+        // Legs: apart mid-stride, together in between.
+        if stride {
+            c.rect(10, 25, 3, 5, Ink.pantsShade); c.rect(8, 30, 3, 4, Ink.pantsShade); c.rect(6, 33, 5, 2, Ink.shoe)
+            c.rect(12, 25, 3, 5, Ink.pants); c.rect(14, 30, 3, 4, Ink.pants); c.rect(14, 33, 5, 2, Ink.shoe)
+        } else {
+            c.rect(11, 25, 3, 9, Ink.pantsShade); c.rect(11, 33, 5, 2, Ink.shoe)
+            c.rect(12, 25, 3, 9, Ink.pants); c.rect(13, 33, 5, 2, Ink.shoe)
+        }
+        // Body in profile.
+        c.rect(11, 14, 3, 1, Ink.skinShade)                                    // neck
+        c.stamp([
+            "..tttttt.",
+            ".ttttttCt",
+            "Ttttttttt",
+            "Ttttttttt",
+            "Ttttttttt",
+            "Ttttttttt",
+            "Ttttttttt",
+            "Ttttttttt",
+            "Ttttttttt",
+            "BBBBBBBBB",
+        ], at: 8, 15, key: ["t": Ink.shirt, "T": Ink.shirtShade, "C": Ink.collar, "B": Ink.pantsShade])
+        // Head in profile, facing right: face, ear, eye, nose, mouth.
+        c.stamp([
+            "..sssssss..",
+            ".sssssssss.",
+            "sssssssssss",
+            "sssssssssss",
+            "sssssssssss",
+            "sssssssssss",
+            "ssssssssssss",
+            ".ssssssssss.",
+            "..ssssssss..",
+            "...SSSSSS...",
+        ], at: 7, 4, key: ["s": Ink.skin, "S": Ink.skinShade])
+        c.rect(11, 8, 1, 2, Ink.skinShade)                                     // ear
+        c.rect(15, 8, 1, 2, Ink.eye); c.dot(15, 8, Ink.eyeLight)
+        c.dot(15, 10, Ink.blush)
+        c.dot(17, 9, Ink.skin); c.dot(18, 10, Ink.skin)                        // nose
+        c.dot(16, 12, Ink.mouth)
+        sideHair(&c, style: look.hairStyle)
+        // The near arm swings against the legs.
+        if stride {
+            c.rect(12, 16, 2, 4, Ink.shirtShade); c.rect(13, 20, 2, 3, Ink.shirtShade); c.rect(14, 23, 2, 2, Ink.skin)
+        } else {
+            c.rect(11, 16, 2, 4, Ink.shirtShade); c.rect(10, 20, 2, 3, Ink.shirtShade); c.rect(9, 23, 2, 2, Ink.skin)
+        }
+        if smoking {
+            c.rect(17, 12, 3, 1, Ink.eyeLight)                                 // cigarette
+        }
         c.outline(Ink.outline)
+        if smoking {
+            c.dot(20, 12, Ink.ember)                                           // lit end, past the outline
+            // Smoke curling up, swaying between frames.
+            let sway = stride ? 0 : 1
+            c.dot(20 + sway, 10, Ink.smoke); c.dot(21 - sway, 8, Ink.smoke); c.dot(20 + sway, 6, Ink.smoke)
+        }
         return c
+    }
+
+    private static func sideHair(_ c: inout PixelCanvas, style: Int) {
+        let key: [Character: UInt8] = ["h": Ink.hair, "H": Ink.hairShade, "l": Ink.hairLight]
+        switch style {
+        case 1:   // long, down the back
+            c.stamp([
+                "...hhhhhh...",
+                ".hhhhhlhhhh.",
+                "hhhhhhhlhhhh",
+                "hhhhhhhhhhh.",
+                "hHhhHhhhhH..",
+                "hHhh........",
+                "hHhh........",
+                "hHhh........",
+                "HHhh........",
+                "HHh.........",
+                "HH..........",
+                "HH..........",
+            ], at: 6, 2, key: key)
+        case 2:   // bun at the back
+            c.stamp([
+                "hhh.........",
+                "hlhh........",
+                "hhhhhhhhh...",
+                ".hhhhhhlhhh.",
+                "hhhhhhhhlhhh",
+                "hhhhhhhhhhh.",
+                "hHhhHhhhhH..",
+                "hHh.........",
+            ], at: 5, 0, key: key)
+        case 3:   // curly
+            c.stamp([
+                "..h.hh.hh.h.",
+                ".hhhhhhhhhhh",
+                "hhhhlhhhhlhh",
+                "hhlhhhhhlhh.",
+                "hHhHhHhHhH..",
+                "hHhhh.......",
+                "hHhhh.......",
+                "hHhh........",
+                ".Hh.........",
+            ], at: 6, 1, key: key)
+        default:  // short
+            c.stamp([
+                "...hhhhhh...",
+                ".hhhhhhlhhh.",
+                "hhhhhhhhlhhh",
+                "hhhhhhhhhhh.",
+                "hHhHhhhhhH..",
+                "hHhhh.......",
+                "hHhhh.......",
+                "hHhh........",
+                ".Hh.........",
+            ], at: 6, 2, key: key)
+        }
     }
 
     /// Just the head (12×11 px), for the menu bar strip: a simpler drawing that reads at that size.
