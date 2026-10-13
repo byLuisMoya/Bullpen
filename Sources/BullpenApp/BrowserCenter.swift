@@ -13,6 +13,8 @@ import WebKit
 @Observable
 final class BrowserCenter {
     @ObservationIgnored private var pages: [UUID: BrowserPage] = [:]
+    /// Worktrees whose agent has opened the browser: only they show the "Navegador" tab.
+    private(set) var open: Set<UUID> = []
     @ObservationIgnored private var bridge: BrowserBridge.Server?
 
     func page(for worktree: UUID) -> BrowserPage {
@@ -20,6 +22,13 @@ final class BrowserCenter {
         let page = BrowserPage()
         pages[worktree] = page
         return page
+    }
+
+    /// Closes the tab: the page goes, and the tab comes back when the agent uses the browser again.
+    func close(_ worktree: UUID) {
+        open.remove(worktree)
+        pages[worktree]?.webView.removeFromSuperview()
+        pages[worktree] = nil
     }
 
     /// Listens for the agents' requests (`bp mcp` → app).
@@ -38,6 +47,7 @@ final class BrowserCenter {
     func handle(_ request: BrowserRequest) async -> BrowserResponse {
         guard let id = UUID(uuidString: request.worktree) else { return BrowserResponse(ok: false, text: "Worktree desconocido") }
         let page = page(for: id)
+        open.insert(id)
         page.home = request.home
         do {
             if request.action != .open, page.webView.url == nil { try await page.load(request.home) }

@@ -36,10 +36,11 @@ struct ContentView: View {
         // expansion with a jump once the sidebar passed the window buttons, whatever the animation.
         HStack(spacing: 0) {
             SidebarColumn(visible: navigation.columnVisibility != .detailOnly, width: $sidebarWidth) {
-            List(selection: $navigation.selection) {
+            // Our own column instead of a sidebar List: List doesn't animate rows appearing and
+            // disappearing, and a project's office and worktrees must slide in and out smoothly.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
                 ForEach(store.offices) { office in
-                    // Plain rows, not a Section: a sidebar Section brings macOS's own hover chevron,
-                    // and ours (always visible, animated) is enough.
                         OfficeHeader(office: office, collapsed: Binding(
                             get: { collapsedProjects.contains(office.project.id) },
                             set: { collapsed in
@@ -59,19 +60,21 @@ struct ContentView: View {
                                     .disabled(!office.worktrees.isEmpty)
                                     .help(office.worktrees.isEmpty ? "Deja de mostrarlo (no borra nada del disco)" : "Elimina antes sus worktrees")
                             }
-                        .selectionDisabled()
-                        .listRowInsets(EdgeInsets(top: 10, leading: 8, bottom: 2, trailing: 8))
-                        if !collapsedProjects.contains(office.project.id) {
+                        .padding(.horizontal, 8)
+                        .padding(.top, 10)
+                        .padding(.bottom, 2)
+                        .zIndex(1)
+                        VStack(alignment: .leading, spacing: 1) {
                         MiniOffice(office: office, onSelect: { selection = $0 }, onOpen: { navigation.showOffice(office.project.id) })
-                            .selectionDisabled()
-                            .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
                         ForEach(office.worktrees) { worktree in
                             WorktreeRow(
                                 worktree: worktree, status: attention.statuses[worktree.id],
                                 sync: repoStatus.branches[worktree.id], pullRequest: repoStatus.pullRequests[worktree.id],
                                 warning: repoStatus.warnings[worktree.id], summary: summaries.summaries[worktree.id]
                             )
-                                .tag(worktree.id)
+                                .sidebarRow(selected: selection == worktree.id) { selection = worktree.id }
                                 .contextMenu {
                                     Button("Mostrar en Finder") {
                                         NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: worktree.path)
@@ -98,11 +101,14 @@ struct ContentView: View {
                                 }
                         }
                         }
-
+                        // Always there, folded to zero height: its height animates with the toggle.
+                        .modifier(Fold(progress: collapsedProjects.contains(office.project.id) ? 0 : 1))
                 }
+                }
+                .padding(.bottom, 8)
             }
-            .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
+            // Content sliding up while folding stays under the header and above nothing else.
+            .clipped()
             .onAppear { collapsedProjects = Set(collapsedRaw.split(separator: ",").compactMap { UUID(uuidString: String($0)) }) }
             .onChange(of: collapsedProjects) { _, now in collapsedRaw = now.map(\.uuidString).sorted().joined(separator: ",") }
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -330,6 +336,7 @@ private struct WorktreeDetail: View {
     @AppStorage("worktreePanel.shown") private var panelShown = ProcessInfo.processInfo.environment["BULLPEN_SNAPSHOT_TAB"] != nil
 
     @Environment(OrcaCenter.self) private var orca
+    @Environment(BrowserCenter.self) private var browsers
 
     /// A worktree from Orca whose agent lives there: here it gets a plain terminal.
     private var agentInOrca: OrcaActivity? {
@@ -385,7 +392,7 @@ private struct WorktreeDetail: View {
                     .overlay(alignment: .bottom) { Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1) }
                 }
                 TerminalTabs(worktree: worktree, selection: $terminalTab) { Task { await openTab() } }
-                if terminalTab == TerminalTabs.browser {
+                if terminalTab == TerminalTabs.browser, browsers.open.contains(worktree.id) {
                     BrowserPane(worktree: worktree, home: browserHome)
                 } else {
                     TerminalPane(worktree: worktree, environment: terminalEnvironment, tab: terminalTab)
@@ -516,6 +523,7 @@ private struct TerminalTabs: View {
     var onAdd: () -> Void
     @Environment(SessionManager.self) private var sessions
     @Environment(OrcaCenter.self) private var orca
+    @Environment(BrowserCenter.self) private var browsers
 
     /// What the first tab runs: the worktree's agent, the main agent for an Orca worktree, or a
     /// terminal (terminal-only, or Orca already has the agent).
@@ -531,7 +539,10 @@ private struct TerminalTabs: View {
         let extra = sessions.tabs(for: worktree)
         HStack(spacing: 2) {
             tab(id: nil, title: mainTitle.0, icon: mainTitle.1, closable: false)
-            tab(id: Self.browser, title: "Navegador", icon: "globe", closable: false)
+            // Only once an agent has used the browser (Bullpen's MCP tools) in this worktree.
+            if browsers.open.contains(worktree.id) {
+                tab(id: Self.browser, title: "Navegador", icon: "globe", closable: true)
+            }
             ForEach(Array(extra.enumerated()), id: \.element) { index, id in
                 tab(id: id, title: "Terminal \(index + 2)", icon: "terminal", closable: true)
             }
@@ -551,6 +562,8 @@ private struct TerminalTabs: View {
         .onChange(of: extra) { _, now in
             if let selection, selection != Self.browser, !now.contains(selection) { self.selection = nil }
         }
+        // A remembered browser tab that isn't open (any more) shows the agent instead.
+        .onAppear { if selection == Self.browser, !browsers.open.contains(worktree.id) { selection = nil } }
     }
 
     private func tab(id: String?, title: String, icon: String, closable: Bool) -> some View {
@@ -561,7 +574,7 @@ private struct TerminalTabs: View {
             if closable, let id {
                 Button {
                     if selection == id { selection = nil }
-                    Task { await sessions.closeTab(id) }
+                    if id == Self.browser { browsers.close(worktree.id) } else { Task { await sessions.closeTab(id) } }
                 } label: {
                     Image(systemName: "xmark").font(.caption2.weight(.bold)).frame(width: 14, height: 14)
                 }
@@ -575,5 +588,55 @@ private struct TerminalTabs: View {
         .background(selected ? Color.white.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())
         .onTapGesture { selection = id }
+    }
+}
+
+extension View {
+    /// A selectable row of our sidebar column: the system's sidebar look (rounded highlight,
+    /// hover tint) without a List.
+    func sidebarRow(selected: Bool, onSelect: @escaping () -> Void) -> some View {
+        modifier(SidebarRow(selected: selected, onSelect: onSelect))
+    }
+}
+
+private struct SidebarRow: ViewModifier {
+    let selected: Bool
+    var onSelect: () -> Void
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(selected ? Color.accentColor.opacity(0.28) : Color.primary.opacity(hovering ? 0.06 : 0))
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .onHover { hovering = $0 }
+            .onTapGesture(perform: onSelect)
+            .padding(.horizontal, 8)
+    }
+}
+
+/// Folds its content to zero height (progress 0) and back (1), animating the height so what
+/// follows slides along, and clipping what doesn't fit yet.
+private struct Fold: ViewModifier, Animatable {
+    var progress: CGFloat
+    nonisolated var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+    @State private var height: CGFloat?
+
+    func body(content: Content) -> some View {
+        content
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+            .frame(height: height.map { $0 * progress }, alignment: .top)
+            .clipped()
+            .opacity(Double(min(1, progress * 1.5)))
+            .allowsHitTesting(progress > 0.5)
     }
 }

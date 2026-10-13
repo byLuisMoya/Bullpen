@@ -4,6 +4,12 @@ import AppKit
 
 /// One person at a desk = one worktree.
 public struct DeskModel: Equatable, Sendable, Identifiable {
+    /// What hovering the desk says: the full branch (and ticket), then what the agent is doing.
+    public var tooltip: String {
+        let title = branch.map { $0 == name ? $0 : "\(name) · \($0)" } ?? name
+        return [title, detail].compactMap { $0 }.joined(separator: "\n")
+    }
+
     public var id: UUID
     public var name: String
     public var state: AgentState
@@ -19,9 +25,12 @@ public struct DeskModel: Equatable, Sendable, Identifiable {
     public var turns: Int
     /// Its PR was merged: a beer on the desk.
     public var merged: Bool
+    /// The full branch, for the tooltip (the card under the desk cuts it short).
+    public var branch: String?
 
     public init(id: UUID, name: String, state: AgentState, detail: String? = nil, look: CharacterLook, warning: DeskWarning? = nil,
-                away: Bool = false, summary: String? = nil, turns: Int = 0, merged: Bool = false) {
+                away: Bool = false, summary: String? = nil, turns: Int = 0, merged: Bool = false, branch: String? = nil) {
+        self.branch = branch
         self.turns = turns
         self.merged = merged
         self.away = away

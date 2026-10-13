@@ -78,7 +78,7 @@ public final class OfficeView: NSView, NSViewToolTipOwner {
 
     public func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
         guard let id = office.deskID(at: CGPoint(x: point.x / zoom, y: point.y / zoom)), let desk = office.model.desks.first(where: { $0.id == id }) else { return "" }
-        return [desk.name, desk.detail].compactMap { $0 }.joined(separator: " — ")
+        return desk.tooltip
     }
 
     public override func mouseDown(with event: NSEvent) {

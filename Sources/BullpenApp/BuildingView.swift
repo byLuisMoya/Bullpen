@@ -116,7 +116,8 @@ func officeModel(_ office: Office, statuses: [UUID: AgentStatus], warnings: [UUI
             away: away,
             summary: summaries[worktree.id],
             turns: turns[worktree.id] ?? 0,
-            merged: pullRequests[worktree.id]?.state == .merged
+            merged: pullRequests[worktree.id]?.state == .merged,
+            branch: worktree.branch
         )
     }, theme: theme)
 }
@@ -148,6 +149,15 @@ struct MiniOffice: View {
                 }
             }
             .frame(width: width, height: natural.height)
+            .overlay(alignment: .leading) {
+                // One tooltip per desk: the full branch, which the card under it cuts short.
+                HStack(spacing: 0) {
+                    ForEach(model.desks) { desk in
+                        Color.clear.frame(width: 34).contentShape(Rectangle()).help(desk.tooltip)
+                    }
+                }
+                .padding(.leading, 8)
+            }
             .contentShape(Rectangle())
             .onTapGesture { location in
                 let slot = Int((location.x - 8) / 34)          // art margin and desk width, 1 pt per art pixel

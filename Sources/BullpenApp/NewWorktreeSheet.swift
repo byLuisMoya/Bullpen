@@ -50,6 +50,8 @@ struct NewWorktreeSheet: View {
     @State private var compare = false
     @State private var overrideLimits = false
     @FocusState private var queryFocused: Bool
+    /// The result the arrow keys are on (Return picks it).
+    @State private var highlighted = 0
     @Environment(AttentionCenter.self) private var attention
     @Environment(UsageCenter.self) private var usage
     /// Comparing agents starts with the main one and another one.
@@ -140,8 +142,8 @@ struct NewWorktreeSheet: View {
         .onChange(of: task) { _, value in
             if origin == nil, !branchEdited { branch = WorktreeSource.branchName(from: value) }
         }
-        .onChange(of: query) { _, _ in pickFirstCandidate() }
-        .onChange(of: source) { _, _ in pickFirstCandidate() }
+        .onChange(of: query) { _, _ in highlighted = 0; pickFirstCandidate() }
+        .onChange(of: source) { _, _ in highlighted = 0; pickFirstCandidate() }
         .task { await detectInstalledAgents() }
         .task { await loadBranches() }
         .task {
@@ -175,7 +177,18 @@ struct NewWorktreeSheet: View {
                     TextField("", text: $query, prompt: Text(source.placeholder))
                         .textFieldStyle(.plain)
                         .focused($queryFocused)
-                        .onSubmit { pickFirstCandidate() }
+                        .onSubmit {
+                            let rows = candidates
+                            if rows.indices.contains(highlighted) { select(rows[highlighted]) } else { pickFirstCandidate() }
+                        }
+                        .onKeyPress(.downArrow) {
+                            highlighted = min(highlighted + 1, max(candidates.count - 1, 0))
+                            return .handled
+                        }
+                        .onKeyPress(.upArrow) {
+                            highlighted = max(highlighted - 1, 0)
+                            return .handled
+                        }
                     if !query.isEmpty {
                         Button { query = ""; origin = nil } label: { Image(systemName: "xmark.circle.fill") }
                             .buttonStyle(.borderless).foregroundStyle(.secondary)
@@ -397,37 +410,89 @@ struct NewWorktreeSheet: View {
         }
     }
 
+    /// Results in a box of their own: scrolls inside, never over the fields around it.
     @ViewBuilder private var candidatesList: some View {
         let rows = candidates
         let waiting = loadingTickets && [.github, .linear, .smart].contains(source)
         if !rows.isEmpty || waiting || !hint.isEmpty {
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(rows, id: \.self) { row in
-                    Button {
-                        select(row)
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: icon(for: row)).frame(width: 16).foregroundStyle(.secondary)
-                            Text(title(for: row)).lineLimit(1).truncationMode(.tail)
-                            Spacer(minLength: 4)
-                            if origin == row { Image(systemName: "checkmark").foregroundStyle(Color.accentColor) }
+            VStack(spacing: 0) {
+                if !rows.isEmpty {
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(spacing: 0) {
+                                ForEach(Array(rows.enumerated()), id: \.element) { index, row in
+                                    candidateRow(row, highlighted: index == highlighted)
+                                        .id(index)
+                                        .onTapGesture { highlighted = index; select(row) }
+                                        .onHover { if $0 { highlighted = index } }
+                                    if index < rows.count - 1 { Divider().padding(.leading, 36) }
+                                }
+                            }
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(origin == row ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 6))
-                        .contentShape(Rectangle())
+                        .onChange(of: highlighted) { _, index in withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(index) } }
                     }
-                    .buttonStyle(.plain)
+                    .frame(height: min(CGFloat(rows.count) * 39, 196))
                 }
                 if waiting && rows.isEmpty {
-                    HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Cargando tickets…") }
-                        .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 8)
+                    HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Cargando…") }
+                        .font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
                 }
                 if !hint.isEmpty {
-                    Text(hint).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 8)
+                    if !rows.isEmpty { Divider() }
+                    Label(hint, systemImage: "info.circle")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
                 }
             }
-            .frame(maxHeight: 180)
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(nsColor: .separatorColor)))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    private func candidateRow(_ row: Origin, highlighted: Bool) -> some View {
+        let chosen = origin == row
+        let (primary, secondary, tag) = describe(row)
+        return HStack(spacing: 10) {
+            Image(systemName: icon(for: row))
+                .font(.callout)
+                .foregroundStyle(chosen ? Color.accentColor : .secondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(primary).lineLimit(1).truncationMode(.middle)
+                if let secondary {
+                    Text(secondary).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                }
+            }
+            Spacer(minLength: 6)
+            Text(tag)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.secondary.opacity(0.15), in: Capsule())
+            Image(systemName: "checkmark")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.accentColor)
+                .opacity(chosen ? 1 : 0)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 38)
+        .background(chosen ? Color.accentColor.opacity(0.16) : highlighted ? Color.primary.opacity(0.06) : .clear)
+        .contentShape(Rectangle())
+    }
+
+    /// Main line, detail line and the small tag on the right.
+    private func describe(_ row: Origin) -> (String, String?, String) {
+        switch row {
+        case let .ticket(t): (t.title, t.key, t.source == .github ? "GitHub" : "Linear")
+        case let .pullRequest(pr): (pr.title, pr.branch, pr.isDraft ? "PR #\(pr.number) · borrador" : "PR #\(pr.number)")
+        case let .branch(b): (b, nil, "local")
+        case let .remote(r): (WorktreeSource.localName(r), r, "remota")
+        case let .name(n): (WorktreeSource.branchName(fromName: n), "Rama nueva desde \(baseRef)", "nueva")
         }
     }
 
@@ -455,16 +520,6 @@ struct NewWorktreeSheet: View {
         case .pullRequest: "arrow.triangle.pull"
         case .branch, .remote: SourceTab.branch.icon
         case .name: "plus"
-        }
-    }
-
-    private func title(for origin: Origin) -> String {
-        switch origin {
-        case let .ticket(t): "\(t.key) · \(t.title)"
-        case let .pullRequest(pr): "PR #\(pr.number)\(pr.isDraft ? " (borrador)" : "") · \(pr.title)"
-        case let .branch(b): b
-        case let .remote(r): r
-        case let .name(n): "Rama nueva: \(WorktreeSource.branchName(fromName: n))"
         }
     }
 
