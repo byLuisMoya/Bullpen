@@ -248,8 +248,12 @@ public struct Workspace: Sendable {
             return
         }
         if FileManager.default.fileExists(atPath: path.path) {
-            if let env = try? WorktreeEnvironment.load(project: project, worktree: worktree), !env.config.teardown.isEmpty {
-                let results = await CommandRunner.run(env.config.teardown, in: path, environment: env.environment, timeout: 120, stopOnFailure: false)
+            let env = try? WorktreeEnvironment.load(project: project, worktree: worktree)
+            // The project's archive script runs whole (every line, even after one fails).
+            let teardown = (env?.config.teardown ?? []) + [project.archiveScript?.nilIfBlank].compactMap { $0 }
+            if !teardown.isEmpty {
+                let environment = env?.environment ?? ["BULLPEN_PROJECT_PATH": project.path, "BULLPEN_WORKTREE": worktree.branch]
+                let results = await CommandRunner.run(teardown, in: path, environment: environment, timeout: 120, stopOnFailure: false)
                 for failed in results where !failed.succeeded {
                     log.warning("Teardown failed: \(failed.command, privacy: .public) (\(failed.exitCode))")
                 }

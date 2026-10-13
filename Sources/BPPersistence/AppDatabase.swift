@@ -93,6 +93,9 @@ public final class AppDatabase: Sendable {
         migrator.registerMigration("v9-office-themes") { db in
             try db.alter(table: "project") { t in t.add(column: "officeTheme", .text) }
         }
+        migrator.registerMigration("v10-archive-script") { db in
+            try db.alter(table: "project") { t in t.add(column: "archiveScript", .text) }
+        }
         return migrator
     }
 }

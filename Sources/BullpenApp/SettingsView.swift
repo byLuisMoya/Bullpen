@@ -64,18 +64,20 @@ private struct GlobalPromptSettings: View {
     }
 }
 
-/// Each project's setup script: runs in every new worktree, before the agent starts.
+/// Each project's scripts: one runs in every new worktree before the agent starts, the other
+/// when a worktree is removed, before its folder goes.
 private struct SetupScriptSettings: View {
     @Environment(BuildingStore.self) private var store
     @State private var projectID: UUID?
-    @State private var script = ""
+    @State private var setup = ""
+    @State private var archive = ""
 
     private var project: Project? {
         store.offices.first { $0.project.id == projectID }?.project ?? store.offices.first?.project
     }
 
     /// Common steps, appended as a new line.
-    private static let snippets: [(String, String)] = [
+    private static let setupSnippets: [(String, String)] = [
         ("Copiar .env del proyecto", #"cp "$BULLPEN_PROJECT_PATH/.env" .env"#),
         ("Instalar dependencias (pnpm)", "pnpm install"),
         ("Instalar dependencias (npm)", "npm install"),
@@ -83,6 +85,11 @@ private struct SetupScriptSettings: View {
         ("Migraciones (Laravel)", "php artisan migrate --force"),
         ("Generar clave (Laravel)", "php artisan key:generate"),
         ("Compilar assets (npm)", "npm run build"),
+    ]
+    private static let archiveSnippets: [(String, String)] = [
+        ("Parar Vite de este worktree", #"pkill -f "$PWD.*vite" 2>/dev/null || true"#),
+        ("Parar Horizon de este worktree", #"pkill -f "$PWD.*horizon" 2>/dev/null || true"#),
+        ("Quitar el enlace de Herd", #"herd unlink "$(basename "$PWD")" || true"#),
     ]
 
     var body: some View {
@@ -94,58 +101,84 @@ private struct SetupScriptSettings: View {
                     }
                 }
                 Section {
-                    ZStack(alignment: .topLeading) {
-                        TextEditor(text: $script)
-                            .font(.system(.body, design: .monospaced))
-                            .scrollContentBackground(.hidden)
-                        if script.isEmpty {
-                            Text("pnpm install\ncp \"$BULLPEN_PROJECT_PATH/.env\" .env\nphp artisan migrate --force")
-                                .font(.system(.body, design: .monospaced))
-                                .foregroundStyle(.tertiary)
-                                .padding(.leading, 5)
-                                .allowsHitTesting(false)
-                        }
-                    }
-                    .frame(minHeight: 170)
-                    HStack {
-                        Menu("Añadir paso") {
-                            ForEach(Self.snippets, id: \.1) { title, line in
-                                Button(title) { script = script.isEmpty || script.hasSuffix("\n") ? script + line : script + "\n" + line }
-                            }
-                        }
-                        .fixedSize()
-                        Spacer()
-                        if !script.isEmpty { Button("Vaciar", role: .destructive) { script = "" } }
-                    }
+                    editor($setup, placeholder: "pnpm install\ncp \"$BULLPEN_PROJECT_PATH/.env\" .env\nphp artisan migrate --force", snippets: Self.setupSnippets)
                 } header: {
-                    Text("Script de configuración de \(project.name)")
+                    Text("Al crear un worktree")
                 } footer: {
-                    Text("Se ejecuta en la terminal de cada worktree nuevo, dentro de su carpeta y antes de abrir el agente: instalar dependencias, copiar ficheros de entorno, migraciones… Se detiene en la primera línea que falle y entonces no se abre el agente. $BULLPEN_PROJECT_PATH es la carpeta del proyecto principal y $BULLPEN_WORKTREE la rama. Se guarda solo.")
+                    Text("Se ejecuta en la terminal de cada worktree nuevo, dentro de su carpeta y antes de abrir el agente: instalar dependencias, copiar ficheros de entorno, migraciones… Se detiene en la primera línea que falle y entonces no se abre el agente.")
+                }
+                Section {
+                    editor($archive, placeholder: "pkill -f \"$PWD.*vite\" || true\nherd unlink \"$(basename \"$PWD\")\" || true", snippets: Self.archiveSnippets)
+                } header: {
+                    Text("Al archivar un worktree")
+                } footer: {
+                    Text("Se ejecuta en la carpeta del worktree al eliminarlo, antes de borrarla: parar servidores, quitar enlaces… Se ejecuta entero aunque falle alguna línea. No se usa con los worktrees de Orca, que ejecutan el suyo.")
+                }
+                Section {
+                    Text("En los dos: $BULLPEN_PROJECT_PATH es la carpeta del proyecto principal y $BULLPEN_WORKTREE la rama. Se guardan solos.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             } else {
-                ContentUnavailableView("Sin proyectos", systemImage: "folder", description: Text("Añade un proyecto para configurar su script."))
+                ContentUnavailableView("Sin proyectos", systemImage: "folder", description: Text("Añade un proyecto para configurar sus scripts."))
             }
         }
         .formStyle(.grouped)
-        .onAppear { script = project?.setupScript ?? "" }
+        .onAppear(perform: load)
         .onChange(of: project?.id) { old, _ in
             // Keep what was typed in the previous project before showing the next one.
-            if let old { save(script, to: old) }
-            script = project?.setupScript ?? ""
+            if let old { save(to: old) }
+            load()
         }
         // Saved as you type, like the editor in the new worktree sheet.
-        .task(id: script) {
+        .task(id: setup + "\u{0}" + archive) {
             try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled, let id = project?.id else { return }
-            save(script, to: id)
+            save(to: id)
         }
-        .onDisappear { if let id = project?.id { save(script, to: id) } }
+        .onDisappear { if let id = project?.id { save(to: id) } }
     }
 
-    private func save(_ text: String, to id: UUID) {
+    private func editor(_ text: Binding<String>, placeholder: String, snippets: [(String, String)]) -> some View {
+        Group {
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: text)
+                    .font(.system(.body, design: .monospaced))
+                    .scrollContentBackground(.hidden)
+                if text.wrappedValue.isEmpty {
+                    Text(placeholder)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .padding(.leading, 5)
+                        .allowsHitTesting(false)
+                }
+            }
+            .frame(minHeight: 130)
+            HStack {
+                Menu("Añadir paso") {
+                    ForEach(snippets, id: \.1) { title, line in
+                        Button(title) {
+                            let current = text.wrappedValue
+                            text.wrappedValue = current.isEmpty || current.hasSuffix("\n") ? current + line : current + "\n" + line
+                        }
+                    }
+                }
+                .fixedSize()
+                Spacer()
+                if !text.wrappedValue.isEmpty { Button("Vaciar", role: .destructive) { text.wrappedValue = "" } }
+            }
+        }
+    }
+
+    private func load() {
+        setup = project?.setupScript ?? ""
+        archive = project?.archiveScript ?? ""
+    }
+
+    private func save(to id: UUID) {
         guard var changed = store.offices.first(where: { $0.project.id == id })?.project,
-              text.nilIfBlank != changed.setupScript?.nilIfBlank else { return }
-        changed.setupScript = text.nilIfBlank
+              setup.nilIfBlank != changed.setupScript?.nilIfBlank || archive.nilIfBlank != changed.archiveScript?.nilIfBlank else { return }
+        changed.setupScript = setup.nilIfBlank
+        changed.archiveScript = archive.nilIfBlank
         store.updateProject(changed)
     }
 }

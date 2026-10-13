@@ -11,6 +11,9 @@ public struct Project: Identifiable, Hashable, Codable, Sendable {
     /// Shell script run in every new worktree of this project, before the agent starts (after
     /// `.bullpen.toml`'s `[setup] run`). Saved from "Nuevo worktree › Avanzado".
     public var setupScript: String?
+    /// Shell script run in a worktree of this project when it is removed, before its folder goes
+    /// (after `.bullpen.toml`'s `[teardown] run`): stop servers, undo links…
+    public var archiveScript: String?
     /// The office's style (`OfficeTheme` raw value); nil is the basic one.
     public var officeTheme: String?
     /// Position of the office in the building (0 = top floor).
@@ -24,6 +27,7 @@ public struct Project: Identifiable, Hashable, Codable, Sendable {
         defaultBaseRef: String? = nil,
         initialPrompt: String? = nil,
         setupScript: String? = nil,
+        archiveScript: String? = nil,
         officeTheme: String? = nil,
         sortIndex: Int = 0,
         createdAt: Date = Date()
@@ -34,6 +38,7 @@ public struct Project: Identifiable, Hashable, Codable, Sendable {
         self.defaultBaseRef = defaultBaseRef
         self.initialPrompt = initialPrompt
         self.setupScript = setupScript
+        self.archiveScript = archiveScript
         self.officeTheme = officeTheme
         self.sortIndex = sortIndex
         self.createdAt = createdAt

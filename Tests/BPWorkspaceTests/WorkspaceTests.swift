@@ -112,9 +112,11 @@ struct Fixture {
         _ = await f.waitForFile(URL(fileURLWithPath: wt.path).appendingPathComponent("setup.txt"))
         let mark = f.root.appendingPathComponent("teardown.txt")
         setenv("TEARDOWN_MARK", mark.path, 1)
-        try await f.workspace.removeWorktree(wt, in: f.project, force: true)
+        var project = f.project
+        project.archiveScript = "false\necho \"archived $BULLPEN_WORKTREE\" >> \"$TEARDOWN_MARK\""
+        try await f.workspace.removeWorktree(wt, in: project, force: true)
 
-        #expect(try String(contentsOf: mark, encoding: .utf8) == "bye postgres://localhost/app_feature-x\n")
+        #expect(try String(contentsOf: mark, encoding: .utf8) == "bye postgres://localhost/app_feature-x\narchived feature/x\n")
         #expect(!FileManager.default.fileExists(atPath: wt.path))
         #expect(try f.workspace.database.offices().first?.worktrees.isEmpty == true)
         let client = try await f.workspace.connect()
