@@ -107,8 +107,7 @@ final class AttentionCenter {
         content.body = status.detail ?? ""
         content.threadIdentifier = worktree.id.uuidString
         // Same identifier per worktree: a new state replaces the previous banner.
-        let request = UNNotificationRequest(identifier: worktree.id.uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        DoNotDisturb.shared.deliver(UNNotificationRequest(identifier: worktree.id.uuidString, content: content, trigger: nil))
     }
 
     private func stalled(_ worktree: Worktree, in project: Project, _ stall: Stall) {
@@ -120,7 +119,7 @@ final class AttentionCenter {
         content.subtitle = project.name
         content.body = "\(stall.description().prefix(1).uppercased())\(stall.description().dropFirst()). Ábrelo para interrumpirlo o dejarlo seguir."
         content.threadIdentifier = worktree.id.uuidString
-        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: worktree.id.uuidString, content: content, trigger: nil))
+        DoNotDisturb.shared.deliver(UNNotificationRequest(identifier: worktree.id.uuidString, content: content, trigger: nil))
     }
 
     /// "Let it be": no banner until it moves on and gets stuck again.

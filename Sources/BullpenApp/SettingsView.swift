@@ -293,15 +293,17 @@ private struct LimitSettings: View {
 private struct IntegrationSettings: View {
     @State private var linearKey = ""
     @AppStorage("tickets.updateLinear") private var updateLinear = true
+    @AppStorage(PRCommentCenter.enabledKey) private var commentsToAgent = true
 
     var body: some View {
         Form {
             Section {
                 LabeledContent("GitHub", value: GitHubCLI.locate() == nil ? "instala gh y ejecuta gh auth login" : "usa tu sesión de gh")
+                Toggle("Pasar al agente los comentarios nuevos de su PR", isOn: $commentsToAgent)
             } header: {
                 Text("GitHub")
             } footer: {
-                Text("Los issues abiertos del repo aparecen en «Desde ticket…». Las PR incluyen «Closes #n».")
+                Text("Los issues abiertos del repo aparecen en «Desde ticket…». Las PR incluyen «Closes #n». Los comentarios nuevos llegan al agente de la rama por su buzón, cuando termina su turno; los de bots no, y de los tuyos solo los que dejas en líneas de código (los demás pueden ser del propio agente, que usa tu cuenta de gh).")
             }
             Section {
                 LabeledContent("Clave personal de Linear") {
@@ -434,9 +436,24 @@ private struct NoticeSettings: View {
     @AppStorage(AlertSounds.volumeKey) private var volume = 0.6
     @AppStorage(AlertSounds.whileLookingKey) private var whileLooking = false
     @AppStorage(AttentionCenter.stallMinutesKey) private var stallMinutes = 10
+    @AppStorage(DoNotDisturb.scheduleKey) private var quietSchedule = false
+    @AppStorage(DoNotDisturb.fromKey) private var quietFrom = 21 * 60
+    @AppStorage(DoNotDisturb.toKey) private var quietTo = 8 * 60
 
     var body: some View {
         Form {
+            Section {
+                LabeledContent("Ahora") { DoNotDisturbMenu().fixedSize() }
+                Toggle("Cada día a estas horas", isOn: $quietSchedule)
+                if quietSchedule {
+                    DatePicker("Desde", selection: time($quietFrom), displayedComponents: .hourAndMinute)
+                    DatePicker("Hasta", selection: time($quietTo), displayedComponents: .hourAndMinute)
+                }
+            } header: {
+                Text("No molestar")
+            } footer: {
+                Text("Sin sonidos ni notificaciones de Bullpen. Lo que llegue mientras tanto te lo resume una notificación al acabar; la barra lateral y el número del Dock siguen al día. También está en el icono de la barra de menús.")
+            }
             Section {
                 Picker("Avisar si un agente no avanza en", selection: $stallMinutes) {
                     Text("Nunca").tag(0)
@@ -471,6 +488,17 @@ private struct NoticeSettings: View {
         }
         .formStyle(.grouped)
     }
+}
+
+/// Minutes from midnight as a date today, for an hour-and-minute picker.
+private func time(_ minutes: Binding<Int>) -> Binding<Date> {
+    Binding(
+        get: { Calendar.current.date(byAdding: .minute, value: minutes.wrappedValue, to: Calendar.current.startOfDay(for: Date()))! },
+        set: { date in
+            let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+            minutes.wrappedValue = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+        }
+    )
 }
 
 private struct SoundPicker: View {

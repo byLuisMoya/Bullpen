@@ -354,6 +354,8 @@ private struct WorktreeDetail: View {
     @Environment(BuildingStore.self) private var store
     @Environment(AttentionCenter.self) private var attention
     @State private var restarting = false
+    /// Asked the agent to catch up with the base (until the PR stops reporting conflicts).
+    @State private var catchUpAsked = false
     /// The terminal tab shown: nil is the agent's, otherwise an extra terminal's session id.
     @State private var terminalTab: String?
     // BULLPEN_SNAPSHOT_TAB=changes opens the panel on that tab (for DebugSnapshots).
@@ -396,6 +398,26 @@ private struct WorktreeDetail: View {
                             }
                         }
                         .controlSize(.small)
+                    }
+                    .font(.callout)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.bar)
+                    .overlay(alignment: .bottom) { Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1) }
+                }
+                if let pr = conflictingPR {
+                    HStack(spacing: 10) {
+                        Label(catchUpAsked ? "Pedido al agente: pondrá la rama al día con \(baseBranch) y resolverá los conflictos"
+                                           : "La PR #\(pr.number) tiene conflictos con \(baseBranch)",
+                              systemImage: "arrow.triangle.merge")
+                            .foregroundStyle(catchUpAsked ? Color.secondary : Color.orange)
+                        Spacer()
+                        if !catchUpAsked {
+                            Button("Que el agente lo resuelva") { Task { await askToCatchUp() } }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                .help("Rebase sobre \(baseBranch), resolviendo los conflictos, y push con --force-with-lease")
+                        }
                     }
                     .font(.callout)
                     .padding(.horizontal, 12)
@@ -446,6 +468,9 @@ private struct WorktreeDetail: View {
                     .overlay(alignment: .bottom) { Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1) }
                 }
                 TerminalTabs(worktree: worktree, selection: $terminalTab) { Task { await openTab() } }
+                    // Another worktree, or the conflicts are gone: the next ones can be asked about again.
+                    .onChange(of: worktree.id) { catchUpAsked = false }
+                    .onChange(of: conflictingPR == nil) { _, resolved in if resolved { catchUpAsked = false } }
                 if terminalTab == TerminalTabs.browser, browsers.open.contains(worktree.id) {
                     BrowserPane(worktree: worktree, home: browserHome)
                 } else {
@@ -470,6 +495,9 @@ private struct WorktreeDetail: View {
                     Button("Interrumpir (Ctrl-C)") { sessions.interrupt(worktree) }
                     Button(worktree.agentProfileID == nil ? "Reabrir terminal" : "Reiniciar agente") {
                         Task { await restartAgent() }
+                    }
+                    if worktree.agentProfileID != nil, worktree.review == nil {
+                        Button("Ponerse al día con \(baseBranch)") { Task { await askToCatchUp() } }
                     }
                     if worktree.review == nil, !project.isReviews {
                         Divider()
@@ -514,6 +542,41 @@ private struct WorktreeDetail: View {
     private func openTab() async {
         do { terminalTab = try await sessions.openTab(for: worktree, environment: terminalEnvironment) } catch {
             store.errorMessage = "No se pudo abrir otra terminal: \(error.localizedDescription)"
+        }
+    }
+
+    /// The base branch's name, as the remote knows it (`origin/pre` → `pre`).
+    private var baseBranch: String {
+        worktree.baseRef.hasPrefix("origin/") ? String(worktree.baseRef.dropFirst(7)) : worktree.baseRef
+    }
+
+    /// Its open PR, when GitHub says it can't merge without resolving conflicts (and it has an agent to do it).
+    private var conflictingPR: PullRequest? {
+        guard worktree.agentProfileID != nil, worktree.review == nil, let pr = repoStatus.pullRequests[worktree.id],
+              pr.state == .open || pr.state == .draft, pr.hasConflicts else { return nil }
+        return pr
+    }
+
+    /// Asks the agent to rebase onto its base and resolve the conflicts: typed in now if it is
+    /// waiting, left in its mailbox if it is busy (it gets it when it finishes its turn).
+    private func askToCatchUp() async {
+        let base = baseBranch
+        let text = """
+        Pon esta rama al día con \(base): `git fetch origin` y `git rebase origin/\(base)` (rebase, no merge). \
+        Resuelve los conflictos respetando lo que buscaban los dos lados; si en alguno no está claro qué debe quedar, para y pregúntame. \
+        Después pasa los tests de lo que hayas tocado y, si la rama ya estaba subida, `git push --force-with-lease`.
+        """
+        let state = attention.statuses[worktree.id]?.state
+        do {
+            if state == .done || state == .idle {
+                try await sessions.sendMessage(text, to: worktree)
+            } else {
+                try store.workspace?.database.save(AgentMessage(projectID: project.id, toWorktree: worktree.id, fromWorktree: nil,
+                                                                fromLabel: "Tú", text: text))
+            }
+            catchUpAsked = true
+        } catch {
+            store.errorMessage = "No se pudo pedir al agente que se ponga al día: \(error.localizedDescription)"
         }
     }
 

@@ -31,6 +31,7 @@ struct MenuBarContent: View {
             }
         }
         Divider()
+        DoNotDisturbMenu()
         Button("Abrir Bullpen") {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)

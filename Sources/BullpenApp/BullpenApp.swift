@@ -17,6 +17,7 @@ struct BullpenApp: App {
     @State private var orca = OrcaCenter()
     @State private var reviews = ReviewCenter()
     @State private var mail = MailCarrier()
+    @State private var prComments = PRCommentCenter()
 
     var body: some Scene {
         WindowGroup("Bullpen", id: "main") {
@@ -62,6 +63,8 @@ struct BullpenApp: App {
                     await attention.start(store: store, sessions: sessions)
                 }
                 .task { await mail.start(store: store, sessions: sessions, attention: attention) }
+                .task { await prComments.start(store: store, repoStatus: repoStatus) }
+                .task { await DoNotDisturb.shared.start() }
                 .task { await reviews.start(store: store, sessions: sessions, attention: attention, repoStatus: repoStatus) }
                 .task { await repoStatus.start(store: store) }
                 .task { await DebugSnapshots.run(store: store, navigation: navigation) }

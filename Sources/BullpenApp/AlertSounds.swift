@@ -57,7 +57,7 @@ enum AlertSounds {
 
     /// Plays the event's sound; several state changes at once make one sound, not a burst.
     static func play(_ event: Event) {
-        guard Date().timeIntervalSince(lastPlayed) > 1.5 else { return }
+        guard !DoNotDisturb.shared.silencedNow, Date().timeIntervalSince(lastPlayed) > 1.5 else { return }
         if preview(sound(for: event)) { lastPlayed = Date() }
     }
 

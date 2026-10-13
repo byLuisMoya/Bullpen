@@ -15,13 +15,9 @@ enum BackgroundNotice {
         }
         // UNUserNotificationCenter needs a real app bundle (not `swift run`).
         guard Bundle.main.bundleURL.pathExtension == "app" else { return }
-        Task {
-            let center = UNUserNotificationCenter.current()
-            guard await center.notificationSettings().authorizationStatus == .authorized else { return }
-            let content = UNMutableNotificationContent()
-            content.title = title
-            content.body = body
-            try? await center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
-        }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        Task { @MainActor in DoNotDisturb.shared.deliver(UNNotificationRequest(identifier: id, content: content, trigger: nil)) }
     }
 }

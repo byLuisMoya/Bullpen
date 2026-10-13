@@ -171,11 +171,7 @@ final class ReviewCenter {
         content.body = (info.summary ?? "").split(separator: "\n").dropFirst().prefix(3).joined(separator: " ")
         content.threadIdentifier = info.of.uuidString
         content.sound = .default
-        let request = UNNotificationRequest(identifier: "review-\(reviewer.id.uuidString)", content: content, trigger: nil)
-        Task {
-            guard await UNUserNotificationCenter.current().notificationSettings().authorizationStatus == .authorized else { return }
-            try? await UNUserNotificationCenter.current().add(request)
-        }
+        DoNotDisturb.shared.deliver(UNNotificationRequest(identifier: "review-\(reviewer.id.uuidString)", content: content, trigger: nil))
     }
 }
 

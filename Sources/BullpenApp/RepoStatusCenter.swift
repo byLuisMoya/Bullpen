@@ -90,12 +90,7 @@ final class RepoStatusCenter {
                 content.body = worktree.branch
                 content.threadIdentifier = worktree.id.uuidString
                 content.sound = after.checks == .failure ? .default : nil
-                let request = UNNotificationRequest(identifier: "checks-\(worktree.id.uuidString)", content: content, trigger: nil)
-                Task {
-                    let settings = await UNUserNotificationCenter.current().notificationSettings()
-                    guard settings.authorizationStatus == .authorized else { return }
-                    try? await UNUserNotificationCenter.current().add(request)
-                }
+                DoNotDisturb.shared.deliver(UNNotificationRequest(identifier: "checks-\(worktree.id.uuidString)", content: content, trigger: nil))
             }
         }
     }
