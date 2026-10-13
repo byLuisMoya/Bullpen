@@ -15,6 +15,7 @@ struct SettingsView: View {
             LimitSettings().tabItem { Label("Límites", systemImage: "gauge.with.dots.needle.33percent") }
             AutomationSettings().tabItem { Label("Automatizaciones", systemImage: "clock.badge.checkmark") }
             OfficeSettings().tabItem { Label("Oficinas", systemImage: "building.2") }
+            ReviewSettings().tabItem { Label("Reviews", systemImage: "checkmark.seal") }
             IntegrationSettings().tabItem { Label("Integraciones", systemImage: "link") }
             CommandLineSettings().tabItem { Label("Terminal", systemImage: "terminal") }
         }
@@ -73,7 +74,7 @@ private struct SetupScriptSettings: View {
     @State private var archive = ""
 
     private var project: Project? {
-        store.offices.first { $0.project.id == projectID }?.project ?? store.offices.first?.project
+        store.offices.first { $0.project.id == projectID }?.project ?? store.offices.first { !$0.project.isReviews }?.project
     }
 
     /// Common steps, appended as a new line.
@@ -97,7 +98,7 @@ private struct SetupScriptSettings: View {
             if let project {
                 Section {
                     Picker("Proyecto", selection: Binding(get: { project.id }, set: { projectID = $0 })) {
-                        ForEach(store.offices) { Text($0.project.name).tag($0.project.id) }
+                        ForEach(store.offices.filter { !$0.project.isReviews }) { Text($0.project.name).tag($0.project.id) }
                     }
                 }
                 Section {
@@ -567,7 +568,7 @@ private struct AutomationSettings: View {
                     }
                 }
                 Button("Nueva automatización…", systemImage: "plus") {
-                    guard let project = store.offices.first?.project else { return }
+                    guard let project = store.offices.first { !$0.project.isReviews }?.project else { return }
                     editing = Automation(name: "", projectID: project.id, task: "")
                 }
                 .disabled(store.offices.isEmpty)
@@ -619,7 +620,7 @@ private struct AutomationEditor: View {
         Form {
             TextField("Nombre", text: $automation.name, prompt: Text("Revisar dependencias"))
             Picker("Proyecto", selection: $automation.projectID) {
-                ForEach(store.offices) { Text($0.project.name).tag($0.project.id) }
+                ForEach(store.offices.filter { !$0.project.isReviews }) { Text($0.project.name).tag($0.project.id) }
             }
             Picker("Agente", selection: Binding(get: { automation.agentID ?? "" }, set: { automation.agentID = $0.isEmpty ? nil : $0 })) {
                 Text("Agente principal").tag("")
@@ -666,6 +667,60 @@ private struct AutomationEditor: View {
                           || automation.task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || automation.weekdays.isEmpty)
             }
         }
+    }
+}
+
+/// Reviews of finished work, per project: whether they start on their own and when the
+/// exhaustive one replaces the quick one. The two commands are shared.
+private struct ReviewSettings: View {
+    @Environment(BuildingStore.self) private var store
+    @State private var projectID: UUID?
+    @AppStorage(ReviewCenter.quickKey) private var quick = ReviewCenter.quickDefault
+    @AppStorage(ReviewCenter.exhaustiveKey) private var exhaustive = ReviewCenter.exhaustiveDefault
+
+    private var projects: [Project] { store.offices.map(\.project).filter { !$0.isReviews } }
+    private var project: Project? { projects.first { $0.id == projectID } ?? projects.first }
+    private static let thresholds = [0, 20, 40, 60, 90, 120, 200, 300]
+
+    var body: some View {
+        Form {
+            if let project {
+                Section {
+                    Picker("Proyecto", selection: Binding(get: { project.id }, set: { projectID = $0 })) {
+                        ForEach(projects) { Text($0.name).tag($0.id) }
+                    }
+                    Toggle("Revisar automáticamente al terminar", isOn: Binding(
+                        get: { project.reviewsAutomatically },
+                        set: { on in var changed = project; changed.reviewAuto = on ? nil : false; store.updateProject(changed) }
+                    ))
+                    Picker("Revisión exhaustiva", selection: Binding(
+                        get: { project.exhaustiveReviewFrom },
+                        set: { value in var changed = project; changed.reviewExhaustiveFrom = value == 90 ? nil : value; store.updateProject(changed) }
+                    )) {
+                        ForEach(Self.thresholds, id: \.self) { n in
+                            Text(n == 0 ? "Nunca (siempre la rápida)" : "Con \(n) ficheros cambiados o más").tag(n)
+                        }
+                    }
+                } header: {
+                    Text("Revisión automática")
+                } footer: {
+                    Text("Cuando el agente de un worktree termina y su PR está abierta, un revisor de la oficina Reviews revisa la rama: la revisión rápida, o la exhaustiva si la PR toca muchos ficheros. Sus arreglos quedan sin commit hasta que los apliques. También puedes lanzarlas a mano desde el menú Agente del worktree.")
+                }
+            }
+            Section {
+                LabeledContent("Rápida") {
+                    TextField("", text: $quick, prompt: Text(ReviewCenter.quickDefault)).font(.system(.body, design: .monospaced))
+                }
+                LabeledContent("Exhaustiva") {
+                    TextField("", text: $exhaustive, prompt: Text(ReviewCenter.exhaustiveDefault)).font(.system(.body, design: .monospaced))
+                }
+            } header: {
+                Text("Opciones de /review")
+            } footer: {
+                Text("Se lanza «/review --base=<rama base> <opciones>» en los repositorios que tienen la skill review (.claude/skills/review). En los demás, el revisor recibe la misma tarea explicada. Al acabar se le pide un veredicto: si se puede subir y por qué.")
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 

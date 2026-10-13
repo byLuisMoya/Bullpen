@@ -39,7 +39,7 @@ struct FilesView: View {
             .frame(maxWidth: .infinity, minHeight: 200, maxHeight: .infinity)
         }
         .task(id: worktree.id) {
-            let repo = try? await Repository.open(at: URL(fileURLWithPath: project.path))
+            let repo = try? await Repository.open(at: URL(fileURLWithPath: worktree.review?.repoPath ?? project.path))
             files = (try? await repo?.listFiles(in: URL(fileURLWithPath: worktree.path))) ?? []
             if selected == nil { selected = files.first { $0.lowercased() == "readme.md" } }
         }

@@ -63,9 +63,12 @@ struct ReviewView: View {
                     .help("Ejecuta [verify] de .bullpen.toml en este worktree")
                 checkpointMenu
                 Spacer()
-                Button("Crear PR…", systemImage: "arrow.triangle.pull") { showingPR = true }
-                    .disabled(repoStatus.pullRequests[worktree.id]?.state == .open || repoStatus.pullRequests[worktree.id]?.state == .draft)
-                    .help(repoStatus.pullRequests[worktree.id].map { "Ya existe la PR #\($0.number)" } ?? "Subir la rama y abrir una PR")
+                // A reviewer's fixes go up with "Aplicar arreglos" in its banner, not as a PR of their own.
+                if worktree.review == nil {
+                    Button("Crear PR…", systemImage: "arrow.triangle.pull") { showingPR = true }
+                        .disabled(repoStatus.pullRequests[worktree.id]?.state == .open || repoStatus.pullRequests[worktree.id]?.state == .draft)
+                        .help(repoStatus.pullRequests[worktree.id].map { "Ya existe la PR #\($0.number)" } ?? "Subir la rama y abrir una PR")
+                }
             }
             .buttonStyle(.borderless)
             .labelStyle(.titleAndIcon)
@@ -144,7 +147,7 @@ struct ReviewView: View {
         loading = true
         defer { loading = false }
         do {
-            let repo = try await Repository.open(at: URL(fileURLWithPath: project.path))
+            let repo = try await Repository.open(at: URL(fileURLWithPath: worktree.review?.repoPath ?? project.path))
             let path = URL(fileURLWithPath: worktree.path)
             checkpoints = (try? await repo.checkpoints(of: worktree.id)) ?? []
             if let current = since, !checkpoints.contains(current) { since = nil }
@@ -191,7 +194,7 @@ struct ReviewView: View {
 
     private func saveCheckpoint() async {
         do {
-            let repo = try await Repository.open(at: URL(fileURLWithPath: project.path))
+            let repo = try await Repository.open(at: URL(fileURLWithPath: worktree.review?.repoPath ?? project.path))
             let saved = try await repo.createCheckpoint(of: worktree.id, in: URL(fileURLWithPath: worktree.path),
                                                         message: "Guardado a mano · \(Date().formatted(date: .omitted, time: .shortened))")
             if saved == nil { store.errorMessage = "No hay cambios desde el último punto." }
@@ -201,7 +204,7 @@ struct ReviewView: View {
 
     private func restore(_ checkpoint: Checkpoint) async {
         do {
-            let repo = try await Repository.open(at: URL(fileURLWithPath: project.path))
+            let repo = try await Repository.open(at: URL(fileURLWithPath: worktree.review?.repoPath ?? project.path))
             try await repo.restore(checkpoint, of: worktree.id, in: URL(fileURLWithPath: worktree.path))
             since = nil
             await load()

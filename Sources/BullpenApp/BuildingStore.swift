@@ -28,6 +28,8 @@ final class BuildingStore {
             let database = try AppDatabase.onDisk()
             self.database = database
             workspace = Workspace(database: database, connect: connectToDaemon, hooks: hooks)
+            // The Reviews office is always there.
+            do { try workspace?.ensureReviewsProject() } catch { report(error, "Reviews office failed") }
             // Worktrees made with Orca (or plain git) in these projects show up here too.
             Task { [weak self] in
                 while !Task.isCancelled {
@@ -189,7 +191,7 @@ final class BuildingStore {
     /// What would be lost by removing this worktree; empty means it is safe.
     func removalGuards(for worktree: Worktree, in project: Project) async -> [RemovalGuard] {
         do {
-            let repo = try await Repository.open(at: URL(fileURLWithPath: project.path))
+            let repo = try await Repository.open(at: URL(fileURLWithPath: worktree.review?.repoPath ?? project.path))
             return try await repo.removalGuards(for: URL(fileURLWithPath: worktree.path), baseRef: worktree.baseRef)
         } catch {
             // If git cannot inspect it (e.g. folder already gone) there is nothing left to protect.

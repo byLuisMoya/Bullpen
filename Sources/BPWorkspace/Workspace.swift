@@ -229,6 +229,16 @@ public struct Workspace: Sendable {
             for session in ids { try? await client.remove(session) }
         }
         let path = URL(fileURLWithPath: worktree.path)
+        // A reviewer: its detached checkout belongs to the reviewed project's repository.
+        if let review = worktree.review {
+            if FileManager.default.fileExists(atPath: path.path) {
+                _ = try? await Git().run(["worktree", "remove", "--force", "--force", path.path], in: URL(fileURLWithPath: review.repoPath))
+            }
+            var archived = worktree
+            archived.archivedAt = Date()
+            try database.save(archived)
+            return
+        }
         // Not ours (Orca, plain git): stop showing it, leave its folder and branch alone…
         if worktree.external, !deleteExternal {
             var hidden = worktree

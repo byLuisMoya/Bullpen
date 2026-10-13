@@ -11,6 +11,8 @@ struct WorktreeRow: View {
     var warning: WorktreeWarning?
     /// What the agent is doing, in a few words (SummaryCenter).
     var summary: String?
+    /// Its latest review (or, on a reviewer's row, its own).
+    var review: ReviewInfo?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -28,6 +30,7 @@ struct WorktreeRow: View {
                     .foregroundStyle(warning.isConflict ? Color.red : Color.yellow)
                     .help(warning.tooltip)
             }
+            if let review { ReviewBadge(review: review) }
             BranchBadge(sync: sync, pullRequest: pullRequest)
         }
         .help(status.map { "\($0.state.label) · confianza \($0.confidence)" } ?? "")

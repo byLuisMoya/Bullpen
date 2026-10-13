@@ -18,6 +18,7 @@ struct ContentView: View {
     @State private var isImporting = false
     @State private var newWorktreeFor: Project?
     @Environment(SummaryCenter.self) private var summaries
+    @Environment(ReviewCenter.self) private var reviews
     /// Projects folded in the sidebar (only the header shows), remembered between launches.
     @AppStorage("collapsedProjects") private var collapsedRaw = ""
     /// Kept in @State (animated transactions) and mirrored to the stored list.
@@ -50,15 +51,19 @@ struct ContentView: View {
                             }
                         )) { newWorktreeFor = office.project }
                             .contextMenu {
-                                Button("Nuevo worktree…") { newWorktreeFor = office.project }
-                                Button("Prompt inicial…") { editingPromptFor = office.project }
+                                if !office.project.isReviews {
+                                    Button("Nuevo worktree…") { newWorktreeFor = office.project }
+                                    Button("Prompt inicial…") { editingPromptFor = office.project }
+                                }
                                 Button("Mostrar en Finder") {
                                     NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: office.project.path)
                                 }
-                                Divider()
-                                Button("Quitar proyecto", role: .destructive) { store.removeProject(office.project) }
-                                    .disabled(!office.worktrees.isEmpty)
-                                    .help(office.worktrees.isEmpty ? "Deja de mostrarlo (no borra nada del disco)" : "Elimina antes sus worktrees")
+                                if !office.project.isReviews {
+                                    Divider()
+                                    Button("Quitar proyecto", role: .destructive) { store.removeProject(office.project) }
+                                        .disabled(!office.worktrees.isEmpty)
+                                        .help(office.worktrees.isEmpty ? "Deja de mostrarlo (no borra nada del disco)" : "Elimina antes sus worktrees")
+                                }
                             }
                         .padding(.horizontal, 8)
                         .padding(.top, 10)
@@ -72,7 +77,8 @@ struct ContentView: View {
                             WorktreeRow(
                                 worktree: worktree, status: attention.statuses[worktree.id],
                                 sync: repoStatus.branches[worktree.id], pullRequest: repoStatus.pullRequests[worktree.id],
-                                warning: repoStatus.warnings[worktree.id], summary: summaries.summaries[worktree.id]
+                                warning: repoStatus.warnings[worktree.id], summary: summaries.summaries[worktree.id],
+                                review: worktree.review ?? reviews.latest[worktree.id]?.review
                             )
                                 .sidebarRow(selected: selection == worktree.id) { selection = worktree.id }
                                 .contextMenu {
@@ -304,9 +310,15 @@ private struct OfficeHeader: View {
             .foregroundStyle(.secondary)
             .help(collapsed ? "Mostrar la oficina y sus worktrees" : "Ocultar la oficina y sus worktrees")
             Text("\(office.worktrees.count)").foregroundStyle(.secondary)
-            Button("Nuevo worktree", systemImage: "plus.circle", action: onNewWorktree)
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
+            if office.project.isReviews {
+                // Its people come on their own: reviewers of other offices' PRs.
+                Image(systemName: "checkmark.seal").foregroundStyle(.secondary)
+                    .help("Aquí trabajan los revisores de las PRs de los demás proyectos")
+            } else {
+                Button("Nuevo worktree", systemImage: "plus.circle", action: onNewWorktree)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+            }
         }
     }
 
@@ -337,6 +349,8 @@ private struct WorktreeDetail: View {
 
     @Environment(OrcaCenter.self) private var orca
     @Environment(BrowserCenter.self) private var browsers
+    @Environment(ReviewCenter.self) private var reviews
+    @Environment(RepoStatusCenter.self) private var repoStatus
 
     /// A worktree from Orca whose agent lives there: here it gets a plain terminal.
     private var agentInOrca: OrcaActivity? {
@@ -352,6 +366,9 @@ private struct WorktreeDetail: View {
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
+                if let review = worktree.review {
+                    ReviewBanner(reviewer: worktree, review: review)
+                }
                 if let inOrca = agentInOrca {
                     HStack(spacing: 10) {
                         Label("Su agente trabaja en Orca\(inOrca.agentState.map { " (\($0))" } ?? ""). Aquí tienes una terminal en su carpeta.",
@@ -417,6 +434,11 @@ private struct WorktreeDetail: View {
                     Button(worktree.agentProfileID == nil ? "Reabrir terminal" : "Reiniciar agente") {
                         Task { await restartAgent() }
                     }
+                    if worktree.review == nil, !project.isReviews {
+                        Divider()
+                        Button("Revisión rápida") { startReview(.quick) }
+                        Button("Revisión exhaustiva") { startReview(.exhaustive) }
+                    }
                     Divider()
                     Button("Abrir en Terminal") { AppActions.openInTerminal(worktree) }
                     Button("Mostrar en Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: worktree.path) }
@@ -434,6 +456,12 @@ private struct WorktreeDetail: View {
                     .help(panelShown ? "Ocultar ficheros, cambios y bitácora" : "Ver ficheros, cambios y bitácora")
                 UpdateButton()
             }
+        }
+    }
+
+    private func startReview(_ kind: ReviewInfo.Kind) {
+        Task {
+            await reviews.review(worktree, in: project, kind: kind, pullRequest: repoStatus.pullRequests[worktree.id]?.number, store: store)
         }
     }
 

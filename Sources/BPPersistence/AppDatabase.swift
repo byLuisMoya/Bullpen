@@ -96,6 +96,13 @@ public final class AppDatabase: Sendable {
         migrator.registerMigration("v10-archive-script") { db in
             try db.alter(table: "project") { t in t.add(column: "archiveScript", .text) }
         }
+        migrator.registerMigration("v11-reviews") { db in
+            try db.alter(table: "project") { t in
+                t.add(column: "reviewAuto", .boolean)
+                t.add(column: "reviewExhaustiveFrom", .integer)
+            }
+            try db.alter(table: "worktree") { t in t.add(column: "review", .text) }
+        }
         return migrator
     }
 }

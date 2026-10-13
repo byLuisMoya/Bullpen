@@ -21,6 +21,8 @@ final class AttentionCenter {
 
     /// Orca's agents, for the worktrees that came from Orca (set by the app).
     @ObservationIgnored var orca: OrcaCenter?
+    /// A worktree's agent has just finished (reviews start from here).
+    @ObservationIgnored var onFinished: ((Worktree) -> Void)?
 
     func start(store: BuildingStore, sessions: SessionManager) async {
         // UNUserNotificationCenter needs a real app bundle (not `swift run`).
@@ -56,6 +58,7 @@ final class AttentionCenter {
     private func changed(_ worktree: Worktree, in project: Project, to status: AgentStatus) {
         // Each finished turn leaves a checkpoint to compare with or go back to (PLAN §11.3).
         if status.state == .done {
+            onFinished?(worktree)
             Task.detached {
                 let repo = try? await Repository.open(at: URL(fileURLWithPath: project.path))
                 let time = Date().formatted(date: .omitted, time: .shortened)

@@ -265,6 +265,55 @@ let fakeB = AgentProfile(id: "fake-b", name: "Fake B", executable: "/bin/echo")
         #expect(!FileManager.default.fileExists(atPath: path.appendingPathComponent("agent-started").path))
     }
 
+    /// A reviewer works in a detached checkout of the PR's commit, in the Reviews office; its
+    /// accepted fixes are committed, pushed to the PR's branch and the reviewed worktree follows.
+    @Test func reviewerChecksOutThePRAndItsFixesGoUpWhenAccepted() async throws {
+        let f = try await Fixture.make(config: "")
+        defer { f.server.stop() }
+        let git = Git()
+        let origin = f.root.appendingPathComponent("origin.git")
+        try await git.run(["init", "-q", "--bare", origin.path], in: f.root)
+        try await git.run(["remote", "add", "origin", origin.path], in: f.repoDir)
+        try await git.run(["push", "-q", "origin", "main"], in: f.repoDir)
+
+        let wt = try await f.workspace.createWorktree(WorktreeRequest(project: f.project, branch: "feature/pr", baseRef: "main"))
+        let wtURL = URL(fileURLWithPath: wt.path)
+        try "v1\n".write(to: wtURL.appendingPathComponent("app.txt"), atomically: true, encoding: .utf8)
+        try await git.run(["add", "."], in: wtURL)
+        try await git.run(["commit", "-q", "-m", "feature"], in: wtURL)
+        try await git.run(["push", "-q", "origin", "feature/pr"], in: wtURL)
+        let head = try await f.workspace.headCommit(of: wt)
+        #expect(await f.workspace.changedFileCount(of: wt) == 1)
+
+        let reviewer = try await f.workspace.createReview(of: wt, in: f.project, kind: .quick, pullRequest: 7,
+                                                          prompt: "/review", agent: Self.fakeAgent)
+        let reviews = try #require(try f.workspace.database.offices().first { $0.project.isReviews })
+        #expect(reviews.worktrees.map(\.id) == [reviewer.id])
+        #expect(reviewer.review?.commit == head && reviewer.baseRef == head && reviewer.review?.phase == .reviewing)
+        let reviewerURL = URL(fileURLWithPath: reviewer.path)
+        #expect(try await git.run(["rev-parse", "HEAD"], in: reviewerURL).trimmingCharacters(in: .whitespacesAndNewlines) == head)
+
+        // The reviewer fixes something (uncommitted); the user accepts it.
+        try "v2\n".write(to: reviewerURL.appendingPathComponent("app.txt"), atomically: true, encoding: .utf8)
+        let applied = try await f.workspace.applyReviewFixes(reviewer)
+        let commit = try #require(applied.commit)
+        #expect(applied.updatedOriginal)
+        #expect(try await git.run(["rev-parse", "feature/pr"], in: origin).trimmingCharacters(in: .whitespacesAndNewlines) == commit)
+        #expect(try String(contentsOf: wtURL.appendingPathComponent("app.txt"), encoding: .utf8) == "v2\n")
+        let saved = try #require(try f.workspace.database.allWorktrees().first { $0.id == reviewer.id })
+        #expect(saved.review?.phase == .applied && saved.review?.appliedCommit == commit)
+
+        try await f.workspace.removeWorktree(saved, in: reviews.project, force: true)
+        #expect(!FileManager.default.fileExists(atPath: reviewer.path))
+        #expect(try f.workspace.database.offices().first { $0.project.isReviews }?.worktrees.isEmpty == true)
+    }
+
+    @Test func readsTheReviewersVerdict() {
+        #expect(ReviewInfo.verdict(in: "VEREDICTO: SE PUEDE SUBIR\nTodo bien.") == true)
+        #expect(ReviewInfo.verdict(in: "Resumen…\n**Veredicto: no se puede subir**\nFalta un test.") == false)
+        #expect(ReviewInfo.verdict(in: "Sin línea de veredicto") == nil)
+    }
+
     @Test func opensAnExistingLocalBranch() async throws {
         let f = try await Fixture.make(config: "")
         defer { f.server.stop() }

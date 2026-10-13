@@ -15,6 +15,7 @@ struct BullpenApp: App {
     @State private var summaries = SummaryCenter()
     @State private var browsers = BrowserCenter()
     @State private var orca = OrcaCenter()
+    @State private var reviews = ReviewCenter()
 
     var body: some Scene {
         WindowGroup("Bullpen", id: "main") {
@@ -30,6 +31,7 @@ struct BullpenApp: App {
                 .environment(summaries)
                 .environment(browsers)
                 .environment(orca)
+                .environment(reviews)
                 .task { browsers.start() }
                 .task {
                     attention.orca = orca
@@ -53,7 +55,11 @@ struct BullpenApp: App {
                     await store.start()
                 }
                 .task { await sessions.startPolling() }
-                .task { await attention.start(store: store, sessions: sessions) }
+                .task {
+                    attention.onFinished = { [reviews] worktree in reviews.agentFinished(worktree) }
+                    await attention.start(store: store, sessions: sessions)
+                }
+                .task { await reviews.start(store: store, sessions: sessions, attention: attention, repoStatus: repoStatus) }
                 .task { await repoStatus.start(store: store) }
                 .task { await DebugSnapshots.run(store: store, navigation: navigation) }
                 .onChange(of: store.offices.flatMap { $0.worktrees.map(\.id) }) { _, _ in
