@@ -8,6 +8,14 @@ import SwiftUI
 final class Navigation {
     /// Selected worktree; nil shows the building.
     var selection: UUID?
+    /// Office to scroll to in the building (set by clicking a project's office in the sidebar).
+    private(set) var officeRequest: (project: UUID, id: UUID)?
+
+    /// Shows the building scrolled to `project`'s office.
+    func showOffice(_ project: UUID) {
+        selection = nil
+        officeRequest = (project, UUID())
+    }
     /// Sidebar shown or hidden (kept here so it can be driven programmatically, e.g. by DebugSnapshots).
     var columnVisibility: NavigationSplitViewVisibility = .all
 

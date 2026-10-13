@@ -9,10 +9,14 @@ struct BuildingView: View {
     @Environment(BuildingStore.self) private var store
     @Environment(AttentionCenter.self) private var attention
     @Environment(RepoStatusCenter.self) private var repoStatus
+    @Environment(Navigation.self) private var navigation
     var onSelect: (UUID) -> Void
     @State private var removingDemo = false
+    /// The office just opened from the sidebar, outlined for a moment.
+    @State private var highlighted: UUID?
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 10) {
                 if AppActions.demoAvailable, store.offices.contains(where: { $0.project.path.hasPrefix("/tmp/bullpen-demo") || $0.project.path.hasPrefix("/private/tmp/bullpen-demo") }) {
@@ -49,10 +53,28 @@ struct BuildingView: View {
                                 .frame(height: OfficeLayer.preferredHeight(desks: office.worktrees.count))
                         }
                         .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(Color.accentColor, lineWidth: 2)
+                                .opacity(highlighted == office.project.id ? 1 : 0)
+                        }
                     }
+                    .id(office.project.id)
                 }
             }
             .padding()
+        }
+        .task(id: navigation.officeRequest?.id) {
+            guard let project = navigation.officeRequest?.project else { return }
+            // Let the building lay out first when it has just replaced a worktree view.
+            try? await Task.sleep(for: .milliseconds(50))
+            withAnimation(.easeInOut(duration: 0.3)) {
+                proxy.scrollTo(project, anchor: .top)
+                highlighted = project
+            }
+            try? await Task.sleep(for: .seconds(1.2))
+            withAnimation(.easeOut(duration: 0.4)) { highlighted = nil }
+        }
         }
         .background(Color(nsColor: .underPageBackgroundColor))
     }
@@ -68,25 +90,35 @@ struct BuildingView: View {
     }
 }
 
-func officeModel(_ office: Office, statuses: [UUID: AgentStatus], warnings: [UUID: WorktreeWarning] = [:]) -> OfficeModel {
-    OfficeModel(desks: office.worktrees.map { worktree in
+/// How long someone waits at the desk with nothing to do before leaving their jacket and going.
+let awayAfter: TimeInterval = 60
+
+func officeModel(_ office: Office, statuses: [UUID: AgentStatus], warnings: [UUID: WorktreeWarning] = [:],
+                 now: Date = Date()) -> OfficeModel {
+    let looks = CharacterLook.distinctJackets(office.worktrees.map { .make(worktreeID: $0.id, agent: $0.agentProfileID) })
+    return OfficeModel(desks: zip(office.worktrees, looks).map { worktree, look in
         let status = statuses[worktree.id]
+        // Statuses refresh every second, so this flips on its own once the minute has passed.
+        let away = status?.state == .idle && status?.since.map { now.timeIntervalSince($0) >= awayAfter } == true
         return DeskModel(
             id: worktree.id,
             name: worktree.ticket?.key ?? worktree.branch,
             state: status?.state ?? .unknown,
-            detail: status.map { $0.detail ?? $0.state.label },
-            look: .make(worktreeID: worktree.id, agent: worktree.agentProfileID),
-            warning: warnings[worktree.id].map { $0.isConflict ? .conflict : .overlap }
+            detail: away ? "se ha ido: esperando instrucciones" : status.map { $0.detail ?? $0.state.label },
+            look: look,
+            warning: warnings[worktree.id].map { $0.isConflict ? .conflict : .overlap },
+            away: away
         )
     })
 }
 
 /// The office strip shown above each project's worktrees in the sidebar. A plain SwiftUI image
-/// (no AppKit layers) so it clips and animates with the sidebar; tap a person to open the worktree.
+/// (no AppKit layers) so it clips and animates with the sidebar; tap a person to open the
+/// worktree, anywhere else to see the office in the building.
 struct MiniOffice: View {
     let office: Office
     let onSelect: (UUID) -> Void
+    let onOpen: () -> Void
     @Environment(AttentionCenter.self) private var attention
     @Environment(RepoStatusCenter.self) private var repoStatus
     @State private var available: CGFloat = 0
@@ -109,7 +141,7 @@ struct MiniOffice: View {
             .contentShape(Rectangle())
             .onTapGesture { location in
                 let slot = Int((location.x - 8) / 34)          // art margin and desk width, 1 pt per art pixel
-                if model.desks.indices.contains(slot) { onSelect(model.desks[slot].id) }
+                if location.x >= 8, model.desks.indices.contains(slot) { onSelect(model.desks[slot].id) } else { onOpen() }
             }
         }
         .frame(width: available > 0 ? available : natural.width, height: natural.height)

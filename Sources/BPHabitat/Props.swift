@@ -16,6 +16,10 @@ public enum Props {
         static let plank: UInt8 = 33, plankAlt: UInt8 = 34, seam: UInt8 = 35, plankLight: UInt8 = 36, floorShadow: UInt8 = 37
         static let coffee: UInt8 = 38, water: UInt8 = 39, cork: UInt8 = 40, corkDark: UInt8 = 41
         static let noteYellow: UInt8 = 42, notePink: UInt8 = 43, noteBlue: UInt8 = 44, plastic: UInt8 = 45, joint: UInt8 = 46
+        static let deskTop: UInt8 = 47, deskRim: UInt8 = 48, deskFront: UInt8 = 49, deskMat: UInt8 = 50, deskEdge: UInt8 = 51
+        static let monitorBack: UInt8 = 52, monitorRim: UInt8 = 53, led: UInt8 = 54, chairCushion: UInt8 = 55
+        static let shadow: UInt8 = 56, lampShine: UInt8 = 57, coffeeLight: UInt8 = 58, lampGlow: UInt8 = 59
+        static let card: UInt8 = 61, cardLight: UInt8 = 62
         /// Recoloured per sprite (bolt, bubble marks).
         static let special: UInt8 = 60
     }
@@ -24,7 +28,7 @@ public enum Props {
         P.wood: RGBA(0xB0743F), P.woodDark: RGBA(0x84542C), P.woodTop: RGBA(0xE0A464), P.woodTopLight: RGBA(0xF0C084),
         P.metal: RGBA(0xC3C8D2), P.metalDark: RGBA(0x8D93A0), P.screen: RGBA(0x8FDCFF),
         P.chair: RGBA(0x3E4555), P.chairDark: RGBA(0x2B303C), P.chairLight: RGBA(0x5A6377),
-        P.lampOn: RGBA(0xFFE08A), P.lampOff: RGBA(0x6B7180), P.lampBody: RGBA(0x3F7F86),
+        P.lampOn: RGBA(0xFFE08A), P.lampOff: RGBA(0x6B7180), P.lampBody: RGBA(0x3A4150),
         P.leaf: RGBA(0x5DAE4B), P.leafDark: RGBA(0x3E8A3A), P.leafLight: RGBA(0x8FD06B), P.pot: RGBA(0xD9774A), P.potDark: RGBA(0xA9542F),
         P.white: RGBA(0xFFFFFF), P.ink: RGBA(0x2A2633), P.accent: RGBA(0xFF8A3D), P.outline: RGBA(0x2A2230),
         P.wall: RGBA(0xEDE5D6), P.wallShade: RGBA(0xD9CEBB), P.trim: RGBA(0x6A5A50), P.baseboard: RGBA(0xB89C7C), P.baseboardDark: RGBA(0x8E7559),
@@ -33,6 +37,10 @@ public enum Props {
         P.coffee: RGBA(0x6B3E26), P.water: RGBA(0x86C9F0), P.cork: RGBA(0xCF9C62), P.corkDark: RGBA(0xAA7944),
         P.noteYellow: RGBA(0xF8E27A), P.notePink: RGBA(0xF4A6C0), P.noteBlue: RGBA(0x9FD3F2), P.plastic: RGBA(0xE4E7EC),
         P.joint: RGBA(0xC09264),
+        P.deskTop: RGBA(0x50566A), P.deskRim: RGBA(0x6E7690), P.deskFront: RGBA(0x343947), P.deskMat: RGBA(0x2C303C), P.deskEdge: RGBA(0x3B4050),
+        P.monitorBack: RGBA(0x30343F), P.monitorRim: RGBA(0x4A5060), P.led: RGBA(0x5BE37D), P.chairCushion: RGBA(0x4A5266),
+        P.shadow: RGBA(0x000000, alpha: 50), P.lampShine: RGBA(0x5E6779), P.lampGlow: RGBA(0xFFF6CF),
+        P.card: RGBA(0x15131B), P.cardLight: RGBA(0x34303F), P.coffeeLight: RGBA(0x9A6440),
     ])
 
     // MARK: Room
@@ -90,100 +98,167 @@ public enum Props {
 
     // MARK: Workstation
 
-    public static let deskWidth = 32, deskHeight = 15
+    public static let deskWidth = 32, deskHeight = 21
 
-    /// Desk seen from above and in front: wide top, drawer panel and legs.
+    /// Modern dark desk seen from above: a deep top (the view is aerial) with a mat under the
+    /// screen, a sliver of the front panel, metal legs and its shadow on the floor.
     public static func desk() -> CGImage? {
         var c = PixelCanvas(width: deskWidth, height: deskHeight)
-        c.rect(1, 1, 30, 1, P.woodTopLight)
-        c.rect(1, 2, 30, 4, P.woodTop)
-        c.rect(1, 6, 30, 1, P.woodDark)
-        c.rect(1, 7, 30, 5, P.wood)
-        c.rect(19, 8, 10, 3, P.woodDark)                           // drawer
-        c.rect(20, 9, 8, 1, P.wood)
-        c.rect(23, 9, 2, 1, P.metal)
-        c.rect(2, 12, 2, 2, P.woodDark)                            // legs
-        c.rect(28, 12, 2, 2, P.woodDark)
-        c.outline(P.outline)
-        return c.image(palette: palette)
-    }
-
-    public static let chairWidth = 22, chairHeight = 16
-
-    /// The office chair's backrest, behind the person.
-    public static func chair() -> CGImage? {
-        var c = PixelCanvas(width: chairWidth, height: chairHeight)
-        c.rect(2, 1, 18, 1, P.chair)
-        c.rect(1, 2, 20, 13, P.chair)
-        c.rect(3, 2, 16, 1, P.chairLight)
-        c.rect(2, 3, 1, 9, P.chairLight)
-        c.rect(1, 12, 20, 3, P.chairDark)
-        c.rect(19, 3, 1, 9, P.chairDark)
-        c.outline(P.outline)
-        return c.image(palette: palette)
-    }
-
-    public static let laptopWidth = 12, laptopHeight = 9
-
-    /// Laptop with its lid towards us. `glow` lights the lid edge; `closed` lies it flat.
-    public static func laptop(glow: Bool, closed: Bool = false) -> CGImage? {
-        var c = PixelCanvas(width: laptopWidth, height: laptopHeight)
-        if closed {
-            c.rect(2, 5, 8, 1, P.metal)
-            c.rect(1, 6, 10, 1, P.metalDark)
-        } else {
-            c.rect(2, 1, 8, 6, P.metal)
-            c.rect(2, 1, 8, 1, glow ? P.screen : P.metalDark)
-            c.rect(9, 2, 1, 5, P.metalDark)
-            c.rect(5, 3, 2, 2, P.white)                            // plain mark, no brand
-            c.rect(1, 7, 10, 1, P.metalDark)
+        c.rect(1, 1, 30, 1, P.deskRim)
+        c.rect(1, 2, 30, 12, P.deskTop)
+        c.rect(1, 2, 1, 12, P.deskRim)
+        c.rect(30, 2, 1, 12, P.deskEdge)
+        c.rect(7, 2, 18, 6, P.deskMat)                             // desk mat under the screen
+        c.rect(7, 7, 18, 1, P.deskEdge)
+        for i in 0..<3 { c.dot(4 + i, 12 - i, P.deskRim) }         // sheen on the top
+        for i in 0..<2 { c.dot(25 + i, 12 - i, P.deskRim) }
+        c.rect(1, 14, 30, 1, P.deskRim)                            // front lip
+        c.rect(1, 15, 30, 2, P.deskFront)
+        c.rect(3, 16, 26, 1, P.deskEdge)
+        // Legs: square metal tubes under the front corners.
+        for x in [2, 27] {
+            c.rect(x, 17, 3, 2, P.metalDark)
+            c.rect(x, 17, 1, 2, P.metal)
         }
         c.outline(P.outline)
+        c.rect(6, 18, 20, 1, P.shadow)                             // shadow under the desk
+        c.rect(3, 20, 26, 1, P.shadow)
         return c.image(palette: palette)
     }
 
-    public static let lampWidth = 10, lampHeight = 15
+    public static let chairWidth = 22, chairHeight = 13
 
-    /// Desk lamp; its bulb is lit while somebody works in the office.
-    public static func lamp(on: Bool) -> CGImage? {
-        var c = PixelCanvas(width: lampWidth, height: lampHeight)
+    /// An office chair seen from above, behind the person: rounded backrest with a tufted cushion.
+    public static func chair() -> CGImage? {
+        var c = PixelCanvas(width: chairWidth, height: chairHeight)
         c.stamp([
-            "..........",
-            "...bbbb...",
-            "..bbbbbB..",
-            ".bbbbbbBB.",
-            "...LLLL...",
-            "...p......",
-            "...p......",
-            "...p......",
-            "....p.....",
-            "....p.....",
-            "....p.....",
-            "....p.....",
-            "..bbbbb...",
-            "..BBBBB...",
-        ], at: 0, 0, key: ["b": P.lampBody, "B": P.chairDark, "p": P.metalDark, "L": on ? P.lampOn : P.lampOff])
+            "...BBBBBBBBBBBBBBBB...",
+            "..BBLLLLLLLLLLLLLLBB..",
+            ".BBLccccccccccccccLBB.",
+            ".BLccccccccccccccccdB.",
+            ".BLcctcccccccccctccdB.",
+            ".BLccccccccccccccccdB.",
+            ".BLcctcccccccccctccdB.",
+            ".BBccccccccccccccccBB.",
+            "..BBddddddddddddddBB..",
+            "...BBBBBBBBBBBBBBBB...",
+        ], at: 0, 1, key: ["B": P.chair, "L": P.chairLight, "c": P.chairCushion, "d": P.chairDark, "t": P.chairDark])
         c.outline(P.outline)
-        if on { c.rect(3, 4, 4, 1, P.lampOn) }
         return c.image(palette: palette)
     }
 
-    public static let mugWidth = 7, mugHeight = 7
+    public static let monitorWidth = 16, monitorHeight = 9
 
+    /// A monitor seen from above and behind: the back of the screen and its round foot. `on`
+    /// lights the power LED; `glow` spills the screen's light around its edges while the agent works.
+    public static func monitor(on: Bool, glow: Bool) -> CGImage? {
+        var c = PixelCanvas(width: monitorWidth, height: monitorHeight)
+        c.rect(2, 1, 12, 1, P.monitorRim)
+        c.rect(2, 2, 12, 4, P.monitorBack)
+        for x in stride(from: 5, through: 10, by: 2) { c.dot(x, 3, P.outline) }   // vents
+        c.rect(7, 6, 2, 1, P.metalDark)                            // neck
+        c.rect(5, 7, 6, 1, P.metal)                                // foot
+        c.outline(P.outline)
+        if on { c.dot(12, 5, P.led) }
+        if glow {
+            c.rect(3, 0, 10, 1, P.screen)
+            c.rect(1, 2, 1, 3, P.screen)
+            c.rect(14, 2, 1, 3, P.screen)
+        }
+        return c.image(palette: palette)
+    }
+
+    public static let nameCardHeight = 7
+
+    /// The name card under each desk, `width` art pixels wide: black, notched corners and a
+    /// faint top highlight.
+    public static func nameCard(width: Int) -> CGImage? {
+        let h = nameCardHeight
+        var c = PixelCanvas(width: width, height: h)
+        c.rect(1, 0, width - 2, h, P.outline)
+        c.rect(0, 1, width, h - 2, P.outline)
+        c.rect(1, 1, width - 2, h - 2, P.card)
+        c.rect(1, 1, width - 2, 1, P.cardLight)
+        return c.image(palette: palette)
+    }
+
+    public static let mugWidth = 9, mugHeight = 8
+
+    /// A coffee mug seen from above: round rim, coffee inside, handle to the right.
     public static func mug() -> CGImage? {
         var c = PixelCanvas(width: mugWidth, height: mugHeight)
-        c.rect(1, 1, 4, 5, P.white)
-        c.rect(1, 1, 4, 1, P.coffee)
-        c.rect(5, 2, 1, 1, P.white)
-        c.rect(5, 4, 1, 1, P.white)
-        c.rect(4, 2, 1, 4, P.plastic)
+        c.stamp([
+            ".www..",
+            "wcccwh",
+            "wcccw.h",
+            "wcccwh",
+            ".wpw..",
+        ], at: 1, 1, key: ["w": P.white, "c": P.coffee, "p": P.plastic, "h": P.white])
+        c.dot(3, 2, P.coffeeLight)
         c.outline(P.outline)
+        c.rect(2, 7, 4, 1, P.shadow)
+        return c.image(palette: palette)
+    }
+
+    public static let notepadWidth = 10, notepadHeight = 7
+
+    /// A notepad with a pencil, lying on the desk.
+    public static func notepad() -> CGImage? {
+        var c = PixelCanvas(width: notepadWidth, height: notepadHeight)
+        c.rect(1, 1, 7, 5, P.white)
+        c.rect(1, 1, 7, 1, P.noteYellow)
+        c.rect(2, 3, 5, 1, P.plastic)
+        c.rect(2, 4, 4, 1, P.plastic)
+        c.rect(8, 1, 1, 4, P.accent)                               // pencil
+        c.dot(8, 5, P.ink)
+        c.outline(P.outline)
+        return c.image(palette: palette)
+    }
+
+    public static let ceilingLampWidth = 14, ceilingLampHeight = 16
+
+    /// Pendant lamp hanging from the ceiling over a desk: a cord, a metal dome and the bulb,
+    /// glowing when `on`.
+    public static func ceilingLamp(on: Bool) -> CGImage? {
+        var c = PixelCanvas(width: ceilingLampWidth, height: ceilingLampHeight)
+        c.rect(6, 0, 1, 9, P.metalDark)                            // cord
+        c.stamp([
+            "....bbbb....",
+            "..bbbbbbbb..",
+            ".bbbbbbbbbB.",
+            "BBBBBBBBBBBB",
+        ], at: 1, 9, key: ["b": P.lampBody, "B": P.chairDark])
+        c.rect(3, 10, 3, 1, P.lampShine)
+        c.rect(4, 13, 6, 1, on ? P.lampOn : P.lampOff)             // bulb under the dome
+        c.outline(P.outline)
+        if on { c.rect(5, 14, 4, 1, P.lampGlow) }
+        return c.image(palette: palette)
+    }
+
+    public static let deskPlantWidth = 11, deskPlantHeight = 13
+
+    /// Small bushy plant in a white pot, for the corner of the desk.
+    public static func deskPlant() -> CGImage? {
+        var c = PixelCanvas(width: deskPlantWidth, height: deskPlantHeight)
+        c.stamp([
+            "...lL.l..",
+            ".lLLdLLl.",
+            "LLdLLLLLL",
+            "LLLLdLLdL",
+            "LdLLLLLLL",
+            ".LLdLLdL.",
+        ], at: 1, 1, key: ["l": P.leafLight, "L": P.leaf, "d": P.leafDark])
+        c.rect(3, 7, 5, 1, P.plastic)
+        c.rect(3, 8, 5, 3, P.white)
+        c.rect(6, 8, 1, 3, P.plastic)
+        c.outline(P.outline, diagonals: true)
+        c.rect(3, 12, 5, 1, P.shadow)
         return c.image(palette: palette)
     }
 
     // MARK: Decor
 
-    public static let plantWidth = 16, plantHeight = 26
+    public static let plantWidth = 18, plantHeight = 28
 
     public static func plant() -> CGImage? {
         var c = PixelCanvas(width: plantWidth, height: plantHeight)
@@ -203,17 +278,18 @@ public enum Props {
             "..LLLLdLLLLLL...",
             "...dLLLLLdLL....",
             "....LLLdLLL.....",
-        ], at: 0, 0, key: ["l": P.leafLight, "L": P.leaf, "d": P.leafDark])
-        c.rect(2, 15, 12, 2, P.pot)
-        c.rect(2, 16, 12, 1, P.potDark)
-        c.rect(3, 17, 10, 7, P.pot)
-        c.rect(11, 17, 2, 7, P.potDark)
-        c.rect(4, 18, 1, 4, P.accent)
-        c.outline(P.outline)
+        ], at: 1, 1, key: ["l": P.leafLight, "L": P.leaf, "d": P.leafDark])
+        c.rect(3, 16, 12, 2, P.pot)
+        c.rect(3, 17, 12, 1, P.potDark)
+        c.rect(4, 18, 10, 7, P.pot)
+        c.rect(12, 18, 2, 7, P.potDark)
+        c.rect(5, 19, 1, 4, P.accent)
+        c.outline(P.outline, diagonals: true)
+        c.rect(3, 26, 12, 1, P.shadow)
         return c.image(palette: palette)
     }
 
-    public static let coolerWidth = 12, coolerHeight = 28
+    public static let coolerWidth = 12, coolerHeight = 29
 
     public static func waterCooler() -> CGImage? {
         var c = PixelCanvas(width: coolerWidth, height: coolerHeight)
@@ -228,6 +304,7 @@ public enum Props {
         c.rect(3, 17, 6, 1, P.metalDark)
         c.rect(2, 24, 8, 2, P.metalDark)
         c.outline(P.outline)
+        c.rect(1, 27, 10, 1, P.shadow)
         return c.image(palette: palette)
     }
 

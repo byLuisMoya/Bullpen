@@ -36,13 +36,15 @@ public struct PixelCanvas: Equatable, Sendable {
     }
 
     /// Surrounds every drawn shape with a 1-pixel `color` border (the outlined pixel-art look).
-    public mutating func outline(_ color: UInt8) {
+    /// `diagonals` also closes corners, for ragged shapes like leaves.
+    public mutating func outline(_ color: UInt8, diagonals: Bool = false) {
         let source = self
+        let around = diagonals
+            ? [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)]
+            : [(-1, 0), (1, 0), (0, -1), (0, 1)]
         for y in 0..<height {
             for x in 0..<width where source[x, y] == 0 {
-                if source[x - 1, y] != 0 || source[x + 1, y] != 0 || source[x, y - 1] != 0 || source[x, y + 1] != 0 {
-                    self[x, y] = color
-                }
+                if around.contains(where: { source[x + $0.0, y + $0.1] != 0 }) { self[x, y] = color }
             }
         }
     }

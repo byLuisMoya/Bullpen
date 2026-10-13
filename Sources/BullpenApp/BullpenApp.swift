@@ -11,6 +11,7 @@ struct BullpenApp: App {
     @State private var navigation = Navigation()
     @State private var reviewNotes = ReviewNotes()
     @State private var usage = UsageCenter()
+    @State private var updater = Updater()
 
     var body: some Scene {
         WindowGroup("Bullpen", id: "main") {
@@ -22,7 +23,9 @@ struct BullpenApp: App {
                 .environment(navigation)
                 .environment(reviewNotes)
                 .environment(usage)
+                .environment(updater)
                 .task { await usage.start(store: store, sessions: sessions) }
+                .task { await updater.start() }
                 .task { await SeasonalIcon.keepUpdated() }
                 .task {
                     store.connectToDaemon = { [sessions] in try await sessions.connection() }
@@ -48,6 +51,8 @@ struct BullpenApp: App {
             CommandGroup(before: .toolbar) {
                 Button("Mostrar u ocultar la barra lateral") { withAnimation(Navigation.sidebarAnimation) { navigation.toggleSidebar() } }
                     .keyboardShortcut("s", modifiers: [.control, .command])
+                Button("Ver las oficinas") { navigation.selection = nil }
+                    .keyboardShortcut("0", modifiers: .command)
                 Divider()
             }
             CommandGroup(after: .help) {

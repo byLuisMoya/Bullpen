@@ -50,7 +50,27 @@ struct ReviewView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HSplitView {
+            // Actions here rather than in the window toolbar: this view lives in the side panel.
+            HStack(spacing: 4) {
+                Button("Recargar", systemImage: "arrow.clockwise") { Task { await load() } }
+                    .help("Volver a leer los cambios")
+                Button(verifying ? "Verificando…" : "Verificar", systemImage: "checkmark.seal") { Task { await verify() } }
+                    .disabled(verifying)
+                    .help("Ejecuta [verify] de .bullpen.toml en este worktree")
+                Spacer()
+                Button("Crear PR…", systemImage: "arrow.triangle.pull") { showingPR = true }
+                    .disabled(repoStatus.pullRequests[worktree.id]?.state == .open || repoStatus.pullRequests[worktree.id]?.state == .draft)
+                    .help(repoStatus.pullRequests[worktree.id].map { "Ya existe la PR #\($0.number)" } ?? "Subir la rama y abrir una PR")
+            }
+            .buttonStyle(.borderless)
+            .labelStyle(.titleAndIcon)
+            .font(.callout)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            Divider()
+            // Stacked: it lives in the narrow panel beside the terminal.
+            VSplitView {
+                if !files.isEmpty {
                 List(files, selection: $selectedPath) { file in
                     HStack(spacing: 6) {
                         Text(file.status.rawValue)
@@ -64,7 +84,8 @@ struct ReviewView: View {
                     }
                     .tag(file.path)
                 }
-                .frame(minWidth: 200, idealWidth: 260, maxWidth: 360)
+                .frame(minHeight: 80, idealHeight: 150)
+                }
 
                 Group {
                     if let file = files.first(where: { $0.path == selectedPath }) {
@@ -79,30 +100,21 @@ struct ReviewView: View {
                         ContentUnavailableView("Elige un fichero", systemImage: "doc.text")
                     }
                 }
-                .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, minHeight: 200, maxHeight: .infinity)
             }
             Divider()
             HStack {
-                Text("\(files.count) fichero(s) · \(comments.count) comentario(s)").foregroundStyle(.secondary)
+                Text("\(files.count) fichero(s) · \(comments.count) comentario(s)")
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
-                Button("Descartar comentarios", role: .destructive) { notes.comments[worktree.id] = [] }
+                Button("Descartar", role: .destructive) { notes.comments[worktree.id] = [] }
+                    .help("Descartar los comentarios de la revisión")
                     .disabled(comments.isEmpty)
                 Button("Enviar al agente") { Task { await sendToAgent() } }
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(comments.isEmpty)
             }
             .padding(8)
-        }
-        .toolbar {
-            ToolbarItemGroup {
-                Button("Recargar", systemImage: "arrow.clockwise") { Task { await load() } }
-                Button(verifying ? "Verificando…" : "Verificar", systemImage: "checkmark.seal") { Task { await verify() } }
-                    .disabled(verifying)
-                    .help("Ejecuta [verify] de .bullpen.toml en este worktree")
-                Button("Crear PR…", systemImage: "arrow.triangle.pull") { showingPR = true }
-                    .disabled(repoStatus.pullRequests[worktree.id]?.state == .open || repoStatus.pullRequests[worktree.id]?.state == .draft)
-                    .help(repoStatus.pullRequests[worktree.id].map { "Ya existe la PR #\($0.number)" } ?? "Subir la rama y abrir una PR")
-            }
         }
         .sheet(isPresented: $showingPR) {
             CreatePRSheet(worktree: worktree, project: project)

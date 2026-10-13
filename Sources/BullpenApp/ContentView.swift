@@ -1,3 +1,4 @@
+import BPAgents
 import BPCore
 import BPGit
 import BPPersistence
@@ -40,7 +41,7 @@ struct ContentView: View {
                 ForEach(store.offices) { office in
                     Section {
                         if !collapsedProjects.contains(office.project.id) {
-                        MiniOffice(office: office) { selection = $0 }
+                        MiniOffice(office: office, onSelect: { selection = $0 }, onOpen: { navigation.showOffice(office.project.id) })
                             .selectionDisabled()
                             .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
                         ForEach(office.worktrees) { worktree in
@@ -114,7 +115,7 @@ struct ContentView: View {
             }
             Group {
             if let (worktree, project) = selectedWorktree {
-                WorktreeDetail(worktree: worktree, project: project)
+                WorktreeDetail(worktree: worktree, project: project) { isImporting = true }
                     .id(worktree.id)
                     .navigationTitle(worktree.branch)
                     .navigationSubtitle(worktree.path)
@@ -149,14 +150,15 @@ struct ContentView: View {
                 }
                 .help("Mostrar u ocultar la barra lateral (⌃⌘S)")
             }
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button(buildingName.isEmpty ? BuildingName.standard : buildingName, systemImage: "building.2") { selection = nil }
-                    .help("Ver todas las oficinas (⌘0)")
-                    .keyboardShortcut("0", modifiers: .command)
-                Button("Uso", systemImage: "chart.bar") { openWindow(id: "usage") }
-                    .help("Uso y coste (⌘⇧U)")
-                Button("Añadir proyecto", systemImage: "plus") { isImporting = true }
-                    .help("Añadir un repositorio git")
+            // With a worktree open, its toolbar carries these too, so they all line up on the right.
+            if selectedWorktree == nil {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button("Añadir proyecto", systemImage: "plus") { isImporting = true }
+                        .help("Añadir un repositorio git")
+                    Button("Uso", systemImage: "chart.bar") { openWindow(id: "usage") }
+                        .help("Uso y coste (⌘⇧U)")
+                    UpdateButton()
+                }
             }
         }
         .fileImporter(isPresented: $isImporting, allowedContentTypes: [.folder]) { result in
@@ -273,66 +275,59 @@ private struct OfficeHeader: View {
     }
 }
 
-/// Terminal and review for one worktree. The terminal stays mounted while reviewing so it keeps its state.
+/// One worktree: its terminal fills the window; files, changes and the log open in a panel on
+/// the right (toolbar button), so the terminal never leaves the screen.
 private struct WorktreeDetail: View {
     let worktree: Worktree
     let project: Project
-    // BULLPEN_SNAPSHOT_TAB=changes opens the review tab (for DebugSnapshots).
+    var onAddProject: () -> Void
+    @Environment(\.openWindow) private var openWindow
     @Environment(SessionManager.self) private var sessions
     @Environment(BuildingStore.self) private var store
-    @State private var tab: Tab = switch ProcessInfo.processInfo.environment["BULLPEN_SNAPSHOT_TAB"] {
-    case "changes": .changes
-    case "compare": .compare
-    case "log": .log
-    case "files": .files
-    default: .terminal
-    }
-    @Environment(ReviewNotes.self) private var notes
+    @Environment(AttentionCenter.self) private var attention
+    @State private var restarting = false
+    // BULLPEN_SNAPSHOT_TAB=changes opens the panel on that tab (for DebugSnapshots).
+    @AppStorage("worktreePanel.shown") private var panelShown = ProcessInfo.processInfo.environment["BULLPEN_SNAPSHOT_TAB"] != nil
 
-    enum Tab: Hashable { case terminal, changes, files, compare, log }
+    /// The worktree has an agent but it isn't running (it exited, or never started).
+    private var agentStopped: Bool {
+        worktree.agentProfileID != nil && attention.statuses[worktree.id]?.state == .dead
+    }
 
     var body: some View {
         ZStack {
-            TerminalPane(worktree: worktree, environment: (try? WorktreeEnvironment.load(project: project, worktree: worktree))?.environment ?? [:])
-                .opacity(tab == .terminal ? 1 : 0)
-                .allowsHitTesting(tab == .terminal)
-            if tab == .changes {
-                ReviewView(worktree: worktree, project: project)
-            }
-            if tab == .files {
-                FilesView(worktree: worktree, project: project).background(Color(nsColor: .windowBackgroundColor))
-            }
-            if tab == .log {
-                SessionLogView(worktree: worktree).background(Color(nsColor: .windowBackgroundColor))
-            }
-            if tab == .compare, let runID = worktree.runID {
-                RunCompareView(runID: runID, project: project)
-                    .background(Color(nsColor: .windowBackgroundColor))
+            VStack(spacing: 0) {
+                if agentStopped {
+                    HStack(spacing: 10) {
+                        Label("\(AgentProfile.named(worktree.agentProfileID)?.name ?? "El agente") no está en ejecución",
+                              systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Spacer()
+                        Button(restarting ? "Reiniciando…" : "Reiniciar agente") { Task { await restartAgent() } }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .disabled(restarting)
+                    }
+                    .font(.callout)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.bar)
+                    .overlay(alignment: .bottom) { Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1) }
+                }
+                TerminalPane(worktree: worktree, environment: (try? WorktreeEnvironment.load(project: project, worktree: worktree))?.environment ?? [:])
             }
         }
+        .inspector(isPresented: $panelShown) {
+            WorktreePanel(worktree: worktree, project: project)
+                .inspectorColumnWidth(min: 300, ideal: 380, max: 900)
+        }
+        // Everything on the right, in one group so the order holds: agent, add project, usage, panel.
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                Picker("Vista", selection: $tab) {
-                    Text("Terminal").tag(Tab.terminal)
-                    Text(changesLabel).tag(Tab.changes)
-                    Text("Ficheros").tag(Tab.files)
-                    Text("Bitácora").tag(Tab.log)
-                    if worktree.runID != nil { Text("Comparar").tag(Tab.compare) }
-                }
-                .pickerStyle(.segmented)
-                .fixedSize()
-            }
-            ToolbarItem {
+            ToolbarItemGroup(placement: .primaryAction) {
                 Menu {
                     Button("Interrumpir (Ctrl-C)") { sessions.interrupt(worktree) }
                     Button(worktree.agentProfileID == nil ? "Reabrir terminal" : "Reiniciar agente") {
-                        Task {
-                            do {
-                                let env = (try? WorktreeEnvironment.load(project: project, worktree: worktree))?.environment ?? [:]
-                                try await sessions.restartAgent(worktree, environment: env)
-                                tab = .terminal
-                            } catch { store.errorMessage = error.localizedDescription }
-                        }
+                        Task { await restartAgent() }
                     }
                     Divider()
                     Button("Abrir en Terminal") { AppActions.openInTerminal(worktree) }
@@ -343,14 +338,26 @@ private struct WorktreeDetail: View {
                 }
                 .fixedSize()
                 .help("Interrumpir o reiniciar el agente, abrir el worktree en Terminal o Finder")
+                Button("Añadir proyecto", systemImage: "plus", action: onAddProject)
+                    .help("Añadir un repositorio git")
+                Button("Uso", systemImage: "chart.bar") { openWindow(id: "usage") }
+                    .help("Uso y coste (⌘⇧U)")
+                Button("Panel", systemImage: "sidebar.right") { withAnimation { panelShown.toggle() } }
+                    .help(panelShown ? "Ocultar ficheros, cambios y bitácora" : "Ver ficheros, cambios y bitácora")
+                UpdateButton()
             }
         }
     }
 
-    private var changesLabel: String {
-        let count = notes.comments[worktree.id]?.count ?? 0
-        return count > 0 ? "Cambios (\(count))" : "Cambios"
+    private func restartAgent() async {
+        restarting = true
+        defer { restarting = false }
+        do {
+            let env = (try? WorktreeEnvironment.load(project: project, worktree: worktree))?.environment ?? [:]
+            try await sessions.restartAgent(worktree, environment: env)
+        } catch { store.errorMessage = error.localizedDescription }
     }
+
 }
 
 /// The sidebar: a column whose width SwiftUI animates between 0 and `width`. The content keeps

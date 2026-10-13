@@ -220,3 +220,16 @@ func collect(_ client: SessionClient, session: String, timeout: Double = 5, unti
         #expect(text == "uno dos tres")
     }
 }
+
+@Suite struct ShellEnvironmentTests {
+    @Test func parsesPathBetweenMarkers() {
+        #expect(ShellEnvironment.parse("Welcome!\n__BULLPEN_PATH__/a:/b__BULLPEN_PATH__") == "/a:/b")
+        #expect(ShellEnvironment.parse("no markers") == nil)
+    }
+
+    /// The user's interactive PATH includes what their rc files add.
+    @Test func resolvesAPathWithSystemDirectories() {
+        let path = ShellEnvironment.userPath
+        #expect(path?.contains("/usr/bin") == true)
+    }
+}

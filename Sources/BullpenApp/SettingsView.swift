@@ -60,11 +60,15 @@ private struct ModelSettings: View {
             }
             Section("Claves (se guardan en el Llavero)") {
                 ForEach(ProviderID.allCases.filter(\.needsKey)) { provider in
-                    SecureField(provider.name, text: Binding(
-                        get: { keys[provider] ?? "" },
-                        set: { keys[provider] = $0 }
-                    ))
-                    .onSubmit { save(provider) }
+                    LabeledContent(provider.name) {
+                        SecureField(provider.name, text: Binding(
+                            get: { keys[provider] ?? "" },
+                            set: { keys[provider] = $0 }
+                        ))
+                        .labelsHidden()
+                        .frame(width: 100)
+                        .onSubmit { save(provider) }
+                    }
                 }
                 Button("Guardar claves") { ProviderID.allCases.filter(\.needsKey).forEach(save) }
             }
@@ -152,8 +156,13 @@ private struct IntegrationSettings: View {
                 Text("Los issues abiertos del repo aparecen en «Desde ticket…». Las PR incluyen «Closes #n».")
             }
             Section {
-                SecureField("Clave personal de Linear", text: $linearKey)
-                    .onSubmit(save)
+                LabeledContent("Clave personal de Linear") {
+                    // Narrow on purpose: the key is hidden, a full-width row is only dots.
+                    SecureField("Clave personal de Linear", text: $linearKey, prompt: Text("lin_api…"))
+                        .labelsHidden()
+                        .frame(width: 100)
+                        .onSubmit(save)
+                }
                 Toggle("Mover a In Progress al crear y a In Review al abrir la PR", isOn: $updateLinear)
                 Button("Guardar", action: save)
             } header: {

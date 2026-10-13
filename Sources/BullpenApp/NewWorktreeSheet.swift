@@ -3,6 +3,7 @@ import BPCore
 import BPEnv
 import BPGit
 import BPIntegrations
+import BPSessions
 import BPWorkspace
 import SwiftUI
 
@@ -714,21 +715,14 @@ extension NewWorktreeSheet {
         dismiss()
     }
 
-    /// Looks the agents up in the login shell's PATH (a Finder-launched app has a minimal PATH).
+    /// Looks the agents up in the PATH of the user's terminal (a Finder-launched app has a
+    /// minimal PATH, and a non-interactive shell misses what ~/.zshrc adds).
     private func detectInstalledAgents() async {
-        for profile in AgentProfile.all {
-            let found = await Task.detached { () -> Bool in
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
-                process.arguments = ["-l", "-c", "command -v \(shellQuote(profile.executable))"]
-                process.standardOutput = FileHandle.nullDevice
-                process.standardError = FileHandle.nullDevice
-                guard (try? process.run()) != nil else { return false }
-                process.waitUntilExit()
-                return process.terminationStatus == 0
-            }.value
-            installed[profile.id] = found
-        }
+        let profiles = AgentProfile.all
+        let found = await Task.detached {
+            Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, ShellEnvironment.locate($0.executable) != nil) })
+        }.value
+        installed = found
     }
 }
 

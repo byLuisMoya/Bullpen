@@ -11,8 +11,12 @@ public struct DeskModel: Equatable, Sendable, Identifiable {
     public var look: CharacterLook
     /// ⚡ on the desk: this worktree overlaps (yellow) or conflicts (red) with another one.
     public var warning: DeskWarning?
+    /// Waiting with nothing to do for a while: the person has left their jacket and gone.
+    public var away: Bool
 
-    public init(id: UUID, name: String, state: AgentState, detail: String? = nil, look: CharacterLook, warning: DeskWarning? = nil) {
+    public init(id: UUID, name: String, state: AgentState, detail: String? = nil, look: CharacterLook, warning: DeskWarning? = nil,
+                away: Bool = false) {
+        self.away = away
         self.id = id
         self.name = name
         self.state = state
@@ -35,13 +39,13 @@ public struct OfficeModel: Equatable, Sendable {
 }
 
 /// Core Animation scene for one office: a back wall with windows, a wooden floor and one
-/// workstation per worktree, each on a floor zone tinted by the agent's state. Sprite animations
+/// workstation per worktree, its branch on a name card under the desk. Sprite animations
 /// run in the render server, so a visible office costs almost no CPU; `isPaused` freezes
 /// everything when nobody is looking.
 public final class OfficeLayer: CALayer {
     /// Points per art pixel.
     public static let scale: CGFloat = 3
-    static let slot = 34, margin = 8, wallHeight = 20, floorHeight = 42, decorWidth = 34
+    static let slot = 34, margin = 8, wallHeight = 20, floorHeight = 48, decorWidth = 34
     /// Every office has at least this many desks; the ones without a worktree stand empty.
     public static let minimumDesks = 4
     public static var openHeight: CGFloat { CGFloat(wallHeight + floorHeight) * scale }
@@ -50,6 +54,9 @@ public final class OfficeLayer: CALayer {
     private var nodes: [UUID: DeskNode] = [:]
     private let wall = CALayer(), floorLayer = CALayer(), darkness = CAShapeLayer()
     private let decor = CALayer(), closedSign = CATextLayer()
+    /// One pendant lamp per desk slot, and the cones of light under the lit ones.
+    private var lamps: [CALayer] = []
+    private let beams = CALayer(), penumbra = CAShapeLayer()
     /// Furnished desks nobody uses yet, so even a closed office reads as an office.
     private var vacant: [CALayer] = []
     private var room: (width: Int, boardSlot: Int) = (0, 0)
@@ -66,6 +73,10 @@ public final class OfficeLayer: CALayer {
         darkness.fillColor = CGColor(srgbRed: 0.05, green: 0.06, blue: 0.14, alpha: 0.72)
         darkness.fillRule = .evenOdd
         darkness.zPosition = 10
+        penumbra.fillColor = CGColor(srgbRed: 0.05, green: 0.06, blue: 0.14, alpha: 0.4)
+        penumbra.fillRule = .evenOdd
+        penumbra.zPosition = 10
+        beams.zPosition = 9
         closedSign.string = "cerrado"
         closedSign.fontSize = 11
         closedSign.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
@@ -73,7 +84,7 @@ public final class OfficeLayer: CALayer {
         closedSign.alignmentMode = .left
         closedSign.zPosition = 11
         closedSign.contentsScale = 2
-        [wall, floorLayer, decor, darkness, closedSign].forEach(addSublayer)
+        [wall, floorLayer, decor, beams, darkness, penumbra, closedSign].forEach(addSublayer)
     }
 
     public override init(layer: Any) { super.init(layer: layer) }
@@ -112,8 +123,8 @@ public final class OfficeLayer: CALayer {
             let node = nodes[desk.id] ?? DeskNode(parent: self)
             let previous = old.desks.first { $0.id == desk.id }
             node.place(at: Self.slotX(index))
-            node.apply(desk, previous: previous, lit: model.lighting != .off, reduceMotion: reduceMotion)
-            node.label.isHidden = isCompact
+            node.apply(desk, previous: previous, reduceMotion: reduceMotion)
+            node.card.isHidden = isCompact
             nodes[desk.id] = node
         }
         layoutVacantDesks()
@@ -143,7 +154,7 @@ public final class OfficeLayer: CALayer {
         let wanted = Self.slots(model.desks.count) - model.desks.count
         while vacant.count < wanted {
             let layer = CALayer()
-            DeskNode.furnish(layer, lit: false)
+            DeskNode.furnish(layer)
             insertSublayer(layer, below: darkness)
             vacant.append(layer)
         }
@@ -159,30 +170,91 @@ public final class OfficeLayer: CALayer {
         let s = Self.scale
         let x = Self.slotX(Self.slots(model.desks.count)) + 2 * s
         decor.addSublayer(sprite(Props.board(), x: x + 4 * s, y: 3 * s, w: Props.boardWidth, h: Props.boardHeight))
-        decor.addSublayer(sprite(Props.plant(), x: x, y: 31 * s, w: Props.plantWidth, h: Props.plantHeight))
-        decor.addSublayer(sprite(Props.waterCooler(), x: x + 17 * s, y: 29 * s, w: Props.coolerWidth, h: Props.coolerHeight))
+        decor.addSublayer(sprite(Props.plant(), x: x - s, y: 34 * s, w: Props.plantWidth, h: Props.plantHeight))
+        decor.addSublayer(sprite(Props.waterCooler(), x: x + 17 * s, y: 33 * s, w: Props.coolerWidth, h: Props.coolerHeight))
     }
 
-    /// 0 worktrees: dark, with nobody at the empty desks. 1: only that desk's lamp. 2+: all lights on (PLAN §9.2).
+    /// Ceiling lamps over every desk (PLAN §9.2). 0 worktrees: all off, the room in the dark.
+    /// 1: only that desk's lamp, a lonely cone of light in a dark room. 2+: every lamp on and
+    /// the whole room lit.
     private func layoutLighting() {
         let s = Self.scale
+        let slots = Self.slots(model.desks.count)
+        while lamps.count < slots {
+            let lamp = CALayer()
+            lamp.magnificationFilter = .nearest
+            lamp.minificationFilter = .nearest
+            addSublayer(lamp)
+            lamps.append(lamp)
+        }
+        while lamps.count > slots { lamps.removeLast().removeFromSuperlayer() }
+        let lit = (0..<slots).map { model.lighting == .allOn || (model.lighting == .singleDesk && $0 == 0) }
+        for (i, lamp) in lamps.enumerated() {
+            lamp.contents = Props.ceilingLamp(on: lit[i])
+            lamp.frame = CGRect(x: Self.slotX(i) + 10 * s, y: 0, width: CGFloat(Props.ceilingLampWidth) * s,
+                                height: CGFloat(Props.ceilingLampHeight) * s)
+            // A lit lamp shines above the darkness; an unlit one sits in it.
+            lamp.zPosition = lit[i] ? 11 : 9
+        }
+
+        beams.frame = bounds
+        beams.sublayers?.forEach { $0.removeFromSuperlayer() }
+        let strength: CGFloat = model.lighting == .singleDesk ? 1 : 0.45
+        for i in 0..<slots where lit[i] {
+            let beam = CAGradientLayer()
+            beam.frame = bounds
+            beam.colors = [CGColor(srgbRed: 1, green: 0.9, blue: 0.6, alpha: 0.42 * strength),
+                           CGColor(srgbRed: 1, green: 0.9, blue: 0.6, alpha: 0.1 * strength)]
+            let top = CGFloat(Props.ceilingLampHeight - 2) * s / bounds.height, bottom = Self.openHeight / bounds.height
+            beam.startPoint = CGPoint(x: 0.5, y: top)
+            beam.endPoint = CGPoint(x: 0.5, y: bottom)
+            let mask = CAShapeLayer()
+            mask.path = cone(slot: i, spread: 0)
+            beam.mask = mask
+            beams.addSublayer(beam)
+        }
+
         darkness.frame = bounds
+        penumbra.frame = bounds
         closedSign.isHidden = model.lighting != .off || isCompact
         closedSign.frame = CGRect(x: 12, y: 8, width: 120, height: 16)
         switch model.lighting {
         case .allOn:
             darkness.isHidden = true
+            penumbra.isHidden = true
         case .off:
             darkness.isHidden = false
+            penumbra.isHidden = true
             darkness.path = CGPath(rect: bounds, transform: nil)
         case .singleDesk:
+            // Dark everywhere but the cone, with a softer band along its edges.
+            let outer = cone(slot: 0, spread: 4)
+            let dark = CGMutablePath()
+            dark.addRect(bounds)
+            dark.addPath(outer)
+            darkness.path = dark
             darkness.isHidden = false
-            let path = CGMutablePath()
-            path.addRect(bounds)
-            let cx = Self.slotX(0) + CGFloat(Self.slot / 2) * s
-            path.addEllipse(in: CGRect(x: cx - 24 * s, y: 12 * s, width: 48 * s, height: 50 * s))
-            darkness.path = path
+            let band = CGMutablePath()
+            band.addPath(outer)
+            band.addPath(cone(slot: 0, spread: 0))
+            penumbra.path = band
+            penumbra.isHidden = false
         }
+    }
+
+    /// The cone of light under slot `slot`'s lamp: narrow at the shade, as wide as the desk on
+    /// the floor. `spread` widens it (art pixels), for the soft edge.
+    private func cone(slot: Int, spread: CGFloat) -> CGPath {
+        let s = Self.scale, x0 = Self.slotX(slot)
+        let top = CGFloat(Props.ceilingLampHeight - 2) * s
+        let bottom = CGFloat(Self.wallHeight + Self.floorHeight - 4) * s + spread * s
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: x0 + (13 - spread / 4) * s, y: top))
+        path.addLine(to: CGPoint(x: x0 + (21 + spread / 4) * s, y: top))
+        path.addLine(to: CGPoint(x: x0 + (34 + spread) * s, y: bottom))
+        path.addLine(to: CGPoint(x: x0 - spread * s, y: bottom))
+        path.closeSubpath()
+        return path
     }
 
     // MARK: Pausing
@@ -230,13 +302,14 @@ func sprite(_ image: CGImage?, x: CGFloat, y: CGFloat, w: Int, h: Int) -> CALaye
     return layer
 }
 
-/// The layers of one desk: floor zone, chair, person, desk, laptop, lamp, mug, bubble and name.
+/// The layers of one desk: chair, person, desk, monitor, plant, mug, notepad, bubble and name card.
 final class DeskNode {
     let root = CALayer()
-    let zone = CALayer(), glow = CAGradientLayer()
-    let chair = CALayer(), person = CALayer(), desk = CALayer(), laptop = CALayer(), lamp = CALayer(), mug = CALayer()
+    let chair = CALayer(), person = CALayer(), desk = CALayer(), monitor = CALayer(), plant = CALayer()
+    let mug = CALayer(), notepad = CALayer()
     let bubble = CALayer(), bolt = CALayer()
-    let label = CATextLayer()
+    /// Black pixel-art card under the desk with the branch name in white.
+    let card = CALayer(), label = CATextLayer()
 
     static func setup(_ l: CALayer, x: Int, y: Int, w: Int, h: Int) {
         let s = OfficeLayer.scale
@@ -249,44 +322,45 @@ final class DeskNode {
     static let personY = 22, deskY = 41
 
     /// Static furniture of a workstation without anybody (also used for the closed office).
-    static func furnish(_ layer: CALayer, lit: Bool) {
-        layer.addSublayer(sprite(Props.chair(), x: 6 * OfficeLayer.scale, y: 27 * OfficeLayer.scale, w: Props.chairWidth, h: Props.chairHeight))
+    static func furnish(_ layer: CALayer) {
+        layer.addSublayer(sprite(Props.chair(), x: 6 * OfficeLayer.scale, y: 26 * OfficeLayer.scale, w: Props.chairWidth, h: Props.chairHeight))
         layer.addSublayer(sprite(Props.desk(), x: 1 * OfficeLayer.scale, y: CGFloat(deskY) * OfficeLayer.scale, w: Props.deskWidth, h: Props.deskHeight))
-        layer.addSublayer(sprite(Props.laptop(glow: false, closed: true), x: 11 * OfficeLayer.scale, y: 36 * OfficeLayer.scale, w: Props.laptopWidth, h: Props.laptopHeight))
-        layer.addSublayer(sprite(Props.lamp(on: lit), x: 0, y: 29 * OfficeLayer.scale, w: Props.lampWidth, h: Props.lampHeight))
-        layer.addSublayer(sprite(Props.mug(), x: 25 * OfficeLayer.scale, y: 37 * OfficeLayer.scale, w: Props.mugWidth, h: Props.mugHeight))
+        layer.addSublayer(sprite(Props.monitor(on: false, glow: false), x: 9 * OfficeLayer.scale, y: 37 * OfficeLayer.scale, w: Props.monitorWidth, h: Props.monitorHeight))
+        layer.addSublayer(sprite(Props.deskPlant(), x: 23 * OfficeLayer.scale, y: 35 * OfficeLayer.scale, w: Props.deskPlantWidth, h: Props.deskPlantHeight))
+        layer.addSublayer(sprite(Props.mug(), x: 23 * OfficeLayer.scale, y: 47 * OfficeLayer.scale, w: Props.mugWidth, h: Props.mugHeight))
+        layer.addSublayer(sprite(Props.notepad(), x: 4 * OfficeLayer.scale, y: 47 * OfficeLayer.scale, w: Props.notepadWidth, h: Props.notepadHeight))
     }
 
     init(parent: CALayer) {
         let s = OfficeLayer.scale
-        zone.borderWidth = s
-        Self.setup(zone, x: 1, y: 22, w: OfficeLayer.slot - 2, h: OfficeLayer.floorHeight - 2)
-        glow.type = .radial
-        glow.colors = [CGColor(srgbRed: 1, green: 0.88, blue: 0.5, alpha: 0.5), CGColor(srgbRed: 1, green: 0.88, blue: 0.5, alpha: 0)]
-        glow.startPoint = CGPoint(x: 0.5, y: 0.5)
-        glow.endPoint = CGPoint(x: 1, y: 1)
-        Self.setup(glow, x: -10, y: 18, w: 30, h: 30)
-        Self.setup(chair, x: 6, y: 27, w: Props.chairWidth, h: Props.chairHeight)
+        Self.setup(chair, x: 6, y: 26, w: Props.chairWidth, h: Props.chairHeight)
         Self.setup(person, x: 5, y: Self.personY, w: CharacterSprite.width, h: CharacterSprite.height)
         Self.setup(desk, x: 1, y: Self.deskY, w: Props.deskWidth, h: Props.deskHeight)
-        Self.setup(laptop, x: 11, y: 36, w: Props.laptopWidth, h: Props.laptopHeight)
-        Self.setup(lamp, x: 0, y: 29, w: Props.lampWidth, h: Props.lampHeight)
-        Self.setup(mug, x: 25, y: 37, w: Props.mugWidth, h: Props.mugHeight)
+        Self.setup(monitor, x: 9, y: 37, w: Props.monitorWidth, h: Props.monitorHeight)
+        Self.setup(plant, x: 23, y: 35, w: Props.deskPlantWidth, h: Props.deskPlantHeight)
+        Self.setup(mug, x: 23, y: 47, w: Props.mugWidth, h: Props.mugHeight)
+        Self.setup(notepad, x: 4, y: 47, w: Props.notepadWidth, h: Props.notepadHeight)
         Self.setup(bubble, x: 21, y: 12, w: Props.bubbleSize, h: Props.bubbleSize)
         Self.setup(bolt, x: 0, y: 17, w: Props.boltWidth, h: Props.boltHeight)
         chair.contents = Props.chair()
         desk.contents = Props.desk()
+        plant.contents = Props.deskPlant()
         mug.contents = Props.mug()
-        label.fontSize = 9
-        label.font = NSFont.monospacedSystemFont(ofSize: 9, weight: .medium)
-        label.foregroundColor = CGColor(srgbRed: 0.2, green: 0.15, blue: 0.12, alpha: 0.95)
+        notepad.contents = Props.notepad()
+        Self.setup(card, x: 1, y: Self.deskY + Props.deskHeight - 1, w: OfficeLayer.slot - 2, h: Props.nameCardHeight)
+        card.contents = Props.nameCard(width: OfficeLayer.slot - 2)
+        label.fontSize = 10
+        label.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+        label.foregroundColor = CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
         label.alignmentMode = .center
         label.truncationMode = .end
+        label.isWrapped = false
         label.contentsScale = 2
-        label.frame = CGRect(x: 0, y: CGFloat(Self.deskY + Props.deskHeight) * s, width: CGFloat(OfficeLayer.slot) * s, height: 14)
+        label.frame = CGRect(x: 2 * s, y: (card.bounds.height - 13) / 2, width: card.bounds.width - 4 * s, height: 13)
+        card.addSublayer(label)
         // The person sits behind the desk but is drawn over it: their sprite stops at the desk
-        // top, so only the arms resting on it overlap. Laptop, lamp and mug are in front of them.
-        [zone, glow, chair, desk, person, laptop, lamp, mug, label, bubble, bolt].forEach(root.addSublayer)
+        // top, so only the arms resting on it overlap. Everything on the desk is in front of them.
+        [chair, desk, person, monitor, plant, mug, notepad, card, bubble, bolt].forEach(root.addSublayer)
         root.frame = CGRect(x: 0, y: 0, width: CGFloat(OfficeLayer.slot) * s, height: OfficeLayer.openHeight)
         parent.addSublayer(root)
         root.opacity = 0
@@ -302,38 +376,20 @@ final class DeskNode {
         root.frame.origin = CGPoint(x: x, y: 0)
     }
 
-    /// Floor zone colour per state, like the coloured desk areas of a team map.
-    static func zoneColor(_ state: AgentState) -> (CGColor, CGColor) {
-        let rgb: (CGFloat, CGFloat, CGFloat)
-        switch state {
-        case .working, .starting: rgb = (0.35, 0.55, 0.95)
-        case .thinking: rgb = (0.62, 0.45, 0.92)
-        case .needsYou: rgb = (1.0, 0.55, 0.25)
-        case .done: rgb = (0.3, 0.75, 0.45)
-        case .error: rgb = (0.9, 0.3, 0.3)
-        case .idle, .unknown, .dead: rgb = (0.55, 0.55, 0.6)
-        }
-        return (CGColor(srgbRed: rgb.0, green: rgb.1, blue: rgb.2, alpha: 0.2),
-                CGColor(srgbRed: rgb.0, green: rgb.1, blue: rgb.2, alpha: 0.55))
-    }
-
-    func apply(_ model: DeskModel, previous: DeskModel?, lit: Bool, reduceMotion: Bool) {
+    func apply(_ model: DeskModel, previous: DeskModel?, reduceMotion: Bool) {
         label.string = model.name
-        lamp.contents = Props.lamp(on: lit)
-        glow.isHidden = !lit
         bolt.isHidden = model.warning == nil
         if let warning = model.warning { bolt.contents = Props.bolt(conflict: warning == .conflict) }
-        let (fill, border) = Self.zoneColor(model.state)
-        zone.backgroundColor = fill
-        zone.borderColor = border
-        guard previous?.state != model.state || previous?.look != model.look || person.contents == nil else { return }
+        guard previous?.state != model.state || previous?.look != model.look || previous?.away != model.away
+                || person.contents == nil else { return }
 
-        let animation = CharacterSprite.animation(for: model.state)
+        // Away (idle for a while) or not running: only the jacket on the chair is left.
+        let animation = model.away ? nil : CharacterSprite.animation(for: model.state)
         let frames = animation?.poses.compactMap { SpriteCache.character($0, look: model.look) } ?? []
         person.removeAllAnimations()
         person.contents = animation == nil ? SpriteCache.jacket(look: model.look) : frames.last
         person.opacity = model.state == .unknown ? 0.5 : 1
-        laptop.contents = Props.laptop(glow: model.state == .working, closed: model.state == .dead)
+        monitor.contents = Props.monitor(on: model.state != .dead, glow: model.state == .working)
         if let animation, frames.count > 1, !reduceMotion {
             let anim = CAKeyframeAnimation(keyPath: "contents")
             anim.values = frames
@@ -346,7 +402,7 @@ final class DeskNode {
         }
 
         bubble.removeAllAnimations()
-        if let kind = Props.bubble(for: model.state) {
+        if !model.away, let kind = Props.bubble(for: model.state) {
             bubble.isHidden = false
             bubble.contents = Props.bubble(kind)
             if kind == .alert, !reduceMotion {
@@ -371,7 +427,7 @@ enum SpriteCache {
     nonisolated(unsafe) private static var images: [String: CGImage] = [:]
 
     static func jacket(look: CharacterLook) -> CGImage? {
-        let key = "jacket-\(look.shirt)"
+        let key = "jacket-\(look.jacket)-\(look.lining)"
         if let cached = images[key] { return cached }
         let image = CharacterSprite.jacket(look: look).image(palette: look.palette)
         images[key] = image

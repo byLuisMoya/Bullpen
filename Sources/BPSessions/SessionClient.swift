@@ -49,6 +49,12 @@ public final class SessionClient: @unchecked Sendable {
     }
 
     public func create(_ spec: SessionSpec) async throws -> SessionInfo {
+        var spec = spec
+        // Give the session the PATH of the user's terminal (see ShellEnvironment). Done here,
+        // not in bpd, so it also works with a daemon started by an older version.
+        if spec.environment["PATH"] == nil, let path = await Task.detached(operation: { ShellEnvironment.userPath }).value {
+            spec.environment["PATH"] = path
+        }
         guard case let .created(_, info) = try await request({ .create(request: $0, spec: spec) }) else {
             throw SessionError(message: "unexpected reply to create")
         }

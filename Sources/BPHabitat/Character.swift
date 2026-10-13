@@ -7,6 +7,7 @@ enum Ink {
     static let skin: UInt8 = 1, skinShade: UInt8 = 2, hair: UInt8 = 3, hairShade: UInt8 = 4
     static let shirt: UInt8 = 5, shirtShade: UInt8 = 6, eye: UInt8 = 7, mouth: UInt8 = 8
     static let outline: UInt8 = 9, eyeLight: UInt8 = 10, blush: UInt8 = 11, hairLight: UInt8 = 12, collar: UInt8 = 13
+    static let jacket: UInt8 = 14, jacketShade: UInt8 = 15, jacketDark: UInt8 = 16, lining: UInt8 = 17, button: UInt8 = 18
 }
 
 /// How a worktree's person looks. Derived deterministically from the worktree id, with the
@@ -16,6 +17,11 @@ public struct CharacterLook: Equatable, Sendable {
     public var hair: Int
     public var hairStyle: Int
     public var shirt: UInt32
+    /// The jacket left on the chair when the person is away: a sober base colour, a slightly
+    /// lighter or darker tone of it, and its own lining, so no two look alike.
+    public var jacketBase: Int
+    public var jacketTone: Int
+    public var liningIndex: Int
 
     static let skins: [(UInt32, UInt32)] = [
         (0xF6D3B3, 0xE2B48F), (0xEDB98A, 0xD39A6A), (0xD08B5B, 0xB57148), (0xAE5D29, 0x91481C), (0x7A4424, 0x5E3118),
@@ -25,6 +31,42 @@ public struct CharacterLook: Equatable, Sendable {
         (0x8C8C8C, 0x6E6E6E), (0xA6402F, 0x86301F),
     ]
     static let hairStyles = 4
+    /// Sober jacket colours: navy, charcoal, camel, olive, denim, burgundy, brown, grey,
+    /// forest green, sand, slate blue, rust.
+    static let jackets: [UInt32] = [0x2F3E5C, 0x45474D, 0xB08A5A, 0x5E6B3F, 0x4D6A8C, 0x6E2F3A,
+                                    0x6B4A33, 0x8A8F96, 0x2F4F3E, 0xC2B08E, 0x5A6378, 0x8C4A2F]
+    /// Satin linings: burgundy, navy, old gold, grey, teal.
+    static let linings: [UInt32] = [0x9B3B45, 0x2C3E66, 0xB8963E, 0x6A6E76, 0x2F5E57]
+    /// Tone steps either side of the base colour (each 6 % towards white or black).
+    static let tones = -2...2
+
+    /// The jacket colour: its base, lighter or darker by its tone.
+    public var jacket: UInt32 {
+        let base = Self.jackets[jacketBase % Self.jackets.count]
+        return jacketTone >= 0 ? Self.mix(base, 0xFFFFFF, 0.06 * Double(jacketTone))
+                               : Self.mix(base, 0x000000, 0.06 * Double(-jacketTone))
+    }
+
+    public var lining: UInt32 {
+        var index = liningIndex % Self.linings.count
+        // A burgundy lining would vanish inside a burgundy or rust jacket.
+        if index == 0, [5, 11].contains(jacketBase % Self.jackets.count) { index = 2 }
+        return Self.linings[index]
+    }
+
+    /// Gives every person in `looks` a different base colour where possible (in order, the
+    /// first keeps its own), so an office never has two identical jackets on its chairs.
+    public static func distinctJackets(_ looks: [CharacterLook]) -> [CharacterLook] {
+        var used = Set<Int>()
+        return looks.map { look in
+            var look = look
+            if used.contains(look.jacketBase), used.count < jackets.count {
+                while used.contains(look.jacketBase) { look.jacketBase = (look.jacketBase + 5) % jackets.count }
+            }
+            used.insert(look.jacketBase)
+            return look
+        }
+    }
 
     public static func make(worktreeID: UUID, agent: String?) -> CharacterLook {
         var hash: UInt64 = 1469598103934665603
@@ -35,7 +77,10 @@ public struct CharacterLook: Equatable, Sendable {
             skin: Int(hash % UInt64(skins.count)),
             hair: Int((hash >> 8) % UInt64(hairs.count)),
             hairStyle: Int((hash >> 16) % UInt64(hairStyles)),
-            shirt: shirtColor(agent: agent)
+            shirt: shirtColor(agent: agent),
+            jacketBase: Int((hash >> 24) % UInt64(jackets.count)),
+            jacketTone: Int((hash >> 32) % UInt64(tones.count)) + tones.lowerBound,
+            liningIndex: Int((hash >> 40) % UInt64(linings.count))
         )
     }
 
@@ -57,6 +102,9 @@ public struct CharacterLook: Equatable, Sendable {
             Ink.eye: RGBA(0x23202A), Ink.mouth: RGBA(0x9C4A4A),
             Ink.outline: RGBA(0x2A2230), Ink.eyeLight: RGBA(0xFFFFFF), Ink.blush: RGBA(0xF09A8C),
             Ink.hairLight: RGBA(Self.mix(h.0, 0xFFFFFF, 0.3)), Ink.collar: RGBA(Self.mix(shirt, 0xFFFFFF, 0.55)),
+            Ink.jacket: RGBA(jacket), Ink.jacketShade: RGBA(Self.mix(jacket, 0x000000, 0.22)),
+            Ink.jacketDark: RGBA(Self.mix(jacket, 0x000000, 0.4)),
+            Ink.lining: RGBA(lining), Ink.button: RGBA(0xC9A45C),
         ])
     }
 
@@ -210,8 +258,9 @@ public enum CharacterSprite {
             leftDown(); rightDown()
         case .typeA, .typeB:
             let (l, r) = pose == .typeA ? (0, 1) : (1, 0)
-            c.rect(2, 16, 2, 4, sleeve); c.rect(3, 20, 3, 1, sleeve); c.rect(5, 20 + l, 2, 2, hand)
-            c.rect(20, 16, 2, 4, sleeve); c.rect(18, 20, 3, 1, sleeve); c.rect(17, 20 + r, 2, 2, hand)
+            // Hands on the keyboard either side of the monitor.
+            c.rect(2, 16, 2, 4, sleeve); c.rect(4, 20 + l, 2, 2, hand)
+            c.rect(20, 16, 2, 4, sleeve); c.rect(18, 20 + r, 2, 2, hand)
         case .chin, .chinBlink:
             leftDown()
             c.rect(20, 16, 2, 3, sleeve)
@@ -265,19 +314,30 @@ public enum CharacterSprite {
         return c.image(palette: look.palette)
     }
 
-    /// A jacket hanging on the empty chair: the person has left (agent not running).
+    /// The person's jacket thrown over the chair's backrest from behind, open: the shoulders
+    /// over the top edge, the two fronts hanging either side with their lining showing, and the
+    /// backrest visible down the middle. Shown when they have left (agent idle for a while, or
+    /// not running). Drawn in the person's canvas, over the backrest, above the desk.
     public static func jacket(look: CharacterLook) -> PixelCanvas {
         var c = PixelCanvas(width: width, height: height)
         c.stamp([
-            "..tttttttttttt..",
-            ".tTttttTTttttTt.",
-            "TtTttttTTttttTtT",
-            "TtTttttTTttttTtT",
-            "TtTttttTTttttTtT",
-            "TtTttttTTttttTtT",
-            "TtTttttTTttttTtT",
-            "T..tttTTTTttt..T",
-        ], at: headX - 1, 12, key: ["t": Ink.shirt, "T": Ink.shirtShade])
+            "...CCCCCCCCCCCCCCCC...",
+            ".jjjjjjjjjjjjjjjjjjjj.",
+            "sjjjjll........lljjjjs",
+            "sjjjjll........lljjjjs",
+            "sjjjjll........lljjjjs",
+            "sjjjjll........lljjjjs",
+            "sjjjjll........lljjjjs",
+            "sjjjjll........lljjjjs",
+            "sjjjjll........lljjjjs",
+            "sjjjjll........lljjjjs",
+            "cDDDDDD........DDDDDDc",
+        ], at: 1, 5, key: ["j": Ink.jacket, "s": Ink.jacketShade, "C": Ink.jacketDark,
+                           "D": Ink.jacketDark, "l": Ink.lining, "c": Ink.jacketDark])
+        // Light from the left: the right front in shade.
+        for y in 5..<16 {
+            for x in 18...21 where c[x, y] == Ink.jacket { c[x, y] = Ink.jacketShade }
+        }
         c.outline(Ink.outline)
         return c
     }

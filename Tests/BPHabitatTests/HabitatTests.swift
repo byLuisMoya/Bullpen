@@ -19,6 +19,15 @@ import UniformTypeIdentifiers
         #expect(!CharacterSprite.jacket(look: look).isEmpty)
     }
 
+    @Test func jacketsDifferWithinAnOffice() {
+        let looks = CharacterLook.distinctJackets((0..<6).map { _ in CharacterLook.make(worktreeID: UUID(), agent: "claude") })
+        #expect(Set(looks.map(\.jacketBase)).count == 6)
+        // Over many people, tones and linings vary too.
+        let many = (0..<200).map { _ in CharacterLook.make(worktreeID: UUID(), agent: "claude") }
+        #expect(Set(many.map(\.jacketTone)).count > 1)
+        #expect(Set(many.map(\.lining)).count > 1)
+    }
+
     @Test func looksAreDeterministicAndShirtFollowsAgent() {
         let id = UUID()
         #expect(CharacterLook.make(worktreeID: id, agent: "claude") == CharacterLook.make(worktreeID: id, agent: "claude"))
@@ -41,8 +50,8 @@ import UniformTypeIdentifiers
     func desks(_ states: [AgentState]) -> [DeskModel] {
         states.enumerated().map { i, state in
             let id = UUID()
-            return DeskModel(id: id, name: "wt-\(i)", state: state, look: .make(worktreeID: id, agent: i % 2 == 0 ? "claude" : "codex"),
-                             warning: i == 0 ? .conflict : i == 1 ? .overlap : nil)
+            return DeskModel(id: id, name: i == 2 ? "feature/FKPI-1234-una-rama-con-nombre-muy-largo" : "wt-\(i)", state: state, look: .make(worktreeID: id, agent: i % 2 == 0 ? "claude" : "codex"),
+                             warning: i == 0 ? .conflict : i == 1 ? .overlap : nil, away: i == 4)
         }
     }
 
@@ -81,6 +90,7 @@ import UniformTypeIdentifiers
         let floors: [[AgentState]] = [
             [.working, .thinking, .needsYou, .done, .idle, .error, .unknown, .dead],
             [.working],
+            [.idle, .idle, .idle, .idle, .idle, .idle, .idle, .idle],
             [],
         ]
         let width = OfficeLayer.preferredWidth(desks: 8)
@@ -99,7 +109,13 @@ import UniformTypeIdentifiers
         for (states, height) in zip(floors, heights) {
             let layer = OfficeLayer()
             layer.frame = CGRect(x: 0, y: 0, width: width, height: height)
-            layer.update(OfficeModel(desks: desks(states)))
+            let everyoneAway = states.count == 8 && states.allSatisfy { $0 == .idle }
+            var floor = desks(states)
+            if everyoneAway {
+                let looks = CharacterLook.distinctJackets(floor.map(\.look))
+                for i in floor.indices { floor[i].away = true; floor[i].look = looks[i] }
+            }
+            layer.update(OfficeModel(desks: floor))
             ctx.saveGState()
             // Flip to top-left origin and move to this floor.
             ctx.translateBy(x: 0, y: total - y)

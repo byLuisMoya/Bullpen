@@ -15,7 +15,8 @@ struct FilesView: View {
     private var tree: [FileNode] { FileNode.build(search.isEmpty ? files : files.filter { $0.localizedCaseInsensitiveContains(search) }) }
 
     var body: some View {
-        HSplitView {
+        // Stacked: it lives in the narrow panel beside the terminal.
+        VSplitView {
             VStack(spacing: 0) {
                 TextField("Buscar fichero", text: $search).textFieldStyle(.roundedBorder).padding(6)
                 List(selection: $selected) {
@@ -25,7 +26,7 @@ struct FilesView: View {
                     }
                 }
             }
-            .frame(minWidth: 220, idealWidth: 280, maxWidth: 420)
+            .frame(minHeight: 120, idealHeight: 240)
 
             Group {
                 if let selected, !files.isEmpty, files.contains(selected) {
@@ -35,7 +36,7 @@ struct FilesView: View {
                     ContentUnavailableView("Elige un fichero", systemImage: "doc.text.magnifyingglass")
                 }
             }
-            .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, minHeight: 200, maxHeight: .infinity)
         }
         .task(id: worktree.id) {
             let repo = try? await Repository.open(at: URL(fileURLWithPath: project.path))

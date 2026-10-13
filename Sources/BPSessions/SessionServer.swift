@@ -365,14 +365,7 @@ public final class SessionServer: @unchecked Sendable {
     static let shellNames: Set<String> = ["zsh", "bash", "fish", "sh", "dash", "tcsh", "csh", "nu", "-zsh", "-bash"]
 
     /// `$SHELL`, or the account's shell when launched from Finder (GUI apps may not have `$SHELL`).
-    static func loginShell() -> String {
-        if let shell = ProcessInfo.processInfo.environment["SHELL"], !shell.isEmpty { return shell }
-        if let entry = getpwuid(getuid()), let shell = entry.pointee.pw_shell {
-            let value = String(cString: shell)
-            if !value.isEmpty { return value }
-        }
-        return "/bin/zsh"
-    }
+    static func loginShell() -> String { ShellEnvironment.loginShell() }
 
     private func safeFileName(_ s: String) -> String {
         String(s.map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "_" })
