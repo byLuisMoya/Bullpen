@@ -16,6 +16,12 @@ struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var isImporting = false
     @State private var newWorktreeFor: Project?
+    /// Projects folded in the sidebar (only the header shows), remembered between launches.
+    @AppStorage("collapsedProjects") private var collapsedRaw = ""
+    private var collapsedProjects: Set<UUID> {
+        get { Set(collapsedRaw.split(separator: ",").compactMap { UUID(uuidString: String($0)) }) }
+        nonmutating set { collapsedRaw = newValue.map(\.uuidString).sorted().joined(separator: ",") }
+    }
     @State private var pendingRemoval: PendingRemoval?
 
     private var selection: UUID? {
@@ -33,6 +39,7 @@ struct ContentView: View {
             List(selection: $navigation.selection) {
                 ForEach(store.offices) { office in
                     Section {
+                        if !collapsedProjects.contains(office.project.id) {
                         MiniOffice(office: office) { selection = $0 }
                             .selectionDisabled()
                             .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
@@ -53,8 +60,16 @@ struct ContentView: View {
                                     }
                                 }
                         }
+                        }
                     } header: {
-                        OfficeHeader(office: office) { newWorktreeFor = office.project }
+                        OfficeHeader(office: office, collapsed: Binding(
+                            get: { collapsedProjects.contains(office.project.id) },
+                            set: { collapsed in
+                                withAnimation(.snappy(duration: 0.2)) {
+                                    if collapsed { collapsedProjects.insert(office.project.id) } else { collapsedProjects.remove(office.project.id) }
+                                }
+                            }
+                        )) { newWorktreeFor = office.project }
                             .contextMenu {
                                 Button("Nuevo worktree…") { newWorktreeFor = office.project }
                                 Button("Prompt inicial…") { editingPromptFor = office.project }
@@ -67,6 +82,8 @@ struct ContentView: View {
                                     .help(office.worktrees.isEmpty ? "Deja de mostrarlo (no borra nada del disco)" : "Elimina antes sus worktrees")
                             }
                     }
+                    // Our own chevron in the header, always visible; not the hover-only system one.
+                    .collapsible(false)
                 }
             }
             .listStyle(.sidebar)
@@ -81,12 +98,18 @@ struct ContentView: View {
                     }
                     .buttonStyle(.borderless)
                     .help("Ajustes (⌘,)")
-                    Spacer()
+                    PlanUsageBadge()
+                    Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
+                .frame(maxWidth: .infinity)
                 .background(Color(nsColor: .windowBackgroundColor))
-                .overlay(alignment: .top) { Divider() }
+                // A plain line: a Divider here takes the HStack's axis and draws vertically,
+                // splitting the footer in two.
+                .overlay(alignment: .top) {
+                    Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1)
+                }
             }
             }
             Group {
@@ -213,6 +236,7 @@ private struct PendingRemoval {
 
 private struct OfficeHeader: View {
     let office: Office
+    @Binding var collapsed: Bool
     let onNewWorktree: () -> Void
 
     var body: some View {
@@ -221,6 +245,18 @@ private struct OfficeHeader: View {
                 .foregroundStyle(office.lighting == .off ? Color.secondary : Color.yellow)
             Text(office.project.name)
             Spacer()
+            Button {
+                collapsed.toggle()
+            } label: {
+                Image(systemName: "chevron.down")
+                    .rotationEffect(.degrees(collapsed ? -90 : 0))
+                    .font(.system(size: 10, weight: .semibold))
+                    .frame(width: 14, height: 14)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .help(collapsed ? "Mostrar la oficina y sus worktrees" : "Ocultar la oficina y sus worktrees")
             Text("\(office.worktrees.count)").foregroundStyle(.secondary)
             Button("Nuevo worktree", systemImage: "plus.circle", action: onNewWorktree)
                 .labelStyle(.iconOnly)

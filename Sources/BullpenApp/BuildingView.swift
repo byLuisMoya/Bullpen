@@ -13,7 +13,7 @@ struct BuildingView: View {
     @State private var removingDemo = false
 
     var body: some View {
-        ScrollView([.vertical, .horizontal]) {
+        ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 10) {
                 if AppActions.demoAvailable, store.offices.contains(where: { $0.project.path.hasPrefix("/tmp/bullpen-demo") || $0.project.path.hasPrefix("/private/tmp/bullpen-demo") }) {
                     HStack {
@@ -39,12 +39,16 @@ struct BuildingView: View {
                             Text(office.project.name).font(.headline)
                             Text(summary(office)).font(.caption).foregroundStyle(.secondary)
                         }
-                        OfficeFloor(model: officeModel(office, statuses: attention.statuses, warnings: repoStatus.warnings), compact: false, onSelect: onSelect)
-                            .frame(
-                                width: OfficeLayer.preferredWidth(desks: max(office.worktrees.count, 4)),
-                                height: OfficeLayer.preferredHeight(desks: office.worktrees.count)
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                        // Each floor fills the window's width and scrolls sideways on its own when
+                        // its desks need more room.
+                        ScrollView(.horizontal) {
+                            OfficeFloor(model: officeModel(office, statuses: attention.statuses, warnings: repoStatus.warnings), compact: false, onSelect: onSelect)
+                                .containerRelativeFrame(.horizontal) { visible, _ in
+                                    max(visible, OfficeLayer.preferredWidth(desks: office.worktrees.count))
+                                }
+                                .frame(height: OfficeLayer.preferredHeight(desks: office.worktrees.count))
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                 }
             }
@@ -85,26 +89,33 @@ struct MiniOffice: View {
     let onSelect: (UUID) -> Void
     @Environment(AttentionCenter.self) private var attention
     @Environment(RepoStatusCenter.self) private var repoStatus
+    @State private var available: CGFloat = 0
 
     var body: some View {
         let model = officeModel(office, statuses: attention.statuses, warnings: repoStatus.warnings)
-        let desks = max(office.worktrees.count, 1)
-        let size = OfficeView.size(desks: desks, compact: true)
-        Group {
-            if let image = OfficeSnapshot.image(model, desks: desks) {
-                Image(decorative: image, scale: 2).interpolation(.none)
-            } else {
-                Color.clear
+        let desks = office.worktrees.count
+        let natural = OfficeView.size(desks: desks, compact: true)
+        // The room fills the sidebar's width; with more desks than fit, the strip scrolls sideways.
+        let width = max(natural.width, available.rounded(.down))
+        ScrollView(.horizontal, showsIndicators: false) {
+            Group {
+                if let image = OfficeSnapshot.image(model, desks: desks, width: width) {
+                    Image(decorative: image, scale: 2).interpolation(.none)
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(width: width, height: natural.height)
+            .contentShape(Rectangle())
+            .onTapGesture { location in
+                let slot = Int((location.x - 8) / 34)          // art margin and desk width, 1 pt per art pixel
+                if model.desks.indices.contains(slot) { onSelect(model.desks[slot].id) }
             }
         }
-        .frame(width: size.width, height: size.height)
+        .frame(width: available > 0 ? available : natural.width, height: natural.height)
         .clipShape(RoundedRectangle(cornerRadius: 3))
-        .contentShape(Rectangle())
-        .onTapGesture { location in
-            let slot = Int((location.x - 8) / 34)          // art margin and desk width, 1 pt per art pixel
-            if model.desks.indices.contains(slot) { onSelect(model.desks[slot].id) }
-        }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { available = $0 }
     }
 }
 

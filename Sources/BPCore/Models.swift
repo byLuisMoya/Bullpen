@@ -8,6 +8,9 @@ public struct Project: Identifiable, Hashable, Codable, Sendable {
     public var defaultBaseRef: String?
     /// Prompt sent to the agent every time a worktree is created in this project (PLAN §6.5).
     public var initialPrompt: String?
+    /// Shell script run in every new worktree of this project, before the agent starts (after
+    /// `.bullpen.toml`'s `[setup] run`). Saved from "Nuevo worktree › Avanzado".
+    public var setupScript: String?
     /// Position of the office in the building (0 = top floor).
     public var sortIndex: Int
     public var createdAt: Date
@@ -18,6 +21,7 @@ public struct Project: Identifiable, Hashable, Codable, Sendable {
         path: String,
         defaultBaseRef: String? = nil,
         initialPrompt: String? = nil,
+        setupScript: String? = nil,
         sortIndex: Int = 0,
         createdAt: Date = Date()
     ) {
@@ -26,6 +30,7 @@ public struct Project: Identifiable, Hashable, Codable, Sendable {
         self.path = path
         self.defaultBaseRef = defaultBaseRef
         self.initialPrompt = initialPrompt
+        self.setupScript = setupScript
         self.sortIndex = sortIndex
         self.createdAt = createdAt
     }

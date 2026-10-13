@@ -33,10 +33,18 @@ public enum WorktreeSetup {
     /// One shell line that runs the setup commands in order and then `then` (the agent) only if
     /// they all succeed; on failure it says so and leaves the user at a shell in the worktree.
     public static func command(setup: [String], then next: String?) -> String? {
+        let setup = setup.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         guard !setup.isEmpty else { return next }
         let steps = setup.joined(separator: " && ")
         let failure = "echo; echo \"\u{1B}[31m[bullpen] la preparación del worktree ha fallado\u{1B}[0m\"; exec \"$SHELL\" -l"
         return "{ \(steps); } || { \(failure); }; " + (next ?? "exec \"$SHELL\" -l")
+    }
+
+    /// A multi-line script as one setup step: run by the user's shell, stopping at the first
+    /// failing line.
+    public static func scriptStep(_ script: String?) -> String? {
+        guard let script = script?.trimmingCharacters(in: .whitespacesAndNewlines), !script.isEmpty else { return nil }
+        return "\"$SHELL\" -ec '" + script.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }
 

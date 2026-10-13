@@ -69,6 +69,9 @@ public final class AppDatabase: Sendable {
         migrator.registerMigration("v5-tickets") { db in
             try db.alter(table: "worktree") { t in t.add(column: "ticket", .text) }
         }
+        migrator.registerMigration("v6-setup-script") { db in
+            try db.alter(table: "project") { t in t.add(column: "setupScript", .text) }
+        }
         return migrator
     }
 }

@@ -1,3 +1,4 @@
+import BPAgents
 import BPGit
 import BPProviders
 import SwiftUI
@@ -198,9 +199,19 @@ private struct CommandLineSettings: View {
 
 private struct GeneralSettings: View {
     @AppStorage(BuildingName.key) private var buildingName = BuildingName.standard
+    @AppStorage(PrimaryAgent.key) private var primaryAgent = AgentProfile.claude.id
 
     var body: some View {
         Form {
+            Section {
+                Picker("Agente principal", selection: $primaryAgent) {
+                    ForEach(AgentProfile.all) { Text($0.name).tag($0.id) }
+                }
+            } header: {
+                Text("Agentes")
+            } footer: {
+                Text("Los worktrees nuevos empiezan con él, y junto a Ajustes ves cuánto lleva usado: el porcentaje de la sesión de 5 h y de la semana si es una suscripción (Claude, ChatGPT), o los tokens de hoy si pagas por uso.")
+            }
             Section {
                 TextField("Nombre de la vista general", text: $buildingName, prompt: Text(BuildingName.standard))
                 Button("Restablecer") { buildingName = BuildingName.standard }

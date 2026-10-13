@@ -6,6 +6,7 @@ import Foundation
 enum Ink {
     static let skin: UInt8 = 1, skinShade: UInt8 = 2, hair: UInt8 = 3, hairShade: UInt8 = 4
     static let shirt: UInt8 = 5, shirtShade: UInt8 = 6, eye: UInt8 = 7, mouth: UInt8 = 8
+    static let outline: UInt8 = 9, eyeLight: UInt8 = 10, blush: UInt8 = 11, hairLight: UInt8 = 12, collar: UInt8 = 13
 }
 
 /// How a worktree's person looks. Derived deterministically from the worktree id, with the
@@ -54,12 +55,19 @@ public struct CharacterLook: Equatable, Sendable {
             Ink.hair: RGBA(h.0), Ink.hairShade: RGBA(h.1),
             Ink.shirt: RGBA(shirt), Ink.shirtShade: RGBA(shade(shirt)),
             Ink.eye: RGBA(0x23202A), Ink.mouth: RGBA(0x9C4A4A),
+            Ink.outline: RGBA(0x2A2230), Ink.eyeLight: RGBA(0xFFFFFF), Ink.blush: RGBA(0xF09A8C),
+            Ink.hairLight: RGBA(Self.mix(h.0, 0xFFFFFF, 0.3)), Ink.collar: RGBA(Self.mix(shirt, 0xFFFFFF, 0.55)),
         ])
     }
 
-    private func shade(_ c: UInt32) -> UInt32 {
-        let r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF
-        return (r * 3 / 4) << 16 | (g * 3 / 4) << 8 | (b * 3 / 4)
+    private func shade(_ c: UInt32) -> UInt32 { Self.mix(c, 0x000000, 0.25) }
+
+    static func mix(_ a: UInt32, _ b: UInt32, _ t: Double) -> UInt32 {
+        func channel(_ shift: UInt32) -> UInt32 {
+            let x = Double((a >> shift) & 0xFF), y = Double((b >> shift) & 0xFF)
+            return UInt32((x + (y - x) * t).rounded()) << shift
+        }
+        return channel(16) | channel(8) | channel(0)
     }
 }
 
@@ -69,103 +77,208 @@ public enum Pose: CaseIterable, Sendable {
 }
 
 public enum CharacterSprite {
-    /// Canvas size in pixels. The desk covers the bottom rows.
-    public static let width = 18, height = 22
+    /// Canvas size in pixels. The bottom row lines up with the desk top: the desk hides the rest.
+    public static let width = 24, height = 23
+    /// Where the face starts inside the canvas; hair and buns sit above it.
+    static let headX = 5, faceY = 4
 
     public static func canvas(_ pose: Pose, look: CharacterLook) -> PixelCanvas {
         var c = PixelCanvas(width: width, height: height)
-        let dy = pose == .sleep ? 4 : 0
-        torso(&c)
-        head(&c, dy: dy, style: look.hairStyle, eyesClosed: pose == .chinBlink || pose == .sleep)
+        let dy = pose == .sleep ? 6 : 0
+        if pose != .sleep { torso(&c) }
+        face(&c, dy: dy, pose: pose)
+        hair(&c, dy: dy, style: look.hairStyle)
         arms(&c, pose)
+        c.outline(Ink.outline)
         return c
     }
 
-    private static func head(_ c: inout PixelCanvas, dy: Int, style: Int, eyesClosed: Bool) {
-        // Hair behind the head (long styles).
-        if style == 1 { c.rect(4, 5 + dy, 10, 8, Ink.hairShade) }
-        // Face.
-        c.rect(5, 5 + dy, 8, 7, Ink.skin)
-        c.rect(5, 11 + dy, 8, 1, Ink.skinShade)
-        c.dot(4, 8 + dy, Ink.skin)        // ears
-        c.dot(13, 8 + dy, Ink.skin)
-        // Eyes and mouth.
-        if eyesClosed {
-            c.rect(6, 8 + dy, 2, 1, Ink.skinShade)
-            c.rect(10, 8 + dy, 2, 1, Ink.skinShade)
-        } else {
-            c.rect(7, 8 + dy, 1, 2, Ink.eye)
-            c.rect(10, 8 + dy, 1, 2, Ink.eye)
+    private static func face(_ c: inout PixelCanvas, dy: Int, pose: Pose) {
+        let x = headX, y = faceY + dy
+        c.stamp([
+            "..ssssssssss..",
+            ".ssssssssssss.",
+            ".ssssssssssss.",
+            ".ssssssssssss.",
+            "ssssssssssssss",
+            "sSssssssssssSs",
+            ".ssssssssssss.",
+            ".ssssssssssss.",
+            "..ssssssssss..",
+            "...SSSSSSSS...",
+        ], at: x, y, key: ["s": Ink.skin, "S": Ink.skinShade])
+        c.rect(x + 5, y + 10, 4, 1, Ink.skinShade)                          // neck
+        switch pose {
+        case .chinBlink, .sleep:
+            c.rect(x + 4, y + 5, 2, 1, Ink.eye)
+            c.rect(x + 8, y + 5, 2, 1, Ink.eye)
+        case .cheer:                                                        // ^ ^
+            for ex in [x + 3, x + 8] {
+                c.dot(ex, y + 5, Ink.eye); c.dot(ex + 1, y + 4, Ink.eye); c.dot(ex + 2, y + 5, Ink.eye)
+            }
+        default:
+            for ex in [x + 4, x + 8] {
+                c.rect(ex, y + 4, 2, 2, Ink.eye)
+                c.dot(ex, y + 4, Ink.eyeLight)
+            }
         }
-        c.rect(8, 10 + dy, 2, 1, Ink.mouth)
-        // Hair on top.
-        c.rect(5, 3 + dy, 8, 3, Ink.hair)
-        c.rect(4, 4 + dy, 1, 3, Ink.hair)
-        c.rect(13, 4 + dy, 1, 3, Ink.hair)
-        c.rect(6, 2 + dy, 6, 1, Ink.hair)
+        c.rect(x + 2, y + 6, 2, 1, Ink.blush)
+        c.rect(x + 10, y + 6, 2, 1, Ink.blush)
+        switch pose {
+        case .cheer, .wave:
+            c.rect(x + 5, y + 7, 4, 1, Ink.mouth)
+            c.rect(x + 6, y + 8, 2, 1, Ink.mouth)
+        case .raised:
+            c.rect(x + 6, y + 7, 2, 2, Ink.mouth)
+        case .sleep:
+            c.dot(x + 7, y + 7, Ink.mouth)
+        default:
+            c.rect(x + 6, y + 7, 2, 1, Ink.mouth)
+        }
+    }
+
+    private static func hair(_ c: inout PixelCanvas, dy: Int, style: Int) {
+        let key: [Character: UInt8] = ["h": Ink.hair, "H": Ink.hairShade, "l": Ink.hairLight]
+        let x = headX, y = faceY + dy
         switch style {
-        case 1: c.rect(4, 7 + dy, 1, 5, Ink.hair); c.rect(13, 7 + dy, 1, 5, Ink.hair)   // long
-        case 2: c.rect(7, 0 + dy, 4, 2, Ink.hairShade)                                      // bun
-        case 3: for x in stride(from: 5, through: 12, by: 2) { c.dot(x, 1 + dy, Ink.hair) }  // spiky
-        default: c.rect(10, 5 + dy, 3, 1, Ink.hair)                                         // side fringe
+        case 1:   // long
+            c.stamp([
+                "....hhhhhh....",
+                "..hhhhhlhhhh..",
+                ".hhhhhhlhhhhh.",
+                "hhhhhhhhlhhhhh",
+                "hhHhhhHhhhHhhh",
+                "hH..........Hh",
+                "hH..........Hh",
+                "hH..........Hh",
+                "hH..........Hh",
+                "hH..........Hh",
+                "HH..........HH",
+                "HH..........HH",
+                "HH..........HH",
+            ], at: x, y - 2, key: key)
+        case 2:   // bun
+            c.stamp([
+                ".....hhhh.....",
+                "....hhllhh....",
+                ".....HHHH.....",
+                "...hhhhhhhh...",
+                "..hhhhhhlhhh..",
+                ".hhhhhhhhlhhh.",
+                ".hhhhhhhhhhhh.",
+                ".hH........Hh.",
+            ], at: x, y - 4, key: key)
+        case 3:   // curly
+            c.stamp([
+                "..h.hh.hh.h...",
+                ".hhhhhhhhhhhh.",
+                "hhhhhlhhhhlhhh",
+                "hhlhhhhhlhhhhh",
+                "hhhhhhhhhhhhhh",
+                "hHhHhHhHhHhHhh",
+                "hH..........Hh",
+            ], at: x, y - 3, key: key)
+        default:  // short, fringe swept to one side
+            c.stamp([
+                "....hhhhhh....",
+                "..hhhhhhlhhh..",
+                ".hhhhhhhhlhhh.",
+                ".hhhhhhhhhhhh.",
+                ".hHhHhhhhhhhh.",
+                ".h.....HhhhHh.",
+            ], at: x, y - 2, key: key)
         }
-        c.rect(5, 3 + dy, 8, 1, Ink.hairShade)
     }
 
     private static func torso(_ c: inout PixelCanvas) {
-        c.rect(8, 12, 2, 1, Ink.skinShade)   // neck
-        c.rect(4, 13, 10, 9, Ink.shirt)
-        c.rect(4, 13, 1, 9, Ink.shirtShade)
-        c.rect(5, 13, 8, 1, Ink.shirtShade)  // collar line
+        let y = faceY + 11
+        c.stamp([
+            "..tttCSSSSCttt..",
+            ".tttttCSSCttttT.",
+            "ttttttttttttttTT",
+            "ttttttttttttttTT",
+            "ttttttttttttttTT",
+        ], at: headX - 1, y, key: ["t": Ink.shirt, "T": Ink.shirtShade, "C": Ink.collar, "S": Ink.skinShade])
     }
 
     private static func arms(_ c: inout PixelCanvas, _ pose: Pose) {
-        func leftDown() { c.rect(2, 14, 2, 6, Ink.shirtShade); c.rect(2, 20, 2, 1, Ink.skin) }
-        func rightDown() { c.rect(14, 14, 2, 6, Ink.shirtShade); c.rect(14, 20, 2, 1, Ink.skin) }
+        let sleeve = Ink.shirtShade, hand = Ink.skin
+        func leftDown() { c.rect(2, 16, 2, 4, sleeve); c.rect(2, 20, 2, 1, hand) }
+        func rightDown() { c.rect(20, 16, 2, 4, sleeve); c.rect(20, 20, 2, 1, hand) }
         switch pose {
         case .rest:
             leftDown(); rightDown()
         case .typeA, .typeB:
             let (l, r) = pose == .typeA ? (0, 1) : (1, 0)
-            c.rect(3, 15, 2, 4, Ink.shirtShade); c.rect(5, 18 + l, 2, 1, Ink.skin)
-            c.rect(13, 15, 2, 4, Ink.shirtShade); c.rect(11, 18 + r, 2, 1, Ink.skin)
+            c.rect(2, 16, 2, 4, sleeve); c.rect(3, 20, 3, 1, sleeve); c.rect(5, 20 + l, 2, 2, hand)
+            c.rect(20, 16, 2, 4, sleeve); c.rect(18, 20, 3, 1, sleeve); c.rect(17, 20 + r, 2, 2, hand)
         case .chin, .chinBlink:
             leftDown()
-            c.rect(14, 14, 2, 3, Ink.shirtShade)
-            c.rect(12, 13, 2, 2, Ink.shirtShade)
-            c.rect(11, 11, 2, 2, Ink.skin)
-        case .raised, .wave:
+            c.rect(20, 16, 2, 3, sleeve)
+            c.rect(17, 14, 4, 2, sleeve)
+            c.rect(15, 12, 2, 3, hand)
+        case .raised:
             leftDown()
-            let x = pose == .raised ? 14 : 15
-            c.rect(14, 8, 2, 6, Ink.shirtShade)
-            c.rect(x, 5, 2, 3, Ink.skin)
+            c.rect(20, 8, 2, 8, sleeve)
+            c.rect(20, 5, 2, 3, hand)
+        case .wave:
+            leftDown()
+            c.rect(20, 9, 2, 7, sleeve)
+            c.rect(21, 6, 2, 3, hand)
         case .cheer:
-            c.rect(2, 7, 2, 7, Ink.shirtShade); c.rect(2, 4, 2, 3, Ink.skin)
-            c.rect(14, 7, 2, 7, Ink.shirtShade); c.rect(14, 4, 2, 3, Ink.skin)
+            c.rect(2, 8, 2, 8, sleeve); c.rect(2, 5, 2, 3, hand)
+            c.rect(20, 8, 2, 8, sleeve); c.rect(20, 5, 2, 3, hand)
         case .sleep:
-            c.rect(3, 17, 12, 3, Ink.shirtShade)   // folded arms under the head
-            c.rect(3, 19, 2, 1, Ink.skin); c.rect(13, 19, 2, 1, Ink.skin)
+            c.rect(4, 18, 16, 3, Ink.shirt)     // folded arms on the desk, head resting on them
+            c.rect(4, 18, 16, 1, sleeve)
+            c.rect(4, 21, 2, 1, hand); c.rect(18, 21, 2, 1, hand)
         }
     }
 
-    /// Just the head (12×11 px), for the menu bar strip.
+    /// Just the head (12×11 px), for the menu bar strip: a simpler drawing that reads at that size.
     public static func head(look: CharacterLook, eyesClosed: Bool = false) -> CGImage? {
-        let full = canvas(eyesClosed ? .chinBlink : .rest, look: look)
         var c = PixelCanvas(width: 12, height: 11)
-        for y in 0..<11 { for x in 0..<12 { c[x, y] = full[x + 3, y + 1] } }
-        // chinBlink raises a hand to the chin; keep the face clean.
-        if eyesClosed { c.rect(8, 10, 2, 1, 0) }
+        if look.hairStyle == 1 { c.rect(1, 4, 10, 7, Ink.hairShade) }
+        c.rect(2, 4, 8, 7, Ink.skin)
+        c.rect(2, 10, 8, 1, Ink.skinShade)
+        c.dot(1, 7, Ink.skin)
+        c.dot(10, 7, Ink.skin)
+        if eyesClosed {
+            c.rect(3, 7, 2, 1, Ink.skinShade)
+            c.rect(7, 7, 2, 1, Ink.skinShade)
+        } else {
+            c.rect(4, 7, 1, 2, Ink.eye)
+            c.rect(7, 7, 1, 2, Ink.eye)
+        }
+        c.rect(5, 9, 2, 1, Ink.mouth)
+        c.rect(2, 2, 8, 3, Ink.hair)
+        c.rect(1, 3, 1, 3, Ink.hair)
+        c.rect(10, 3, 1, 3, Ink.hair)
+        c.rect(3, 1, 6, 1, Ink.hair)
+        switch look.hairStyle {
+        case 1: c.rect(1, 6, 1, 5, Ink.hair); c.rect(10, 6, 1, 5, Ink.hair)
+        case 2: c.rect(4, 0, 4, 1, Ink.hairShade)
+        case 3: for x in stride(from: 2, through: 9, by: 2) { c.dot(x, 0, Ink.hair) }
+        default: c.rect(7, 4, 3, 1, Ink.hair)
+        }
+        c.rect(2, 2, 8, 1, Ink.hairShade)
         return c.image(palette: look.palette)
     }
 
     /// A jacket hanging on the empty chair: the person has left (agent not running).
     public static func jacket(look: CharacterLook) -> PixelCanvas {
         var c = PixelCanvas(width: width, height: height)
-        c.rect(4, 12, 10, 7, Ink.shirt)
-        c.rect(4, 12, 10, 1, Ink.shirtShade)
-        c.rect(8, 13, 2, 6, Ink.shirtShade)     // opening
-        c.rect(3, 13, 1, 6, Ink.shirtShade)     // sleeves hanging down
-        c.rect(14, 13, 1, 6, Ink.shirtShade)
+        c.stamp([
+            "..tttttttttttt..",
+            ".tTttttTTttttTt.",
+            "TtTttttTTttttTtT",
+            "TtTttttTTttttTtT",
+            "TtTttttTTttttTtT",
+            "TtTttttTTttttTtT",
+            "TtTttttTTttttTtT",
+            "T..tttTTTTttt..T",
+        ], at: headX - 1, 12, key: ["t": Ink.shirt, "T": Ink.shirtShade])
+        c.outline(Ink.outline)
         return c
     }
 

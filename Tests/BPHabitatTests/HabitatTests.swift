@@ -50,7 +50,7 @@ import UniformTypeIdentifiers
         #expect(OfficeModel(desks: []).lighting == .off)
         #expect(OfficeModel(desks: desks([.working])).lighting == .singleDesk)
         #expect(OfficeModel(desks: desks([.working, .idle])).lighting == .allOn)
-        #expect(OfficeLayer.preferredHeight(desks: 0) < OfficeLayer.preferredHeight(desks: 1))
+        #expect(OfficeLayer.preferredHeight(desks: 0) == OfficeLayer.preferredHeight(desks: 1))
     }
 
     @Test func clicksMapToDesks() {

@@ -138,7 +138,8 @@ public struct Workspace: Sendable {
 
         // [setup] runs first in the worktree's terminal; the agent starts only if it succeeds.
         let launch = request.agent?.launch(model: request.model?.nilIfBlank, prompt: prompt, hooks: hooks)
-        if let command = WorktreeSetup.command(setup: config.setup, then: launch?.command) {
+        let setup = config.setup + [WorktreeSetup.scriptStep(request.project.setupScript)].compactMap { $0 }
+        if let command = WorktreeSetup.command(setup: setup, then: launch?.command) {
             let env = try WorktreeEnvironment.load(project: request.project, worktree: worktree)
             let client = try await connect()
             let id = Self.sessionID(for: worktree)

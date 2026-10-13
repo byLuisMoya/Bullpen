@@ -11,13 +11,24 @@ import SwiftUI
 final class UsageCenter {
     private(set) var usage: [UUID: UsageTotals] = [:]
     private(set) var today = UsageTotals()
+    /// The main agent's plan usage (PlanUsageBadge), refreshed every couple of minutes.
+    private(set) var plan: PlanUsage?
+    private(set) var planUpdated: Date?
     @ObservationIgnored private let reader = TranscriptUsageReader()
 
     func start(store: BuildingStore, sessions: SessionManager) async {
+        var tick = 0
         while !Task.isCancelled {
             await refresh(store: store, sessions: sessions)
+            if tick % 6 == 0 { await refreshPlan() }
+            tick += 1
             try? await Task.sleep(for: .seconds(20))
         }
+    }
+
+    func refreshPlan() async {
+        plan = await PlanUsageService.fetch(agent: PrimaryAgent.id, claudeTokensToday: today)
+        planUpdated = Date()
     }
 
     func refresh(store: BuildingStore, sessions: SessionManager) async {

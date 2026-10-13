@@ -46,6 +46,21 @@ public struct Repository: Sendable {
         (try? await git.run(["rev-parse", "--verify", "--quiet", "refs/heads/\(name)"], in: root)) != nil
     }
 
+    /// Local branches, most recently committed first.
+    public func localBranches() async throws -> [String] {
+        try await refs("refs/heads")
+    }
+
+    /// Remote-tracking branches (`origin/x`), most recent first, without `origin/HEAD`.
+    public func remoteBranches() async throws -> [String] {
+        try await refs("refs/remotes").filter { !$0.hasSuffix("/HEAD") && $0.contains("/") }
+    }
+
+    private func refs(_ prefix: String) async throws -> [String] {
+        try await git.run(["for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", prefix], in: root)
+            .split(separator: "\n").map(String.init)
+    }
+
     public func worktrees() async throws -> [GitWorktree] {
         Self.parseWorktrees(try await git.run(["worktree", "list", "--porcelain"], in: root))
     }

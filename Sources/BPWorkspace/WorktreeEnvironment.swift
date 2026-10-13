@@ -27,6 +27,8 @@ public struct WorktreeEnvironment: Sendable {
             env["BULLPEN_PORT_\(name.uppercased().replacingOccurrences(of: "-", with: "_"))"] = String(port)
         }
         env["BULLPEN_WORKTREE"] = worktree.branch
+        // The main checkout, for setup scripts that copy untracked files (.env…) from it.
+        env["BULLPEN_PROJECT_PATH"] = project.path
         return WorktreeEnvironment(config: config, environment: env)
     }
 }
