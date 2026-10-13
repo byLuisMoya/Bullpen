@@ -10,7 +10,7 @@ struct SettingsView: View {
     var body: some View {
         TabView {
             GeneralSettings().tabItem { Label("General", systemImage: "gearshape") }
-            PromptSettings().tabItem { Label("Prompt", systemImage: "text.bubble") }
+            PromptSettings().tabItem { Label("Prompts", systemImage: "text.bubble") }
             ModelSettings().tabItem { Label("Modelos", systemImage: "cpu") }
             LimitSettings().tabItem { Label("Límites", systemImage: "gauge.with.dots.needle.33percent") }
             AutomationSettings().tabItem { Label("Automatizaciones", systemImage: "clock.badge.checkmark") }
@@ -23,6 +23,28 @@ struct SettingsView: View {
 }
 
 private struct PromptSettings: View {
+    private enum Pane: Hashable { case prompt, setup }
+    @State private var pane = Pane.prompt
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: $pane) {
+                Text("Prompt inicial").tag(Pane.prompt)
+                Text("Scripts de configuración").tag(Pane.setup)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .padding(.top, 12)
+            switch pane {
+            case .prompt: GlobalPromptSettings()
+            case .setup: SetupScriptSettings()
+            }
+        }
+    }
+}
+
+private struct GlobalPromptSettings: View {
     @AppStorage("globalInitialPrompt") private var globalPrompt = ""
 
     var body: some View {
@@ -39,6 +61,92 @@ private struct PromptSettings: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// Each project's setup script: runs in every new worktree, before the agent starts.
+private struct SetupScriptSettings: View {
+    @Environment(BuildingStore.self) private var store
+    @State private var projectID: UUID?
+    @State private var script = ""
+
+    private var project: Project? {
+        store.offices.first { $0.project.id == projectID }?.project ?? store.offices.first?.project
+    }
+
+    /// Common steps, appended as a new line.
+    private static let snippets: [(String, String)] = [
+        ("Copiar .env del proyecto", #"cp "$BULLPEN_PROJECT_PATH/.env" .env"#),
+        ("Instalar dependencias (pnpm)", "pnpm install"),
+        ("Instalar dependencias (npm)", "npm install"),
+        ("Instalar dependencias (Composer)", "composer install"),
+        ("Migraciones (Laravel)", "php artisan migrate --force"),
+        ("Generar clave (Laravel)", "php artisan key:generate"),
+        ("Compilar assets (npm)", "npm run build"),
+    ]
+
+    var body: some View {
+        Form {
+            if let project {
+                Section {
+                    Picker("Proyecto", selection: Binding(get: { project.id }, set: { projectID = $0 })) {
+                        ForEach(store.offices) { Text($0.project.name).tag($0.project.id) }
+                    }
+                }
+                Section {
+                    ZStack(alignment: .topLeading) {
+                        TextEditor(text: $script)
+                            .font(.system(.body, design: .monospaced))
+                            .scrollContentBackground(.hidden)
+                        if script.isEmpty {
+                            Text("pnpm install\ncp \"$BULLPEN_PROJECT_PATH/.env\" .env\nphp artisan migrate --force")
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                                .padding(.leading, 5)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .frame(minHeight: 170)
+                    HStack {
+                        Menu("Añadir paso") {
+                            ForEach(Self.snippets, id: \.1) { title, line in
+                                Button(title) { script = script.isEmpty || script.hasSuffix("\n") ? script + line : script + "\n" + line }
+                            }
+                        }
+                        .fixedSize()
+                        Spacer()
+                        if !script.isEmpty { Button("Vaciar", role: .destructive) { script = "" } }
+                    }
+                } header: {
+                    Text("Script de configuración de \(project.name)")
+                } footer: {
+                    Text("Se ejecuta en la terminal de cada worktree nuevo, dentro de su carpeta y antes de abrir el agente: instalar dependencias, copiar ficheros de entorno, migraciones… Se detiene en la primera línea que falle y entonces no se abre el agente. $BULLPEN_PROJECT_PATH es la carpeta del proyecto principal y $BULLPEN_WORKTREE la rama. Se guarda solo.")
+                }
+            } else {
+                ContentUnavailableView("Sin proyectos", systemImage: "folder", description: Text("Añade un proyecto para configurar su script."))
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { script = project?.setupScript ?? "" }
+        .onChange(of: project?.id) { old, _ in
+            // Keep what was typed in the previous project before showing the next one.
+            if let old { save(script, to: old) }
+            script = project?.setupScript ?? ""
+        }
+        // Saved as you type, like the editor in the new worktree sheet.
+        .task(id: script) {
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled, let id = project?.id else { return }
+            save(script, to: id)
+        }
+        .onDisappear { if let id = project?.id { save(script, to: id) } }
+    }
+
+    private func save(_ text: String, to id: UUID) {
+        guard var changed = store.offices.first(where: { $0.project.id == id })?.project,
+              text.nilIfBlank != changed.setupScript?.nilIfBlank else { return }
+        changed.setupScript = text.nilIfBlank
+        store.updateProject(changed)
     }
 }
 
