@@ -114,14 +114,74 @@ public struct ControlService: Sendable {
         try await workspace.removeWorktree(wt, in: project, force: force)
     }
 
-    public func send(_ reference: String, text: String) async throws {
+    /// Types `text` into the worktree's agent. Sent from another worktree's agent, it is signed
+    /// with that worktree's branch so the receiver knows who is asking.
+    public func send(_ reference: String, text: String, from sender: String? = ProcessInfo.processInfo.environment["BULLPEN_SESSION_ID"]) async throws {
         let (wt, _) = try find(reference)
         let client = try await workspace.connect()
         let id = Workspace.sessionID(for: wt)
         guard try await client.list().contains(where: { $0.id == id && $0.isRunning }) else {
             throw ControlError("«\(wt.branch)» no tiene una terminal en marcha.")
         }
-        try await client.sendMessage(id, text)
+        var message = text
+        if let sender, sender != id, let from = try? current(session: sender) {
+            message = "[Mensaje del agente de «\(from.branch)» (Bullpen)] " + text
+        }
+        try await client.sendMessage(id, message)
+    }
+
+    /// The worktree this process runs in (its terminal's `BULLPEN_SESSION_ID`).
+    public func current(session: String? = ProcessInfo.processInfo.environment["BULLPEN_SESSION_ID"]) throws -> WorktreeSummary {
+        guard let session, session.hasPrefix("wt-") else {
+            throw ControlError("Este proceso no corre en la terminal de ningún worktree de Bullpen.")
+        }
+        let (wt, project) = try find(String(session.dropFirst(3)))
+        return WorktreeSummary(id: wt.id.uuidString, project: project.name, branch: wt.branch, path: wt.path,
+                               baseRef: wt.baseRef, agent: wt.agentProfileID, state: "", detail: nil, ticket: wt.ticket?.key)
+    }
+
+    /// States where an agent has stopped and is waiting for someone.
+    public static let stopStates = Set([AgentState.done, .needsYou, .idle, .error, .dead].map(\.rawValue))
+
+    /// Waits until the worktree's agent reaches one of `states` (by default: stopped for any
+    /// reason), using the same status engine as the app, never "screen quiet for 3 s".
+    @discardableResult
+    public func wait(_ reference: String, until states: Set<String> = stopStates, timeout: TimeInterval = 600,
+                     poll: Duration = .seconds(1)) async throws -> WorktreeSummary {
+        let (wt, _) = try find(reference)
+        let deadline = Date().addingTimeInterval(timeout)
+        var last: WorktreeSummary?
+        while true {
+            last = try await worktrees().first { $0.id == wt.id.uuidString }
+            if let last, states.contains(last.state) { return last }
+            if Date() >= deadline {
+                throw ControlError("«\(wt.branch)» sigue en «\(last?.state ?? "?")» tras \(Int(timeout)) s.")
+            }
+            try await Task.sleep(for: poll)
+        }
+    }
+
+    /// Sends `text`, waits for the agent to take it and finish, and returns its answer: the last
+    /// thing it said (from the Claude Code transcript), or its terminal's last lines.
+    public func ask(_ reference: String, text: String, timeout: TimeInterval = 1800) async throws -> String {
+        let (wt, _) = try find(reference)
+        try await send(reference, text: text)
+        // First it has to start on it; then it has to stop.
+        _ = try? await wait(reference, until: [AgentState.working.rawValue, AgentState.thinking.rawValue], timeout: 30, poll: .milliseconds(300))
+        let final = try await wait(reference, timeout: timeout)
+        let answer = try await lastAnswer(of: wt) ?? readTerminal(reference, lines: 40)
+        return "Estado: \(final.state)\(final.detail.map { " (\($0))" } ?? "")\n\n\(answer)"
+    }
+
+    private func lastAnswer(of worktree: Worktree) async throws -> String? {
+        let client = try await workspace.connect()
+        guard let path = try await client.list().first(where: { $0.id == Workspace.sessionID(for: worktree) })?.agentActivity?.transcriptPath,
+              let handle = FileHandle(forReadingAtPath: path) else { return nil }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: size > 200_000 ? size - 200_000 : 0)
+        let text = String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self)
+        return ActivityDigest.fromClaudeTranscript(text).lastMessage
     }
 
     /// The last `lines` lines the worktree's terminal printed, without escape sequences.

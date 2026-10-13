@@ -68,7 +68,7 @@ struct ProjectCommand: AsyncParsableCommand {
 struct WorktreeCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "wt", abstract: "Worktrees: create them with an agent, message them, read them, remove them.",
-        subcommands: [List.self, Create.self, Send.self, Log.self, Remove.self], defaultSubcommand: List.self
+        subcommands: [List.self, Create.self, Send.self, Wait.self, Ask.self, Current.self, Log.self, Remove.self], defaultSubcommand: List.self
     )
 
     struct List: AsyncParsableCommand {
@@ -105,6 +105,36 @@ struct WorktreeCommand: AsyncParsableCommand {
         @Argument var worktree: String
         @Argument var text: String
         func run() async throws { try await CLIContext.service().send(worktree, text: text) }
+    }
+
+    struct Wait: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Wait until a worktree's agent stops (or reaches --until states).")
+        @Argument var worktree: String
+        @Option(help: "Comma-separated states (default: done,needsYou,idle,error,dead).") var until: String?
+        @Option(help: "Seconds.") var timeout = 600
+        @Flag var json = false
+        func run() async throws {
+            let states = until.map { Set($0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }) } ?? ControlService.stopStates
+            let result = try await CLIContext.service().wait(worktree, until: states, timeout: TimeInterval(timeout))
+            if json { try CLIContext.printJSON(result) } else { print([result.state, result.detail ?? ""].joined(separator: "\t")) }
+        }
+    }
+
+    struct Ask: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Send a message to a worktree's agent, wait for it to finish and print its answer.")
+        @Argument var worktree: String
+        @Argument var text: String
+        @Option(help: "Seconds.") var timeout = 1800
+        func run() async throws { print(try await CLIContext.service().ask(worktree, text: text, timeout: TimeInterval(timeout))) }
+    }
+
+    struct Current: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "The worktree this terminal belongs to.")
+        @Flag var json = false
+        func run() async throws {
+            let wt = try CLIContext.service().current()
+            if json { try CLIContext.printJSON(wt) } else { print([wt.project, wt.branch, wt.path].joined(separator: "\t")) }
+        }
     }
 
     struct Log: AsyncParsableCommand {

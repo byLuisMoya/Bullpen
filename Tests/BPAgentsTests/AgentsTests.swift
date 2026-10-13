@@ -186,3 +186,32 @@ import Testing
         #expect(t.costUSD > 0)
     }
 }
+
+@Suite struct CoordinationLaunchTests {
+    /// `--mcp-config` takes several values: it must come before `--settings`, never right
+    /// before the prompt, or the prompt would be read as one more config.
+    @Test func claudeGetsBullpenMCPBeforeItsSettings() {
+        let hooks = AgentHooks(bpPath: "/Apps/Bullpen.app/Contents/MacOS/bp", claudeSettingsPath: "/tmp/s.json", offersBullpenMCP: true)
+        let command = AgentProfile.claude.command(model: "opus", prompt: "Arregla el login", hooks: hooks)
+        guard AgentHooks.coordinationEnabled else { return }   // switched off in this Mac's settings
+        let mcp = try! #require(command.range(of: "--mcp-config"))
+        let settings = try! #require(command.range(of: "--settings"))
+        #expect(mcp.lowerBound < settings.lowerBound)
+        #expect(command.contains(#""command":"/Apps/Bullpen.app/Contents/MacOS/bp""#))
+        #expect(command.hasSuffix("'Arregla el login'; exec \"$SHELL\" -l"))
+    }
+
+    @Test func noMCPUnlessOffered() {
+        let hooks = AgentHooks(bpPath: "/x/bp", claudeSettingsPath: "/tmp/s.json")
+        #expect(!AgentProfile.claude.command(model: nil, prompt: nil, hooks: hooks).contains("--mcp-config"))
+        #expect(!AgentProfile.codex.command(model: nil, prompt: nil, hooks: hooks).contains("mcp_servers"))
+    }
+
+    @Test func codexGetsTheServerAsOverrides() {
+        let hooks = AgentHooks(bpPath: "/x/bp", claudeSettingsPath: "/tmp/s.json", offersBullpenMCP: true)
+        guard AgentHooks.coordinationEnabled else { return }
+        let command = AgentProfile.codex.command(model: nil, prompt: nil, hooks: hooks)
+        #expect(command.contains(#"'mcp_servers.bullpen.command="/x/bp"'"#))
+        #expect(command.contains(#"'mcp_servers.bullpen.args=["mcp"]'"#))
+    }
+}

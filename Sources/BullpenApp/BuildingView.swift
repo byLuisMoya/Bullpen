@@ -1,5 +1,6 @@
 import BPAgents
 import BPCore
+import BPGit
 import BPHabitat
 import BPPersistence
 import SwiftUI
@@ -48,7 +49,8 @@ struct BuildingView: View {
                         // its desks need more room.
                         ScrollView(.horizontal) {
                             OfficeFloor(model: officeModel(office, statuses: attention.statuses, warnings: repoStatus.warnings,
-                                                           summaries: summaries.summaries), compact: false, onSelect: onSelect)
+                                                           summaries: summaries.summaries, turns: repoStatus.turns,
+                                                           pullRequests: repoStatus.pullRequests), compact: false, onSelect: onSelect)
                                 .containerRelativeFrame(.horizontal) { visible, _ in
                                     max(visible, OfficeLayer.preferredWidth(desks: office.worktrees.count))
                                 }
@@ -96,7 +98,8 @@ struct BuildingView: View {
 let awayAfter: TimeInterval = 60
 
 func officeModel(_ office: Office, statuses: [UUID: AgentStatus], warnings: [UUID: WorktreeWarning] = [:],
-                 summaries: [UUID: String] = [:], now: Date = Date()) -> OfficeModel {
+                 summaries: [UUID: String] = [:], turns: [UUID: Int] = [:], pullRequests: [UUID: PullRequest] = [:],
+                 now: Date = Date()) -> OfficeModel {
     let looks = CharacterLook.distinctJackets(office.worktrees.map { .make(worktreeID: $0.id, agent: $0.agentProfileID) })
     return OfficeModel(desks: zip(office.worktrees, looks).map { worktree, look in
         let status = statuses[worktree.id]
@@ -110,7 +113,9 @@ func officeModel(_ office: Office, statuses: [UUID: AgentStatus], warnings: [UUI
             look: look,
             warning: warnings[worktree.id].map { $0.isConflict ? .conflict : .overlap },
             away: away,
-            summary: summaries[worktree.id]
+            summary: summaries[worktree.id],
+            turns: turns[worktree.id] ?? 0,
+            merged: pullRequests[worktree.id]?.state == .merged
         )
     })
 }
@@ -127,7 +132,8 @@ struct MiniOffice: View {
     @State private var available: CGFloat = 0
 
     var body: some View {
-        let model = officeModel(office, statuses: attention.statuses, warnings: repoStatus.warnings)
+        let model = officeModel(office, statuses: attention.statuses, warnings: repoStatus.warnings,
+                                turns: repoStatus.turns, pullRequests: repoStatus.pullRequests)
         let desks = office.worktrees.count
         let natural = OfficeView.size(desks: desks, compact: true)
         // The room fills the sidebar's width; with more desks than fit, the strip scrolls sideways.

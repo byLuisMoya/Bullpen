@@ -8,6 +8,7 @@ enum Ink {
     static let shirt: UInt8 = 5, shirtShade: UInt8 = 6, eye: UInt8 = 7, mouth: UInt8 = 8
     static let outline: UInt8 = 9, eyeLight: UInt8 = 10, blush: UInt8 = 11, hairLight: UInt8 = 12, collar: UInt8 = 13
     static let jacket: UInt8 = 14, jacketShade: UInt8 = 15, jacketDark: UInt8 = 16, lining: UInt8 = 17, button: UInt8 = 18
+    static let pants: UInt8 = 19, pantsShade: UInt8 = 20, shoe: UInt8 = 21
 }
 
 /// How a worktree's person looks. Derived deterministically from the worktree id, with the
@@ -105,6 +106,9 @@ public struct CharacterLook: Equatable, Sendable {
             Ink.jacket: RGBA(jacket), Ink.jacketShade: RGBA(Self.mix(jacket, 0x000000, 0.22)),
             Ink.jacketDark: RGBA(Self.mix(jacket, 0x000000, 0.4)),
             Ink.lining: RGBA(lining), Ink.button: RGBA(0xC9A45C),
+            // Trousers go with the jacket; plain dark shoes.
+            Ink.pants: RGBA(Self.mix(jacket, 0x1E2230, 0.55)), Ink.pantsShade: RGBA(Self.mix(jacket, 0x101218, 0.7)),
+            Ink.shoe: RGBA(0x2E2626),
         ])
     }
 
@@ -282,6 +286,33 @@ public enum CharacterSprite {
             c.rect(4, 18, 16, 1, sleeve)
             c.rect(4, 21, 2, 1, hand); c.rect(18, 21, 2, 1, hand)
         }
+    }
+
+    /// Standing height, for walking in and out of the office.
+    public static let walkHeight = 36
+
+    /// The whole person walking (two frames, legs and arms swinging): coming in to sit down, or
+    /// leaving their desk.
+    public static func walking(frame: Int, look: CharacterLook) -> PixelCanvas {
+        var c = PixelCanvas(width: width, height: walkHeight)
+        let step = frame % 2
+        // Legs first: the body covers their tops.
+        let (front, back) = step == 0 ? (8, 13) : (13, 8)
+        c.rect(front, 25, 3, 9, Ink.pants); c.rect(front, 33, 4, 2, Ink.shoe)
+        c.rect(back, 25, 3, 8, Ink.pantsShade); c.rect(back, 32, 4, 2, Ink.shoe)
+        // Body: the seated torso, carried on down to the belt.
+        torso(&c)
+        c.rect(headX - 1, 20, 16, 5, Ink.shirt)
+        c.rect(headX + 13, 20, 2, 5, Ink.shirtShade)
+        c.rect(headX - 1, 24, 16, 1, Ink.pantsShade)                          // belt
+        face(&c, dy: 0, pose: .rest)
+        hair(&c, dy: 0, style: look.hairStyle)
+        // Arms swing against the legs.
+        let (left, right) = step == 0 ? (1, 0) : (0, 1)
+        c.rect(2, 16 + left, 2, 7, Ink.shirtShade); c.rect(2, 23 + left, 2, 2, Ink.skin)
+        c.rect(20, 16 + right, 2, 7, Ink.shirtShade); c.rect(20, 23 + right, 2, 2, Ink.skin)
+        c.outline(Ink.outline)
+        return c
     }
 
     /// Just the head (12×11 px), for the menu bar strip: a simpler drawing that reads at that size.

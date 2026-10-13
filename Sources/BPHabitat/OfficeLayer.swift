@@ -15,9 +15,15 @@ public struct DeskModel: Equatable, Sendable, Identifiable {
     public var away: Bool
     /// What they are doing, in a few words, for the speech card over their head.
     public var summary: String?
+    /// Finished turns so far: sticky notes from 3, books from 6.
+    public var turns: Int
+    /// Its PR was merged: a beer on the desk.
+    public var merged: Bool
 
     public init(id: UUID, name: String, state: AgentState, detail: String? = nil, look: CharacterLook, warning: DeskWarning? = nil,
-                away: Bool = false, summary: String? = nil) {
+                away: Bool = false, summary: String? = nil, turns: Int = 0, merged: Bool = false) {
+        self.turns = turns
+        self.merged = merged
         self.away = away
         self.summary = summary
         self.id = id
@@ -106,6 +112,10 @@ public final class OfficeLayer: CALayer {
 
     /// Mini version for the sidebar: drawn at 1 point per art pixel, without names.
     public var isCompact = false
+    /// People walking in or out, in front of the desks.
+    let walkers = CALayer()
+    /// The first update draws the office as it is; only later changes are walked.
+    private var hasRendered = false
 
     public func update(_ model: OfficeModel, reduceMotion: Bool = false) {
         self.reduceMotion = reduceMotion
@@ -116,13 +126,23 @@ public final class OfficeLayer: CALayer {
 
         layoutRoom()
 
+        if walkers.superlayer == nil {
+            walkers.zPosition = 5
+            addSublayer(walkers)
+        }
+        let walks = hasRendered && !reduceMotion && !isCompact
+
         // Desks: keep existing nodes so running animations are not restarted for no reason.
         let ids = Set(model.desks.map(\.id))
         for (id, node) in nodes where !ids.contains(id) {
+            if walks, let index = old.desks.firstIndex(where: { $0.id == id }), !old.desks[index].away, old.desks[index].state != .dead {
+                walk(look: old.desks[index].look, slot: index, entering: false)
+            }
             node.remove()
             nodes[id] = nil
         }
         for (index, desk) in model.desks.enumerated() {
+            let isNew = nodes[desk.id] == nil
             let node = nodes[desk.id] ?? DeskNode(parent: self)
             let previous = old.desks.first { $0.id == desk.id }
             node.place(at: Self.slotX(index))
@@ -130,7 +150,16 @@ public final class OfficeLayer: CALayer {
             node.apply(desk, previous: previous, reduceMotion: reduceMotion)
             node.card.isHidden = isCompact
             nodes[desk.id] = node
+            guard walks, desk.state != .dead else { continue }
+            let present = !desk.away, wasPresent = isNew ? false : !(previous?.away ?? true) && previous?.state != .dead
+            if present, !wasPresent {
+                let arrival = walk(look: desk.look, slot: index, entering: true)
+                node.revealPerson(after: arrival)
+            } else if !present, wasPresent {
+                walk(look: desk.look, slot: index, entering: false)
+            }
         }
+        hasRendered = true
         layoutVacantDesks()
 
         layoutDecor()
@@ -139,6 +168,49 @@ public final class OfficeLayer: CALayer {
     }
 
     static func slotX(_ index: Int) -> CGFloat { CGFloat(margin + index * slot) * scale }
+
+    /// Walks someone along the front of the office between the right-hand edge and their desk.
+    /// Returns how long it takes.
+    @discardableResult
+    private func walk(look: CharacterLook, slot index: Int, entering: Bool) -> CFTimeInterval {
+        let s = Self.scale
+        let frames = [0, 1].compactMap { SpriteCache.walking($0, look: look) }
+        let walker = CALayer()
+        walker.magnificationFilter = .nearest
+        walker.minificationFilter = .nearest
+        walker.anchorPoint = .zero
+        walker.bounds = CGRect(x: 0, y: 0, width: CGFloat(CharacterSprite.width) * s, height: CGFloat(CharacterSprite.walkHeight) * s)
+        walker.contents = frames.first
+        let desk = Self.slotX(index) + 5 * s, door = bounds.width + 2 * s
+        let y = CGFloat(Self.wallHeight + Self.floorHeight - CharacterSprite.walkHeight - 1) * s
+        let (from, to) = entering ? (door, desk) : (desk, door)
+        walker.position = CGPoint(x: to, y: y)
+        let duration = min(max(abs(door - desk) / (45 * s), 0.6), 3.5)
+
+        let move = CABasicAnimation(keyPath: "position.x")
+        move.fromValue = from
+        move.toValue = to
+        move.duration = duration
+        let steps = CAKeyframeAnimation(keyPath: "contents")
+        steps.values = frames
+        steps.calculationMode = .discrete
+        steps.duration = 0.32
+        steps.repeatCount = .infinity
+        let bob = CABasicAnimation(keyPath: "position.y")
+        bob.byValue = -s
+        bob.duration = 0.16
+        bob.autoreverses = true
+        bob.repeatCount = .infinity
+
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { walker.removeFromSuperlayer() }
+        walkers.addSublayer(walker)
+        walker.add(move, forKey: "walk")
+        walker.add(steps, forKey: "steps")
+        walker.add(bob, forKey: "bob")
+        CATransaction.commit()
+        return duration
+    }
 
     /// Wall and floor art, redrawn only when the office changes width.
     private func layoutRoom() {
@@ -311,6 +383,8 @@ final class DeskNode {
     let root = CALayer()
     let chair = CALayer(), person = CALayer(), desk = CALayer(), monitor = CALayer(), plant = CALayer()
     let mug = CALayer(), notepad = CALayer()
+    /// Things earned with the work done in this worktree.
+    let notes = CALayer(), books = CALayer(), beer = CALayer()
     let bubble = CALayer(), bolt = CALayer()
     /// White speech card with the summary, over the head.
     let speech = CALayer(), speechText = CATextLayer()
@@ -355,6 +429,12 @@ final class DeskNode {
         chair.contents = Props.chair()
         desk.contents = Props.desk()
         plant.contents = Props.deskPlant()
+        Self.setup(notes, x: 10, y: 37, w: Props.notesWidth, h: Props.notesHeight)
+        Self.setup(books, x: 1, y: 39, w: Props.booksWidth, h: Props.booksHeight)
+        Self.setup(beer, x: 13, y: 43, w: Props.beerWidth, h: Props.beerHeight)
+        notes.contents = Props.stickyNotes()
+        books.contents = Props.books()
+        beer.contents = Props.beer()
         mug.contents = Props.mug()
         notepad.contents = Props.notepad()
         Self.setup(card, x: 1, y: Self.deskY + Props.deskHeight - 1, w: OfficeLayer.slot - 2, h: Props.nameCardHeight)
@@ -382,7 +462,7 @@ final class DeskNode {
         speech.isHidden = true
         // The person sits behind the desk but is drawn over it: their sprite stops at the desk
         // top, so only the arms resting on it overlap. Everything on the desk is in front of them.
-        [chair, desk, person, monitor, plant, mug, notepad, card, bubble, speech, bolt].forEach(root.addSublayer)
+        [chair, desk, person, monitor, notes, plant, books, mug, notepad, beer, card, bubble, speech, bolt].forEach(root.addSublayer)
         root.frame = CGRect(x: 0, y: 0, width: CGFloat(OfficeLayer.slot) * s, height: OfficeLayer.openHeight)
         parent.addSublayer(root)
         root.opacity = 0
@@ -402,6 +482,9 @@ final class DeskNode {
         label.string = model.name
         bolt.isHidden = model.warning == nil
         if let warning = model.warning { bolt.contents = Props.bolt(conflict: warning == .conflict) }
+        notes.isHidden = model.turns < 3
+        books.isHidden = model.turns < 6
+        beer.isHidden = !model.merged
         // The summary replaces the icon bubble while they work, think or have just finished.
         let says = model.away || !Self.speaks.contains(model.state) ? nil : model.summary
         speech.isHidden = says == nil || compact
@@ -448,10 +531,28 @@ final class DeskNode {
     func remove() {
         root.removeFromSuperlayer()
     }
+
+    /// Keeps the seat empty until the person walking in reaches it.
+    func revealPerson(after delay: CFTimeInterval) {
+        let appear = CAKeyframeAnimation(keyPath: "opacity")
+        appear.values = [0, 0, 1]
+        appear.keyTimes = [0, NSNumber(value: delay / (delay + 0.2)), 1]
+        appear.duration = delay + 0.2
+        person.add(appear, forKey: "arrive")
+        for layer in [speech, bubble] { layer.add(appear, forKey: "arrive") }
+    }
 }
 
 enum SpriteCache {
     nonisolated(unsafe) private static var images: [String: CGImage] = [:]
+
+    static func walking(_ frame: Int, look: CharacterLook) -> CGImage? {
+        let key = "walk\(frame)-\(look.skin)-\(look.hair)-\(look.hairStyle)-\(look.shirt)-\(look.jacket)"
+        if let cached = images[key] { return cached }
+        let image = CharacterSprite.walking(frame: frame, look: look).image(palette: look.palette)
+        images[key] = image
+        return image
+    }
 
     static func jacket(look: CharacterLook) -> CGImage? {
         let key = "jacket-\(look.jacket)-\(look.lining)"

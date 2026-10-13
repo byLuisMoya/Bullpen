@@ -8,10 +8,35 @@ public struct AgentHooks: Sendable {
     public var bpPath: String
     /// Where the generated Claude settings file lives.
     public var claudeSettingsPath: String
+    /// Give launched agents Bullpen's MCP server (`bp mcp`), so they can coordinate with the
+    /// other worktrees' agents: create them, ask them, wait for them.
+    public var offersBullpenMCP: Bool
 
-    public init(bpPath: String, claudeSettingsPath: String) {
+    public init(bpPath: String, claudeSettingsPath: String, offersBullpenMCP: Bool = false) {
         self.bpPath = bpPath
         self.claudeSettingsPath = claudeSettingsPath
+        self.offersBullpenMCP = offersBullpenMCP
+    }
+
+    /// The setting in Settings › General, shared by the app and `bp` (the app's defaults domain).
+    public static let coordinationKey = "agents.coordination"
+    public static var coordinationEnabled: Bool {
+        // Inside the app its defaults are `.standard`; `bp` reads the app's domain by name.
+        let appID = "com.byluismoya.Bullpen"
+        let defaults = Bundle.main.bundleIdentifier == appID ? .standard : UserDefaults(suiteName: appID)
+        return defaults?.object(forKey: coordinationKey) as? Bool ?? true
+    }
+
+    /// `--mcp-config` for Claude Code: adds the server for this session only, next to the user's own.
+    public var claudeMCPConfig: String {
+        let config = ["mcpServers": ["bullpen": ["command": bpPath, "args": ["mcp"]]]]
+        let data = (try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// `-c` overrides for Codex.
+    public var codexMCPConfigs: [String] {
+        ["mcp_servers.bullpen.command=\(tomlString(bpPath))", "mcp_servers.bullpen.args=[\"mcp\"]"]
     }
 
     static let claudeEvents = [
@@ -67,6 +92,7 @@ public extension AgentHooks {
     static func standard(bpPath: String) -> AgentHooks {
         let dir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Bullpen/agents", isDirectory: true)
-        return AgentHooks(bpPath: bpPath, claudeSettingsPath: dir.appendingPathComponent("claude-settings.json").path)
+        return AgentHooks(bpPath: bpPath, claudeSettingsPath: dir.appendingPathComponent("claude-settings.json").path,
+                          offersBullpenMCP: true)
     }
 }

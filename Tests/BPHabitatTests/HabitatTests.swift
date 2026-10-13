@@ -52,7 +52,8 @@ import UniformTypeIdentifiers
             let id = UUID()
             return DeskModel(id: id, name: i == 2 ? "feature/FKPI-1234-una-rama-con-nombre-muy-largo" : "wt-\(i)", state: state, look: .make(worktreeID: id, agent: i % 2 == 0 ? "claude" : "codex"),
                              warning: i == 0 ? .conflict : i == 1 ? .overlap : nil, away: i == 4,
-                             summary: i == 0 ? "Arregla el timeout del login" : i == 1 ? "Edita LoginForm.vue" : i == 3 ? "Tests de pagos en verde" : nil)
+                             summary: i == 0 ? "Arregla el timeout del login" : i == 1 ? "Edita LoginForm.vue" : i == 3 ? "Tests de pagos en verde" : nil,
+                             turns: [0, 3, 7, 12, 0, 1, 0, 6][i % 8], merged: i == 3)
         }
     }
 
@@ -188,5 +189,56 @@ import UniformTypeIdentifiers
             CGImageDestinationAddImage(dest, image, nil)
             #expect(CGImageDestinationFinalize(dest))
         }
+    }
+}
+
+@Suite struct WalkingTests {
+    @Test func walkingFramesDrawAWholePerson() throws {
+        for frame in 0..<2 {
+            let look = CharacterLook.make(worktreeID: UUID(), agent: "claude")
+            let canvas = CharacterSprite.walking(frame: frame, look: look)
+            #expect(!canvas.isEmpty)
+            // Shoes at the bottom: something is drawn in the last rows.
+            #expect((0..<canvas.width).contains { canvas[$0, CharacterSprite.walkHeight - 2] != 0 })
+        }
+        guard let dir = ProcessInfo.processInfo.environment["BULLPEN_PREVIEW"] else { return }
+        let zoom = 8, w = CharacterSprite.width, h = CharacterSprite.walkHeight
+        let ctx = try #require(CGContext(data: nil, width: w * zoom * 6, height: h * zoom, bitsPerComponent: 8, bytesPerRow: 0,
+                                         space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        ctx.interpolationQuality = .none
+        ctx.setFillColor(CGColor(srgbRed: 0.84, green: 0.67, blue: 0.48, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: w * zoom * 6, height: h * zoom))
+        for i in 0..<6 {
+            let look = CharacterLook.make(worktreeID: UUID(), agent: i % 2 == 0 ? "claude" : "codex")
+            let image = try #require(CharacterSprite.walking(frame: i % 2, look: look).image(palette: look.palette))
+            ctx.draw(image, in: CGRect(x: i * w * zoom, y: 0, width: w * zoom, height: h * zoom))
+        }
+        let url = URL(fileURLWithPath: dir).appendingPathComponent("walking.png")
+        let dest = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(dest, try #require(ctx.makeImage()), nil)
+        #expect(CGImageDestinationFinalize(dest))
+    }
+}
+
+@MainActor
+@Suite struct ArrivalTests {
+    func desk(_ id: UUID, away: Bool = false) -> DeskModel {
+        DeskModel(id: id, name: "wt", state: .working, look: .make(worktreeID: id, agent: "claude"), away: away)
+    }
+
+    @Test func peopleWalkInAndOutButNotOnTheFirstDraw() {
+        let layer = OfficeLayer()
+        layer.frame = CGRect(x: 0, y: 0, width: OfficeLayer.preferredWidth(desks: 4), height: OfficeLayer.openHeight)
+        let a = UUID(), b = UUID()
+        layer.update(OfficeModel(desks: [desk(a)]))
+        #expect(layer.walkers.sublayers?.isEmpty ?? true, "opening the app draws everyone seated")
+        layer.update(OfficeModel(desks: [desk(a), desk(b)]))
+        #expect(layer.walkers.sublayers?.count == 1, "a new worktree walks in")
+        layer.update(OfficeModel(desks: [desk(a), desk(b, away: true)]))
+        #expect(layer.walkers.sublayers?.count == 2, "leaving the jacket, they walk out")
+        layer.update(OfficeModel(desks: [desk(b, away: true)]))
+        #expect(layer.walkers.sublayers?.count == 3, "a removed worktree walks out")
+        layer.update(OfficeModel(desks: [desk(b, away: true)]), reduceMotion: true)
+        #expect(layer.walkers.sublayers?.count == 3)
     }
 }

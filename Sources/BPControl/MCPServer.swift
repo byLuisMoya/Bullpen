@@ -34,7 +34,7 @@ public struct MCPServer: Sendable {
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": [:]],
                 "serverInfo": ["name": "bullpen", "version": version],
-                "instructions": "Bullpen manages git worktrees, each with its own terminal and coding agent. Use list_worktrees first; refer to worktrees by branch name.",
+                "instructions": "Bullpen manages git worktrees, each with its own terminal and coding agent. Use list_worktrees first; refer to worktrees by branch name. current_worktree tells you which one you are in. To delegate work, create_worktree with an agent and a task (or pick an existing worktree), then wait_for_worktree until it stops, or use ask_worktree to send a message and get the answer back. Only remove worktrees the user asked you to remove.",
             ])
         case "ping":
             return reply(id: id, result: [:])
@@ -72,6 +72,15 @@ public struct MCPServer: Sendable {
         case "send_message":
             try await service.send(try string("worktree"), text: try string("text"))
             return "Enviado."
+        case "current_worktree":
+            return try json(try service.current())
+        case "wait_for_worktree":
+            let states = (args["until"] as? [String]).map(Set.init) ?? ControlService.stopStates
+            return try json(try await service.wait(try string("worktree"), until: states,
+                                                   timeout: TimeInterval(args["timeout"] as? Int ?? 600)))
+        case "ask_worktree":
+            return try await service.ask(try string("worktree"), text: try string("text"),
+                                         timeout: TimeInterval(args["timeout"] as? Int ?? 1800))
         case "read_terminal":
             return try service.readTerminal(try string("worktree"), lines: args["lines"] as? Int ?? 60)
         case "remove_worktree":
@@ -110,6 +119,13 @@ public struct MCPServer: Sendable {
               "task": ["type": "string", "description": "What the agent should do"]], ["project", "branch"]),
         tool("send_message", "Send a message to the agent (or shell) running in a worktree's terminal.",
              ["worktree": ["type": "string", "description": "Branch name or id"], "text": ["type": "string"]], ["worktree", "text"]),
+        tool("current_worktree", "The worktree you are running in (project, branch, path), if Bullpen started you.", [:], []),
+        tool("wait_for_worktree", "Wait until another worktree's agent stops (done, needsYou, idle, error, dead) or reaches the given states. Uses Bullpen's status engine (hooks), not output silence.",
+             ["worktree": ["type": "string"], "until": ["type": "array", "items": ["type": "string"], "description": "States to wait for (default: any stop)"],
+              "timeout": ["type": "integer", "default": 600, "description": "Seconds"]], ["worktree"]),
+        tool("ask_worktree", "Delegate to another worktree's agent: send it a message, wait until it finishes, and get its answer (its last message, or its terminal's last lines).",
+             ["worktree": ["type": "string"], "text": ["type": "string"], "timeout": ["type": "integer", "default": 1800, "description": "Seconds"]],
+             ["worktree", "text"]),
         tool("read_terminal", "Last lines printed in a worktree's terminal, as plain text.",
              ["worktree": ["type": "string"], "lines": ["type": "integer", "default": 60]], ["worktree"]),
         tool("remove_worktree", "Remove a worktree's folder (the branch is kept). Refuses if work would be lost unless force is true.",

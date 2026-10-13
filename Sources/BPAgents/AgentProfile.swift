@@ -122,10 +122,15 @@ public struct AgentProfile: Identifiable, Hashable, Sendable {
         var parts = [executable] + arguments
         switch self.hooks {
         case .claude:
+            // Read at launch so the setting applies to the next agent without restarting Bullpen.
+            // `--mcp-config` takes several values: `--settings` after it ends the list, so a
+            // prompt at the end isn't read as one more config.
+            if hooks.offersBullpenMCP, AgentHooks.coordinationEnabled { parts += ["--mcp-config", shellQuote(hooks.claudeMCPConfig)] }
             parts += ["--settings", shellQuote(hooks.claudeSettingsPath)]
         case .codex:
             parts += ["-c", shellQuote(hooks.codexNotifyConfig)]
             parts += hooks.codexHookConfigs.flatMap { ["-c", shellQuote($0)] }
+            if hooks.offersBullpenMCP, AgentHooks.coordinationEnabled { parts += hooks.codexMCPConfigs.flatMap { ["-c", shellQuote($0)] } }
         case .none:
             break
         }

@@ -209,6 +209,7 @@ private struct CommandLineSettings: View {
 private struct GeneralSettings: View {
     @AppStorage(BuildingName.key) private var buildingName = BuildingName.standard
     @AppStorage(PrimaryAgent.key) private var primaryAgent = AgentProfile.claude.id
+    @AppStorage(AgentHooks.coordinationKey) private var coordination = true
 
     var body: some View {
         Form {
@@ -216,6 +217,8 @@ private struct GeneralSettings: View {
                 Picker("Agente principal", selection: $primaryAgent) {
                     ForEach(AgentProfile.all) { Text($0.name).tag($0.id) }
                 }
+                Toggle("Los agentes pueden coordinarse entre worktrees", isOn: $coordination)
+                    .help("Claude Code y Codex arrancan con el servidor MCP de Bullpen: pueden crear worktrees, delegar tareas en otros agentes y esperar sus respuestas. Se aplica a los agentes que arranquen a partir de ahora.")
             } header: {
                 Text("Agentes")
             } footer: {

@@ -19,7 +19,7 @@ public enum Props {
         static let deskTop: UInt8 = 47, deskRim: UInt8 = 48, deskFront: UInt8 = 49, deskMat: UInt8 = 50, deskEdge: UInt8 = 51
         static let monitorBack: UInt8 = 52, monitorRim: UInt8 = 53, led: UInt8 = 54, chairCushion: UInt8 = 55
         static let shadow: UInt8 = 56, lampShine: UInt8 = 57, coffeeLight: UInt8 = 58, lampGlow: UInt8 = 59
-        static let card: UInt8 = 61, cardLight: UInt8 = 62
+        static let card: UInt8 = 61, cardLight: UInt8 = 62, beer: UInt8 = 63, beerDark: UInt8 = 64
         /// Recoloured per sprite (bolt, bubble marks).
         static let special: UInt8 = 60
     }
@@ -40,7 +40,7 @@ public enum Props {
         P.deskTop: RGBA(0x50566A), P.deskRim: RGBA(0x6E7690), P.deskFront: RGBA(0x343947), P.deskMat: RGBA(0x2C303C), P.deskEdge: RGBA(0x3B4050),
         P.monitorBack: RGBA(0x30343F), P.monitorRim: RGBA(0x4A5060), P.led: RGBA(0x5BE37D), P.chairCushion: RGBA(0x4A5266),
         P.shadow: RGBA(0x000000, alpha: 50), P.lampShine: RGBA(0x5E6779), P.lampGlow: RGBA(0xFFF6CF),
-        P.card: RGBA(0x15131B), P.cardLight: RGBA(0x34303F), P.coffeeLight: RGBA(0x9A6440),
+        P.card: RGBA(0x15131B), P.cardLight: RGBA(0x34303F), P.beer: RGBA(0xEBA53C), P.beerDark: RGBA(0xC97F22), P.coffeeLight: RGBA(0x9A6440),
     ])
 
     // MARK: Room
@@ -179,6 +179,55 @@ public enum Props {
         c.rect(0, 1, width, h - 2, P.outline)
         c.rect(1, 1, width - 2, h - 2, P.card)
         c.rect(1, 1, width - 2, 1, P.cardLight)
+        return c.image(palette: palette)
+    }
+
+    // MARK: Earned on the desk
+
+    public static let notesWidth = 8, notesHeight = 6
+
+    /// Sticky notes on the back of the monitor (after a few finished turns).
+    public static func stickyNotes() -> CGImage? {
+        var c = PixelCanvas(width: notesWidth, height: notesHeight)
+        c.rect(1, 1, 3, 3, P.noteYellow)
+        c.rect(4, 2, 3, 3, P.notePink)
+        c.dot(2, 2, P.ink)
+        c.outline(P.outline)
+        return c.image(palette: palette)
+    }
+
+    public static let booksWidth = 9, booksHeight = 9
+
+    /// A stack of books on the desk (more turns).
+    public static func books() -> CGImage? {
+        var c = PixelCanvas(width: booksWidth, height: booksHeight)
+        c.rect(1, 1, 6, 2, P.noteBlue); c.rect(1, 1, 1, 2, P.white)
+        c.rect(2, 3, 6, 2, P.pot); c.rect(7, 3, 1, 2, P.white)
+        c.rect(1, 5, 7, 2, P.leafDark); c.rect(1, 5, 1, 2, P.white)
+        c.outline(P.outline)
+        c.rect(1, 8, 7, 1, P.shadow)
+        return c.image(palette: palette)
+    }
+
+    public static let beerWidth = 12, beerHeight = 12
+
+    /// A pint with its foam: this worktree's PR was merged, cheers.
+    public static func beer() -> CGImage? {
+        var c = PixelCanvas(width: beerWidth, height: beerHeight)
+        c.stamp([
+            "..f.ff....",
+            ".fffffff..",
+            ".FffffFf..",
+            ".gaaaaag..",
+            ".gaaaaaghh",
+            ".gAaaaag.h",
+            ".gAaaaag.h",
+            ".gAaaaaghh",
+            ".ggggggg..",
+        ], at: 1, 1, key: ["f": P.white, "F": P.plastic, "a": P.beer, "A": P.beerDark, "g": P.glassLight, "h": P.glassLight])
+        c.dot(4, 6, P.white)                                       // a bubble
+        c.outline(P.outline)
+        c.rect(2, 11, 8, 1, P.shadow)
         return c.image(palette: palette)
     }
 

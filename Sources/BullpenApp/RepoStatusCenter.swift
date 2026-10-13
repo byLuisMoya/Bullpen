@@ -13,6 +13,8 @@ import UserNotifications
 final class RepoStatusCenter {
     private(set) var branches: [UUID: BranchSync] = [:]
     private(set) var pullRequests: [UUID: PullRequest] = [:]
+    /// Finished agent turns per worktree (its checkpoints): earns things on its desk.
+    private(set) var turns: [UUID: Int] = [:]
     /// Files this worktree shares with others (overlap) or that would conflict when merging.
     private(set) var warnings: [UUID: WorktreeWarning] = [:]
     @ObservationIgnored private let gh = GitHubCLI.locate()
@@ -28,12 +30,14 @@ final class RepoStatusCenter {
 
     func refresh(store: BuildingStore, includePRs: Bool) async {
         var nextBranches: [UUID: BranchSync] = [:]
+        var nextTurns: [UUID: Int] = [:]
         var nextPRs: [UUID: PullRequest] = includePRs ? [:] : pullRequests
         var nextWarnings: [UUID: WorktreeWarning] = includePRs ? [:] : warnings
         for office in store.offices where !office.worktrees.isEmpty {
             guard let repo = try? await Repository.open(at: URL(fileURLWithPath: office.project.path)) else { continue }
             for worktree in office.worktrees {
                 nextBranches[worktree.id] = await repo.branchSync(worktree.branch)
+                nextTurns[worktree.id] = (try? await repo.checkpoints(of: worktree.id).count) ?? 0
             }
             if includePRs {
                 // Pairwise merge simulations are the costly part: same cadence as PRs.
@@ -66,6 +70,7 @@ final class RepoStatusCenter {
         // Only count it as a full refresh once there was something to look at.
         if includePRs, !store.offices.isEmpty { lastPRFetch = Date() }
         branches = nextBranches
+        if nextTurns != turns { turns = nextTurns }
         if includePRs { announceFinishedChecks(old: pullRequests, new: nextPRs, store: store) }
         pullRequests = nextPRs
         warnings = nextWarnings.filter { !$0.value.isEmpty }

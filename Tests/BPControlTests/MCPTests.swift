@@ -11,6 +11,7 @@ import Testing
 @Suite(.serialized) struct MCPTests {
     struct Env {
         let mcp: MCPServer
+        var service: ControlService { mcp.service }
         let server: SessionServer
         let repo: URL
     }
@@ -60,7 +61,8 @@ import Testing
         #expect(await env.mcp.handle(Data(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.utf8)) == nil)
         let tools = try #require((try await rpc(env.mcp, 2, "tools/list")["result"] as? [String: Any])?["tools"] as? [[String: Any]])
         #expect(Set(tools.compactMap { $0["name"] as? String }) ==
-                ["list_projects", "list_worktrees", "create_worktree", "send_message", "read_terminal", "remove_worktree"])
+                ["list_projects", "list_worktrees", "create_worktree", "send_message", "read_terminal", "remove_worktree",
+                 "current_worktree", "wait_for_worktree", "ask_worktree"])
         #expect((try await rpc(env.mcp, 3, "nope")["error"] as? [String: Any])?["code"] as? Int == -32601)
     }
 
@@ -115,5 +117,41 @@ import Testing
 
     @Test func stripsTerminalSequences() {
         #expect(ControlService.plainText("\u{1B}]0;title\u{07}\u{1B}[1;32mok\u{1B}[0m\r\nprogress 10%\rprogress 100%") == "ok\nprogress 100%")
+    }
+
+    // MARK: Coordination between agents
+
+    @Test func waitAskAndKnowWhoIAm() async throws {
+        let env = try await make()
+        defer { env.server.stop() }
+        let a = try await env.service.create(project: "api", branch: "coordina")
+        let b = try await env.service.create(project: "api", branch: "ayudante")
+
+        // Who am I: from the terminal's BULLPEN_SESSION_ID.
+        #expect(try env.service.current(session: Workspace.sessionID(for: a)).branch == "coordina")
+        #expect(throws: ControlError.self) { try env.service.current(session: nil) }
+
+        // A plain terminal settles to idle once its output goes quiet.
+        let settled = try await env.service.wait("ayudante", timeout: 20)
+        #expect(ControlService.stopStates.contains(settled.state))
+
+        // Ask: send, wait for it to finish, get the answer (the terminal, without a transcript).
+        let answer = try await env.service.ask("ayudante", text: "echo respuesta-del-ayudante", timeout: 30)
+        #expect(answer.contains("respuesta-del-ayudante"))
+
+        // Messages from another worktree's agent are signed with its branch.
+        try await env.service.send("ayudante", text: "echo firmado", from: Workspace.sessionID(for: a))
+        try await Task.sleep(for: .seconds(1))
+        #expect(try env.service.readTerminal("ayudante", lines: 20).contains("Mensaje del agente de «coordina»"))
+        _ = b
+    }
+
+    @Test func waitGivesUpAfterTheTimeout() async throws {
+        let env = try await make()
+        defer { env.server.stop() }
+        _ = try await env.service.create(project: "api", branch: "lento")
+        await #expect(throws: ControlError.self) {
+            try await env.service.wait("lento", until: ["never-happens"], timeout: 1, poll: .milliseconds(200))
+        }
     }
 }
