@@ -224,6 +224,8 @@ struct ReviewBanner: View {
     @State private var working = false
     @State private var message: String?
     @State private var confirmingDiscard = false
+    /// The reviewer left uncommitted changes; without them there is nothing to apply.
+    @State private var hasFixes = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -231,7 +233,7 @@ struct ReviewBanner: View {
                 ReviewBadge(review: review)
                 Text(title).font(.callout.weight(.semibold))
                 Spacer()
-                if review.phase == .done {
+                if review.phase == .done, hasFixes {
                     Button(working ? "Subiendo…" : "Aplicar arreglos") { Task { await apply() } }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
@@ -259,6 +261,13 @@ struct ReviewBanner: View {
         .padding(.vertical, 8)
         .background(.bar)
         .overlay(alignment: .bottom) { Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1) }
+        // Re-checked while the review is done: you can still ask the reviewer for changes.
+        .task(id: review.phase) {
+            while review.phase == .done, !Task.isCancelled {
+                hasFixes = await store.workspace?.hasReviewFixes(reviewer) ?? false
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
         .confirmationDialog(review.phase == .applied ? "¿Cerrar este revisor?" : "¿Descartar la revisión y sus arreglos?",
                             isPresented: $confirmingDiscard) {
             Button(review.phase == .applied ? "Cerrar" : "Descartar", role: .destructive) {

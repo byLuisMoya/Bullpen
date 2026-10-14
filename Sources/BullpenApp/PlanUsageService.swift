@@ -176,6 +176,17 @@ struct PlanUsageBadge: View {
     @AppStorage(PrimaryAgent.key) private var agentID = AgentProfile.claude.id
 
     var body: some View {
+        // Nothing until there is usage to show: no placeholder while loading, no error text.
+        ZStack {
+            switch usage.plan {
+            case nil, .unavailable: EmptyView()
+            default: badge
+            }
+        }
+        .task(id: agentID) { await usage.refreshPlan() }
+    }
+
+    private var badge: some View {
         Button {
             openWindow(id: "usage")
         } label: {
@@ -195,13 +206,12 @@ struct PlanUsageBadge: View {
         }
         .buttonStyle(.plain)
         .help(help)
-        .task(id: agentID) { await usage.refreshPlan() }
     }
 
     private func text(compact: Bool) -> String {
         switch usage.plan {
-        case nil:
-            return "…"
+        case nil, .unavailable:
+            return ""
         case let .plan(session, weekly):
             func part(_ w: LimitWindow?) -> String? {
                 guard let w else { return nil }
@@ -218,8 +228,6 @@ struct PlanUsageBadge: View {
             let left = remaining.formatted(.currency(code: currency).precision(.fractionLength(2)))
             if compact { return left }
             return "Saldo \(left)" + (spent.map { " · gastado \($0.formatted(.currency(code: currency).precision(.fractionLength(2))))" } ?? "")
-        case let .unavailable(reason):
-            return compact ? "sin datos" : reason
         }
     }
 
