@@ -50,7 +50,7 @@ struct BuildingView: View {
                         ScrollView(.horizontal) {
                             OfficeFloor(model: officeModel(office, statuses: attention.statuses, warnings: repoStatus.warnings,
                                                            summaries: summaries.summaries, turns: repoStatus.turns,
-                                                           pullRequests: repoStatus.pullRequests), compact: false, onSelect: onSelect)
+                                                           pullRequests: repoStatus.pullRequests, leaving: store.leaving), compact: false, onSelect: onSelect)
                                 .containerRelativeFrame(.horizontal) { visible, _ in
                                     max(visible, OfficeLayer.preferredWidth(desks: office.worktrees.count))
                                 }
@@ -99,7 +99,7 @@ let awayAfter: TimeInterval = 60
 
 func officeModel(_ office: Office, statuses: [UUID: AgentStatus], warnings: [UUID: WorktreeWarning] = [:],
                  summaries: [UUID: String] = [:], turns: [UUID: Int] = [:], pullRequests: [UUID: PullRequest] = [:],
-                 now: Date = Date()) -> OfficeModel {
+                 leaving: Set<UUID> = [], now: Date = Date()) -> OfficeModel {
     let looks = CharacterLook.distinctJackets(office.worktrees.map { .make(worktreeID: $0.id, agent: $0.agentProfileID) })
     let theme = OfficeTheme(rawValue: office.project.officeTheme ?? "") ?? .basic
     return OfficeModel(desks: zip(office.worktrees, looks).map { worktree, look in
@@ -117,7 +117,8 @@ func officeModel(_ office: Office, statuses: [UUID: AgentStatus], warnings: [UUI
             summary: summaries[worktree.id],
             turns: turns[worktree.id] ?? 0,
             merged: pullRequests[worktree.id]?.state == .merged,
-            branch: worktree.branch
+            branch: worktree.branch,
+            leaving: leaving.contains(worktree.id)
         )
     }, theme: theme)
 }
@@ -131,11 +132,12 @@ struct MiniOffice: View {
     let onOpen: () -> Void
     @Environment(AttentionCenter.self) private var attention
     @Environment(RepoStatusCenter.self) private var repoStatus
+    @Environment(BuildingStore.self) private var store
     @State private var available: CGFloat = 0
 
     var body: some View {
         let model = officeModel(office, statuses: attention.statuses, warnings: repoStatus.warnings,
-                                turns: repoStatus.turns, pullRequests: repoStatus.pullRequests)
+                                turns: repoStatus.turns, pullRequests: repoStatus.pullRequests, leaving: store.leaving)
         let desks = office.worktrees.count
         let natural = OfficeView.size(desks: desks, compact: true)
         // The room fills the sidebar's width; with more desks than fit, the strip scrolls sideways.

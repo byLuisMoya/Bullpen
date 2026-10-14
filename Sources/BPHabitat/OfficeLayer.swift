@@ -27,10 +27,15 @@ public struct DeskModel: Equatable, Sendable, Identifiable {
     public var merged: Bool
     /// The full branch, for the tooltip (the card under the desk cuts it short).
     public var branch: String?
+    /// Being deleted: whoever is at the desk walks out; if they were away, their jacket goes and
+    /// the screen goes off.
+    public var leaving: Bool
 
     public init(id: UUID, name: String, state: AgentState, detail: String? = nil, look: CharacterLook, warning: DeskWarning? = nil,
-                away: Bool = false, summary: String? = nil, turns: Int = 0, merged: Bool = false, branch: String? = nil) {
+                away: Bool = false, summary: String? = nil, turns: Int = 0, merged: Bool = false, branch: String? = nil,
+                leaving: Bool = false) {
         self.branch = branch
+        self.leaving = leaving
         self.turns = turns
         self.merged = merged
         self.away = away
@@ -156,7 +161,9 @@ public final class OfficeLayer: CALayer {
         // Desks: keep existing nodes so running animations are not restarted for no reason.
         let ids = Set(model.desks.map(\.id))
         for (id, node) in nodes where !ids.contains(id) {
-            if walks, let index = old.desks.firstIndex(where: { $0.id == id }), !old.desks[index].away, old.desks[index].state != .dead {
+            // Gone without having left first (e.g. deleted elsewhere): they walk out now.
+            if walks, let index = old.desks.firstIndex(where: { $0.id == id }), !old.desks[index].away,
+               !old.desks[index].leaving, old.desks[index].state != .dead {
                 walk(look: old.desks[index].look, slot: index, entering: false)
             }
             node.remove()
@@ -172,6 +179,12 @@ public final class OfficeLayer: CALayer {
             node.apply(desk, previous: previous, reduceMotion: reduceMotion)
             node.card.isHidden = isCompact
             nodes[desk.id] = node
+            if desk.leaving {
+                if walks, let previous, !previous.leaving, !previous.away, previous.state != .dead {
+                    walk(look: desk.look, slot: index, entering: false)
+                }
+                continue
+            }
             guard walks, desk.state != .dead else { continue }
             let present = !desk.away, wasPresent = isNew ? false : !(previous?.away ?? true) && previous?.state != .dead
             if present, !wasPresent {
@@ -560,7 +573,18 @@ final class DeskNode {
         speech.isHidden = says == nil || compact
         speechText.string = says
         bubble.opacity = says == nil ? 1 : 0
-        guard previous?.state != model.state || previous?.look != model.look || previous?.away != model.away
+        if model.leaving {
+            // Nobody and no jacket: an empty chair in front of a switched-off screen.
+            guard previous?.leaving != true || person.contents != nil else { return }
+            person.removeAllAnimations()
+            person.contents = nil
+            bubble.removeAllAnimations()
+            bubble.isHidden = true
+            speech.isHidden = true
+            monitor.contents = Props.monitor(on: false, glow: false, theme: theme)
+            return
+        }
+        guard previous?.leaving == true || previous?.state != model.state || previous?.look != model.look || previous?.away != model.away
                 || person.contents == nil else { return }
 
         // Away (idle for a while) or not running: only the jacket on the chair is left.

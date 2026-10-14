@@ -232,6 +232,12 @@ func collect(_ client: SessionClient, session: String, timeout: Double = 5, unti
         let path = ShellEnvironment.userPath
         #expect(path?.contains("/usr/bin") == true)
     }
+
+    @Test func mergesPathsKeepingOrderAndEachDirectoryOnce() {
+        #expect(ShellEnvironment.merge("/a:/b", "/b:/c") == "/a:/b:/c")
+        #expect(ShellEnvironment.merge(nil, "/c") == "/c")
+        #expect(ShellEnvironment.merge(nil, nil) == nil)
+    }
 }
 
 @Suite(.serialized) struct HandoverTests {

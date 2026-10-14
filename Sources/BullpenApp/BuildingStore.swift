@@ -20,6 +20,8 @@ final class BuildingStore {
     private(set) var offices: [Office] = []
     /// Last error to show to the user; cleared when dismissed.
     var errorMessage: String?
+    /// Worktrees being deleted: their person walks out while the terminal and folder go.
+    private(set) var leaving: Set<UUID> = []
     /// Review checkouts no reviewer points at that still have changes: the user decides.
     var orphanReviews: [URL] = []
     private var database: AppDatabase?
@@ -226,6 +228,8 @@ final class BuildingStore {
 
     /// Hangs up its terminal, runs teardown, removes the folder (the branch is kept) and archives it.
     func removeWorktree(_ worktree: Worktree, in project: Project, force: Bool, deleteExternal: Bool = false) async {
+        leaving.insert(worktree.id)
+        defer { leaving.remove(worktree.id) }
         do {
             try await workspace?.removeWorktree(worktree, in: project, force: force, deleteExternal: deleteExternal)
         } catch {

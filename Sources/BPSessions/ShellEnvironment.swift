@@ -28,25 +28,53 @@ public enum ShellEnvironment {
     static let marker = "__BULLPEN_PATH__"
 
     private static func resolve() -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: loginShell())
         // Markers around the value: rc files may print their own lines (greetings, warnings).
-        process.arguments = ["-i", "-l", "-c", "printf '\(marker)%s\(marker)' \"$PATH\""]
-        process.standardInput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        let out = Pipe()
-        process.standardOutput = out
-        guard (try? process.run()) != nil else { return nil }
+        let args = [loginShell(), "-i", "-l", "-c", "printf '\(marker)%s\(marker)' \"$PATH\""]
+        var fds: [Int32] = [0, 0]
+        guard pipe(&fds) == 0 else { return nil }
+        var actions: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&actions)
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+        posix_spawn_file_actions_adddup2(&actions, fds[1], 1)
+        posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
+        posix_spawn_file_actions_addclose(&actions, fds[0])
+        posix_spawn_file_actions_addclose(&actions, fds[1])
+        // A session of its own, with no terminal: run from inside an agent's terminal (`bp`,
+        // `bp mcp`), an interactive shell would otherwise take that terminal over and hang.
+        var attributes: posix_spawnattr_t?
+        posix_spawnattr_init(&attributes)
+        defer { posix_spawnattr_destroy(&attributes) }
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSID))
+        var pid: pid_t = 0
+        let argv = args.map { strdup($0) } + [nil]
+        defer { argv.forEach { free($0) } }
+        let spawned = posix_spawn(&pid, args[0], &actions, &attributes, argv, environ)
+        close(fds[1])
+        let reader = FileHandle(fileDescriptor: fds[0], closeOnDealloc: true)
+        guard spawned == 0 else { return nil }
+        nonisolated(unsafe) var data = Data()
         let done = DispatchSemaphore(value: 0)
         DispatchQueue.global().async {
-            process.waitUntilExit()
+            data = reader.readDataToEndOfFile()
             done.signal()
         }
         if done.wait(timeout: .now() + 5) == .timedOut {
-            process.terminate()
+            kill(pid, SIGKILL)
+            var status: Int32 = 0
+            waitpid(pid, &status, 0)
             return nil
         }
-        return parse(String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+        var status: Int32 = 0
+        waitpid(pid, &status, 0)
+        return parse(String(decoding: data, as: UTF8.self))
+    }
+
+    /// Both PATHs in order, each directory once.
+    public static func merge(_ paths: String?...) -> String? {
+        var seen = Set<Substring>()
+        let dirs = paths.compactMap { $0 }.flatMap { $0.split(separator: ":") }.filter { seen.insert($0).inserted }
+        return dirs.isEmpty ? nil : dirs.joined(separator: ":")
     }
 
     static func parse(_ output: String) -> String? {
