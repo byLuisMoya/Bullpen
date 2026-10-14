@@ -53,7 +53,10 @@ public final class SessionClient: @unchecked Sendable {
         var spec = spec
         // Give the session the PATH of the user's terminal (see ShellEnvironment). Done here,
         // not in bpd, so it also works with a daemon started by an older version.
-        if spec.environment["PATH"] == nil, let path = await Task.detached(operation: { ShellEnvironment.userPath }).value {
+        // When the shell doesn't answer (e.g. `bp` run by an agent, inside its tool sandbox), the
+        // PATH of whoever asks: an agent's already has everything; bpd's alone has only /usr/bin.
+        if spec.environment["PATH"] == nil,
+           let path = await Task.detached(operation: { ShellEnvironment.userPath }).value ?? ProcessInfo.processInfo.environment["PATH"] {
             spec.environment["PATH"] = path
         }
         // `bp` (next to this program inside Bullpen.app) on the PATH, last, so scripts and agents

@@ -6,14 +6,15 @@ import Foundation
 /// that work in Terminal fail with "command not found".
 public enum ShellEnvironment {
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var cached: String??
+    nonisolated(unsafe) private static var cached: String?
 
-    /// PATH from an interactive login shell, resolved once (nil if the shell doesn't answer).
+    /// PATH from an interactive login shell, resolved once (nil if the shell doesn't answer; a
+    /// failure isn't kept, the next call tries again).
     public static var userPath: String? {
         lock.lock(); defer { lock.unlock() }
         if let cached { return cached }
         let path = resolve()
-        cached = .some(path)
+        if let path { cached = path }
         return path
     }
 
