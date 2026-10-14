@@ -120,7 +120,17 @@ public struct Repository: Sendable {
         var args = ["worktree", "remove"]
         if force { args += ["--force", "--force"] }
         args.append(path.path)
-        try await git.run(args, in: root)
+        do {
+            try await git.run(args, in: root)
+        } catch let error as GitError where !force && error.stderr.contains("containing submodules") {
+            // Git won't remove a worktree with submodules without --force, clean or not. Their
+            // repositories go with it, so force only when no submodule has uncommitted changes
+            // or commits that aren't on a remote.
+            let pending = try? await git.run(["submodule", "foreach", "--recursive", "--quiet",
+                                              "git status --porcelain; git log --oneline -1 HEAD --not --remotes"], in: path)
+            guard let pending, pending.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw error }
+            try await git.run(["worktree", "remove", "--force", path.path], in: root)
+        }
     }
 
     static func parseWorktrees(_ output: String) -> [GitWorktree] {
