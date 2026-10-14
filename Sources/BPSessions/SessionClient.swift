@@ -66,6 +66,12 @@ public final class SessionClient: @unchecked Sendable {
            let path = spec.environment["PATH"], !path.split(separator: ":").contains(Substring(dir)) {
             spec.environment["PATH"] = path + ":" + dir
         }
+        // The login shell that runs a command reads ~/.zprofile but not ~/.zshrc, and the former
+        // may put its directories first again (`brew shellenv`): Homebrew's php ahead of Herd's.
+        // Set the terminal's PATH again, in its order, right before the command.
+        if let command = spec.command, let path = spec.environment["PATH"] {
+            spec.command = "export PATH='\(path.replacingOccurrences(of: "'", with: "'\\''"))'; " + command
+        }
         guard case let .created(_, info) = try await request({ .create(request: $0, spec: spec) }) else {
             throw SessionError(message: "unexpected reply to create")
         }
