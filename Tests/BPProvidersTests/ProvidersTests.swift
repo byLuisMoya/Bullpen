@@ -58,11 +58,13 @@ import Testing
 
 @Suite struct KeyStoreTests {
     @Test func storesReplacesAndDeletes() throws {
-        let store = KeyStore(service: "com.byluismoya.Bullpen.tests.\(UUID().uuidString)")
+        let store = KeyStore(service: "com.byluismoya.Bullpen.tests.\(UUID().uuidString)", legacyService: nil)
         try store.setKey("one", for: .openai)
+        KeyStore.forgetReads()
         #expect(store.key(for: .openai) == "one")
-        try store.setKey("two", for: .openai)
-        #expect(store.key(for: .openai) == "two")
+        try store.setKey("two \"quoted\" \\ back", for: .openai)
+        KeyStore.forgetReads()
+        #expect(store.key(for: .openai) == "two \"quoted\" \\ back")
         #expect(store.hasKey(for: .openai))
         try store.setKey(nil, for: .openai)
         #expect(store.key(for: .openai) == nil)

@@ -2,7 +2,7 @@ import Foundation
 import os
 
 public enum Bullpen {
-    public static let version = "0.1.32"
+    public static let version = "0.1.33"
     public static let bundleIdentifier = "com.byluismoya.Bullpen"
 
     /// `~/Library/Application Support/Bullpen`

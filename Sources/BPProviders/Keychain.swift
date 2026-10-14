@@ -2,29 +2,42 @@ import Foundation
 import Security
 
 /// API keys live in the login Keychain, never in files or logs (PLAN §14).
+///
+/// They are written and read through `/usr/bin/security`, as Claude Code and gh do: the item then
+/// trusts that tool, not Bullpen's signature, so an update to Bullpen never asks for access again.
 public struct KeyStore: Sendable {
     public var service: String
+    /// Where keys went before, saved by the app itself: each update asked for access to them.
+    /// Moved to `service` the first time they are read.
+    var legacyService: String?
 
-    public init(service: String = "com.byluismoya.Bullpen.providers") { self.service = service }
+    public init(service: String = "com.byluismoya.Bullpen.keys",
+                legacyService: String? = "com.byluismoya.Bullpen.providers") {
+        self.service = service
+        self.legacyService = legacyService
+    }
 
     public func key(for provider: ProviderID) -> String? { secret(provider.rawValue) }
     public func hasKey(for provider: ProviderID) -> Bool { hasSecret(provider.rawValue) }
     public func setKey(_ key: String?, for provider: ProviderID) throws { try setSecret(key, account: provider.rawValue, label: provider.name) }
 
-    /// Read secrets, kept for the rest of the launch: macOS may ask for Keychain access on each
-    /// read, so each secret is read at most once.
+    /// Read secrets, kept for the rest of the launch: each one is read at most once.
     private static let cache = Cache()
 
     /// Any other secret Bullpen keeps (e.g. `linear`). Only for using it: views ask `hasSecret`.
     public func secret(_ account: String) -> String? {
         let id = "\(service)/\(account)"
         if let cached = Self.cache.get(id) { return cached }
-        var query = base(account)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data,
-              let value = String(data: data, encoding: .utf8) else { return nil }
+        if let value = Self.security(["find-generic-password", "-s", service, "-a", account, "-w"]) {
+            let key = value.trimmingCharacters(in: .newlines)
+            Self.cache.set(id, key)
+            return key
+        }
+        guard let legacyService, let value = Self.legacySecret(service: legacyService, account: account) else { return nil }
+        // The last time macOS asks: from now on it is read through `security`.
+        if (try? setSecret(value, account: account, label: account)) != nil {
+            SecItemDelete(Self.query(service: legacyService, account: account) as CFDictionary)
+        }
         Self.cache.set(id, value)
         return value
     }
@@ -32,28 +45,73 @@ public struct KeyStore: Sendable {
     /// Whether a secret is saved, without reading it: only its attributes, which never asks for access.
     public func hasSecret(_ account: String) -> Bool {
         if Self.cache.get("\(service)/\(account)") != nil { return true }
-        var query = base(account)
-        query[kSecReturnAttributes as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+        return [service, legacyService].compactMap { $0 }.contains { service in
+            var query = Self.query(service: service, account: account)
+            query[kSecReturnAttributes as String] = true
+            query[kSecMatchLimit as String] = kSecMatchLimitOne
+            return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+        }
     }
 
     /// Saves `key`, or removes the secret when it is nil or empty.
     public func setSecret(_ key: String?, account: String, label: String) throws {
-        SecItemDelete(base(account) as CFDictionary)
         Self.cache.set("\(service)/\(account)", nil)
-        guard let key, !key.isEmpty else { return }
-        var item = base(account)
-        item[kSecValueData as String] = Data(key.utf8)
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        item[kSecAttrLabel as String] = "Bullpen – \(label)"
-        let status = SecItemAdd(item as CFDictionary, nil)
-        guard status == errSecSuccess else { throw ProviderError("No se pudo guardar la clave en el Llavero (\(status)).") }
+        guard let key, !key.isEmpty else {
+            _ = Self.security(["delete-generic-password", "-s", service, "-a", account])
+            if let legacyService { SecItemDelete(Self.query(service: legacyService, account: account) as CFDictionary) }
+            return
+        }
+        // Through `security -i` so the key goes by stdin, not in the arguments `ps` shows.
+        let command = ["add-generic-password", "-U", "-s", service, "-a", account, "-l", "Bullpen – \(label)", "-w", key]
+            .map(Self.quoted).joined(separator: " ")
+        // `security -i` exits 0 even when a command fails: check the item is there.
+        _ = Self.security(["-i"], input: command + "\n")
+        guard Self.security(["find-generic-password", "-s", service, "-a", account]) != nil else {
+            throw ProviderError("No se pudo guardar la clave en el Llavero.")
+        }
         Self.cache.set("\(service)/\(account)", key)
     }
 
-    private func base(_ account: String) -> [String: Any] {
+    /// Forgets what was read this launch (tests).
+    static func forgetReads() { cache.removeAll() }
+
+    // MARK: Helpers
+
+    private static func query(service: String, account: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
+    }
+
+    private static func legacySecret(service: String, account: String) -> String? {
+        var query = query(service: service, account: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// `security`'s interactive mode splits on spaces and honours double quotes and backslashes.
+    private static func quoted(_ word: String) -> String {
+        "\"" + word.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+    }
+
+    /// Runs `/usr/bin/security`; its output, or nil when it fails.
+    private static func security(_ arguments: [String], input: String? = nil) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = arguments
+        let out = Pipe(), inPipe = Pipe()
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = input == nil ? FileHandle.nullDevice : inPipe
+        guard (try? process.run()) != nil else { return nil }
+        if let input {
+            inPipe.fileHandleForWriting.write(Data(input.utf8))
+            try? inPipe.fileHandleForWriting.close()
+        }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
     }
 }
 
@@ -63,4 +121,5 @@ private final class Cache: @unchecked Sendable {
 
     func get(_ id: String) -> String? { lock.withLock { values[id] } }
     func set(_ id: String, _ value: String?) { lock.withLock { values[id] = value } }
+    func removeAll() { lock.withLock { values.removeAll() } }
 }
