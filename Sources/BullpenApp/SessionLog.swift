@@ -63,8 +63,17 @@ struct SessionLogView: View {
             }
         }
         .task(id: worktree.id) {
+            let url = SessionProtocol.eventsFile(session: Workspace.sessionID(for: worktree))
+            var seen: (size: Int, modified: Date)?
             while !Task.isCancelled {
-                events = SessionLog.events(for: worktree)
+                // The file only grows: read and decode it again (off the main thread) only when it changed.
+                let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+                let stamp = (attributes?[.size] as? Int ?? -1, attributes?[.modificationDate] as? Date ?? .distantPast)
+                if seen.map({ $0.size != stamp.0 || $0.modified != stamp.1 }) ?? true {
+                    seen = (stamp.0, stamp.1)
+                    let wt = worktree
+                    events = await Task.detached { SessionLog.events(for: wt) }.value
+                }
                 try? await Task.sleep(for: .seconds(3))
             }
         }

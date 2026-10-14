@@ -143,7 +143,14 @@ public final class OfficeLayer: CALayer {
     /// The first update draws the office as it is; only later changes are walked.
     private var hasRendered = false
 
+    /// What the last update drew: an identical one (statuses tick every second while agents
+    /// print, mostly without changing any desk) has nothing to redraw.
+    private var drawn: (size: CGSize, compact: Bool)?
+
     public func update(_ model: OfficeModel, reduceMotion: Bool = false) {
+        if hasRendered, model == self.model, reduceMotion == self.reduceMotion,
+           let drawn, drawn.size == bounds.size, drawn.compact == isCompact { return }
+        drawn = (bounds.size, isCompact)
         self.reduceMotion = reduceMotion
         let old = self.model
         self.model = model
@@ -674,11 +681,24 @@ public enum OfficeSnapshot {
     @MainActor
     public static func image(_ model: OfficeModel, desks: Int, width fill: CGFloat? = nil, scale: CGFloat = 2) -> CGImage? {
         // The sidebar asks again on every redraw; most of the time nothing in the room changed.
+        // Texts it doesn't draw (the name and speech cards are hidden at this size, the rest is
+        // for tooltips) don't make a new picture.
+        var model = model
+        for index in model.desks.indices {
+            model.desks[index].name = ""
+            model.desks[index].detail = nil
+            model.desks[index].branch = nil
+            // Its text is in the hidden speech card; that there is one hides the icon bubble.
+            model.desks[index].summary = model.desks[index].summary.map { _ in "" }
+        }
         let key = Key(model: model, desks: desks, width: fill, scale: scale)
         if let hit = cache.first(where: { $0.key == key }) { return hit.image }
         let image = render(model, desks: desks, width: fill, scale: scale)
         if let image {
-            cache.removeAll { $0.key.model.desks.map(\.id) == model.desks.map(\.id) && $0.key.width == fill }
+            // One picture per office: an older one (other state, or other width while the sidebar
+            // is resized) won't be asked for again.
+            // (Theme too: empty offices share their desks, none, and must not evict each other.)
+            cache.removeAll { $0.key.model.desks.map(\.id) == model.desks.map(\.id) && $0.key.model.theme == model.theme }
             cache.append((key, image))
             if cache.count > 24 { cache.removeFirst(cache.count - 24) }
         }

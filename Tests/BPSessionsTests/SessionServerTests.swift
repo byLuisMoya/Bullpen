@@ -129,6 +129,10 @@ func collect(_ client: SessionClient, session: String, timeout: Double = 5, unti
         var buffer = LineBuffer()
         #expect(buffer.append(Data("a\nb".utf8)).map { String(decoding: $0, as: UTF8.self) } == ["a"])
         #expect(buffer.append(Data("c\n\n".utf8)).map { String(decoding: $0, as: UTF8.self) } == ["bc", ""])
+        // A long frame in many small reads, then two frames in one read.
+        for chunk in ["lo", "ng", "-fra", "me"] { #expect(buffer.append(Data(chunk.utf8)).isEmpty) }
+        #expect(buffer.append(Data("\nx\ny".utf8)).map { String(decoding: $0, as: UTF8.self) } == ["long-frame", "x"])
+        #expect(buffer.append(Data("z\n".utf8)).map { String(decoding: $0, as: UTF8.self) } == ["yz"])
     }
 }
 

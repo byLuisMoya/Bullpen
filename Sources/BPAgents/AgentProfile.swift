@@ -100,9 +100,31 @@ public struct AgentProfile: Identifiable, Hashable, Sendable {
 
     /// Built-in agents plus the user's own; a custom file with a built-in id replaces it.
     public static var all: [AgentProfile] {
-        let custom = loadCustom(from: customDirectory)
+        let custom = customCache.profiles(in: customDirectory)
         let ids = Set(custom.map(\.id))
         return builtIn.filter { !ids.contains($0.id) } + custom
+    }
+
+    /// `named` runs for every worktree on every status tick: the custom files are read again
+    /// only when the folder changes (saving, adding or removing one renames into it) or, for a
+    /// file edited in place by hand, after a few seconds.
+    private static let customCache = CustomCache()
+
+    private final class CustomCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cached: (path: String, modified: Date?, at: Date, profiles: [AgentProfile])?
+
+        func profiles(in dir: URL) -> [AgentProfile] {
+            let modified = (try? FileManager.default.attributesOfItem(atPath: dir.path))?[.modificationDate] as? Date
+            return lock.withLock {
+                if let cached, cached.path == dir.path, cached.modified == modified, Date().timeIntervalSince(cached.at) < 5 {
+                    return cached.profiles
+                }
+                let profiles = AgentProfile.loadCustom(from: dir)
+                cached = (dir.path, modified, Date(), profiles)
+                return profiles
+            }
+        }
     }
 
     public static func named(_ id: String?) -> AgentProfile? {

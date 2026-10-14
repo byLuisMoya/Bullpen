@@ -1,5 +1,6 @@
 import BPCore
 import CoreGraphics
+import Foundation
 
 /// The room, furniture and speech bubbles, drawn in code like the characters: a 3/4 top-down
 /// view with outlined shapes, the look of a pixel-art office.
@@ -200,48 +201,54 @@ public enum Props {
     /// Modern dark desk seen from above: a deep top (the view is aerial) with a mat under the
     /// screen, a sliver of the front panel, metal legs and its shadow on the floor.
     public static func desk(theme: OfficeTheme = .basic) -> CGImage? {
-        var c = PixelCanvas(width: deskWidth, height: deskHeight)
-        c.rect(1, 1, 30, 1, P.deskRim)
-        c.rect(1, 2, 30, 12, P.deskTop)
-        c.rect(1, 2, 1, 12, P.deskRim)
-        c.rect(30, 2, 1, 12, P.deskEdge)
-        c.rect(7, 2, 18, 6, P.deskMat)                             // desk mat under the screen
-        c.rect(7, 7, 18, 1, P.deskEdge)
-        for i in 0..<3 { c.dot(4 + i, 12 - i, P.deskRim) }         // sheen on the top
-        for i in 0..<2 { c.dot(25 + i, 12 - i, P.deskRim) }
-        c.rect(1, 14, 30, 1, P.deskRim)                            // front lip
-        c.rect(1, 15, 30, 2, P.deskFront)
-        c.rect(3, 16, 26, 1, P.deskEdge)
-        // Legs: square metal tubes under the front corners.
-        for x in [2, 27] {
-            c.rect(x, 17, 3, 2, P.metalDark)
-            c.rect(x, 17, 1, 2, P.metal)
+        Self.cached("desk-\(theme)") {
+            var c = PixelCanvas(width: deskWidth, height: deskHeight)
+            c.rect(1, 1, 30, 1, P.deskRim)
+            c.rect(1, 2, 30, 12, P.deskTop)
+            c.rect(1, 2, 1, 12, P.deskRim)
+            c.rect(30, 2, 1, 12, P.deskEdge)
+            c.rect(7, 2, 18, 6, P.deskMat)                             // desk mat under the screen
+            c.rect(7, 7, 18, 1, P.deskEdge)
+            for i in 0..<3 { c.dot(4 + i, 12 - i, P.deskRim) }         // sheen on the top
+            for i in 0..<2 { c.dot(25 + i, 12 - i, P.deskRim) }
+            c.rect(1, 14, 30, 1, P.deskRim)                            // front lip
+            c.rect(1, 15, 30, 2, P.deskFront)
+            c.rect(3, 16, 26, 1, P.deskEdge)
+            // Legs: square metal tubes under the front corners.
+            for x in [2, 27] {
+                c.rect(x, 17, 3, 2, P.metalDark)
+                c.rect(x, 17, 1, 2, P.metal)
+            }
+            c.outline(P.outline)
+            c.rect(6, 18, 20, 1, P.shadow)                             // shadow under the desk
+            c.rect(3, 20, 26, 1, P.shadow)
+            return paint(c, theme)
+
         }
-        c.outline(P.outline)
-        c.rect(6, 18, 20, 1, P.shadow)                             // shadow under the desk
-        c.rect(3, 20, 26, 1, P.shadow)
-        return paint(c, theme)
     }
 
     public static let chairWidth = 22, chairHeight = 13
 
     /// An office chair seen from above, behind the person: rounded backrest with a tufted cushion.
     public static func chair(theme: OfficeTheme = .basic) -> CGImage? {
-        var c = PixelCanvas(width: chairWidth, height: chairHeight)
-        c.stamp([
-            "...BBBBBBBBBBBBBBBB...",
-            "..BBLLLLLLLLLLLLLLBB..",
-            ".BBLccccccccccccccLBB.",
-            ".BLccccccccccccccccdB.",
-            ".BLcctcccccccccctccdB.",
-            ".BLccccccccccccccccdB.",
-            ".BLcctcccccccccctccdB.",
-            ".BBccccccccccccccccBB.",
-            "..BBddddddddddddddBB..",
-            "...BBBBBBBBBBBBBBBB...",
-        ], at: 0, 1, key: ["B": P.chair, "L": P.chairLight, "c": P.chairCushion, "d": P.chairDark, "t": P.chairDark])
-        c.outline(P.outline)
-        return paint(c, theme)
+        Self.cached("chair-\(theme)") {
+            var c = PixelCanvas(width: chairWidth, height: chairHeight)
+            c.stamp([
+                "...BBBBBBBBBBBBBBBB...",
+                "..BBLLLLLLLLLLLLLLBB..",
+                ".BBLccccccccccccccLBB.",
+                ".BLccccccccccccccccdB.",
+                ".BLcctcccccccccctccdB.",
+                ".BLccccccccccccccccdB.",
+                ".BLcctcccccccccctccdB.",
+                ".BBccccccccccccccccBB.",
+                "..BBddddddddddddddBB..",
+                "...BBBBBBBBBBBBBBBB...",
+            ], at: 0, 1, key: ["B": P.chair, "L": P.chairLight, "c": P.chairCushion, "d": P.chairDark, "t": P.chairDark])
+            c.outline(P.outline)
+            return paint(c, theme)
+
+        }
     }
 
     public static let monitorWidth = 16, monitorHeight = 9
@@ -249,20 +256,23 @@ public enum Props {
     /// A monitor seen from above and behind: the back of the screen and its round foot. `on`
     /// lights the power LED; `glow` spills the screen's light around its edges while the agent works.
     public static func monitor(on: Bool, glow: Bool, theme: OfficeTheme = .basic) -> CGImage? {
-        var c = PixelCanvas(width: monitorWidth, height: monitorHeight)
-        c.rect(2, 1, 12, 1, P.monitorRim)
-        c.rect(2, 2, 12, 4, P.monitorBack)
-        for x in stride(from: 5, through: 10, by: 2) { c.dot(x, 3, P.outline) }   // vents
-        c.rect(7, 6, 2, 1, P.metalDark)                            // neck
-        c.rect(5, 7, 6, 1, P.metal)                                // foot
-        c.outline(P.outline)
-        if on { c.dot(12, 5, P.led) }
-        if glow {
-            c.rect(3, 0, 10, 1, P.screen)
-            c.rect(1, 2, 1, 3, P.screen)
-            c.rect(14, 2, 1, 3, P.screen)
+        Self.cached("monitor-\(on)-\(glow)-\(theme)") {
+            var c = PixelCanvas(width: monitorWidth, height: monitorHeight)
+            c.rect(2, 1, 12, 1, P.monitorRim)
+            c.rect(2, 2, 12, 4, P.monitorBack)
+            for x in stride(from: 5, through: 10, by: 2) { c.dot(x, 3, P.outline) }   // vents
+            c.rect(7, 6, 2, 1, P.metalDark)                            // neck
+            c.rect(5, 7, 6, 1, P.metal)                                // foot
+            c.outline(P.outline)
+            if on { c.dot(12, 5, P.led) }
+            if glow {
+                c.rect(3, 0, 10, 1, P.screen)
+                c.rect(1, 2, 1, 3, P.screen)
+                c.rect(14, 2, 1, 3, P.screen)
+            }
+            return paint(c, theme)
+
         }
-        return paint(c, theme)
     }
 
     public static let nameCardHeight = 7
@@ -270,13 +280,16 @@ public enum Props {
     /// The name card under each desk, `width` art pixels wide: black, notched corners and a
     /// faint top highlight.
     public static func nameCard(width: Int) -> CGImage? {
-        let h = nameCardHeight
-        var c = PixelCanvas(width: width, height: h)
-        c.rect(1, 0, width - 2, h, P.outline)
-        c.rect(0, 1, width, h - 2, P.outline)
-        c.rect(1, 1, width - 2, h - 2, P.card)
-        c.rect(1, 1, width - 2, 1, P.cardLight)
-        return c.image(palette: palette)
+        Self.cached("nameCard-\(width)") {
+            let h = nameCardHeight
+            var c = PixelCanvas(width: width, height: h)
+            c.rect(1, 0, width - 2, h, P.outline)
+            c.rect(0, 1, width, h - 2, P.outline)
+            c.rect(1, 1, width - 2, h - 2, P.card)
+            c.rect(1, 1, width - 2, 1, P.cardLight)
+            return c.image(palette: palette)
+
+        }
     }
 
     // MARK: Earned on the desk
@@ -285,47 +298,56 @@ public enum Props {
 
     /// Sticky notes on the back of the monitor (after a few finished turns).
     public static func stickyNotes() -> CGImage? {
-        var c = PixelCanvas(width: notesWidth, height: notesHeight)
-        c.rect(1, 1, 3, 3, P.noteYellow)
-        c.rect(4, 2, 3, 3, P.notePink)
-        c.dot(2, 2, P.ink)
-        c.outline(P.outline)
-        return c.image(palette: palette)
+        Self.cached("stickyNotes") {
+            var c = PixelCanvas(width: notesWidth, height: notesHeight)
+            c.rect(1, 1, 3, 3, P.noteYellow)
+            c.rect(4, 2, 3, 3, P.notePink)
+            c.dot(2, 2, P.ink)
+            c.outline(P.outline)
+            return c.image(palette: palette)
+
+        }
     }
 
     public static let booksWidth = 9, booksHeight = 9
 
     /// A stack of books on the desk (more turns).
     public static func books() -> CGImage? {
-        var c = PixelCanvas(width: booksWidth, height: booksHeight)
-        c.rect(1, 1, 6, 2, P.noteBlue); c.rect(1, 1, 1, 2, P.white)
-        c.rect(2, 3, 6, 2, P.pot); c.rect(7, 3, 1, 2, P.white)
-        c.rect(1, 5, 7, 2, P.leafDark); c.rect(1, 5, 1, 2, P.white)
-        c.outline(P.outline)
-        c.rect(1, 8, 7, 1, P.shadow)
-        return c.image(palette: palette)
+        Self.cached("books") {
+            var c = PixelCanvas(width: booksWidth, height: booksHeight)
+            c.rect(1, 1, 6, 2, P.noteBlue); c.rect(1, 1, 1, 2, P.white)
+            c.rect(2, 3, 6, 2, P.pot); c.rect(7, 3, 1, 2, P.white)
+            c.rect(1, 5, 7, 2, P.leafDark); c.rect(1, 5, 1, 2, P.white)
+            c.outline(P.outline)
+            c.rect(1, 8, 7, 1, P.shadow)
+            return c.image(palette: palette)
+
+        }
     }
 
     public static let beerWidth = 12, beerHeight = 12
 
     /// A pint with its foam: this worktree's PR was merged, cheers.
     public static func beer() -> CGImage? {
-        var c = PixelCanvas(width: beerWidth, height: beerHeight)
-        c.stamp([
-            "..f.ff....",
-            ".fffffff..",
-            ".FffffFf..",
-            ".gaaaaag..",
-            ".gaaaaaghh",
-            ".gAaaaag.h",
-            ".gAaaaag.h",
-            ".gAaaaaghh",
-            ".ggggggg..",
-        ], at: 1, 1, key: ["f": P.white, "F": P.plastic, "a": P.beer, "A": P.beerDark, "g": P.glassLight, "h": P.glassLight])
-        c.dot(4, 6, P.white)                                       // a bubble
-        c.outline(P.outline)
-        c.rect(2, 11, 8, 1, P.shadow)
-        return c.image(palette: palette)
+        Self.cached("beer") {
+            var c = PixelCanvas(width: beerWidth, height: beerHeight)
+            c.stamp([
+                "..f.ff....",
+                ".fffffff..",
+                ".FffffFf..",
+                ".gaaaaag..",
+                ".gaaaaaghh",
+                ".gAaaaag.h",
+                ".gAaaaag.h",
+                ".gAaaaaghh",
+                ".ggggggg..",
+            ], at: 1, 1, key: ["f": P.white, "F": P.plastic, "a": P.beer, "A": P.beerDark, "g": P.glassLight, "h": P.glassLight])
+            c.dot(4, 6, P.white)                                       // a bubble
+            c.outline(P.outline)
+            c.rect(2, 11, 8, 1, P.shadow)
+            return c.image(palette: palette)
+
+        }
     }
 
     public static let speechCardHeight = 9
@@ -333,14 +355,17 @@ public enum Props {
     /// White speech card over a desk, `width` art pixels wide, with a small tail pointing down
     /// to the person's head.
     public static func speechCard(width: Int) -> CGImage? {
-        var c = PixelCanvas(width: width, height: speechCardHeight)
-        let body = 7, mid = width / 2
-        c.rect(2, 1, width - 4, body - 2, P.white)
-        c.rect(1, 2, width - 2, body - 4, P.white)
-        c.rect(mid - 1, body - 1, 3, 1, P.white)
-        c.dot(mid, body, P.white)
-        c.outline(P.outline)
-        return c.image(palette: palette)
+        Self.cached("speechCard-\(width)") {
+            var c = PixelCanvas(width: width, height: speechCardHeight)
+            let body = 7, mid = width / 2
+            c.rect(2, 1, width - 4, body - 2, P.white)
+            c.rect(1, 2, width - 2, body - 4, P.white)
+            c.rect(mid - 1, body - 1, 3, 1, P.white)
+            c.dot(mid, body, P.white)
+            c.outline(P.outline)
+            return c.image(palette: palette)
+
+        }
     }
 
     public static let mugWidth = 10, mugHeight = 10
@@ -348,35 +373,41 @@ public enum Props {
     /// A coffee mug from the side, like the rest of the room seen a little from above: the rim
     /// shows the coffee inside, the handle sticks out to the right.
     public static func mug(theme: OfficeTheme = .basic) -> CGImage? {
-        var c = PixelCanvas(width: mugWidth, height: mugHeight)
-        c.stamp([
-            ".pppp...",
-            "pccccp..",
-            "wppppwhh",
-            "wwwwwS.h",
-            "wwwwwS.h",
-            "wwwwwShh",
-            ".wwwwS..",
-        ], at: 1, 1, key: ["p": P.plastic, "c": P.coffee, "w": P.white, "S": P.plastic, "h": P.white])
-        c.dot(2, 2, P.coffeeLight)                                 // light on the coffee
-        c.outline(P.outline)
-        c.rect(2, 9, 6, 1, P.shadow)
-        return paint(c, theme)
+        Self.cached("mug-\(theme)") {
+            var c = PixelCanvas(width: mugWidth, height: mugHeight)
+            c.stamp([
+                ".pppp...",
+                "pccccp..",
+                "wppppwhh",
+                "wwwwwS.h",
+                "wwwwwS.h",
+                "wwwwwShh",
+                ".wwwwS..",
+            ], at: 1, 1, key: ["p": P.plastic, "c": P.coffee, "w": P.white, "S": P.plastic, "h": P.white])
+            c.dot(2, 2, P.coffeeLight)                                 // light on the coffee
+            c.outline(P.outline)
+            c.rect(2, 9, 6, 1, P.shadow)
+            return paint(c, theme)
+
+        }
     }
 
     public static let notepadWidth = 10, notepadHeight = 7
 
     /// A notepad with a pencil, lying on the desk.
     public static func notepad(theme: OfficeTheme = .basic) -> CGImage? {
-        var c = PixelCanvas(width: notepadWidth, height: notepadHeight)
-        c.rect(1, 1, 7, 5, P.white)
-        c.rect(1, 1, 7, 1, P.noteYellow)
-        c.rect(2, 3, 5, 1, P.plastic)
-        c.rect(2, 4, 4, 1, P.plastic)
-        c.rect(8, 1, 1, 4, P.accent)                               // pencil
-        c.dot(8, 5, P.ink)
-        c.outline(P.outline)
-        return paint(c, theme)
+        Self.cached("notepad-\(theme)") {
+            var c = PixelCanvas(width: notepadWidth, height: notepadHeight)
+            c.rect(1, 1, 7, 5, P.white)
+            c.rect(1, 1, 7, 1, P.noteYellow)
+            c.rect(2, 3, 5, 1, P.plastic)
+            c.rect(2, 4, 4, 1, P.plastic)
+            c.rect(8, 1, 1, 4, P.accent)                               // pencil
+            c.dot(8, 5, P.ink)
+            c.outline(P.outline)
+            return paint(c, theme)
+
+        }
     }
 
     public static let ceilingLampWidth = 14, ceilingLampHeight = 16
@@ -384,40 +415,46 @@ public enum Props {
     /// Pendant lamp hanging from the ceiling over a desk: a cord, a metal dome and the bulb,
     /// glowing when `on`.
     public static func ceilingLamp(on: Bool, theme: OfficeTheme = .basic) -> CGImage? {
-        var c = PixelCanvas(width: ceilingLampWidth, height: ceilingLampHeight)
-        c.rect(6, 0, 1, 9, P.metalDark)                            // cord
-        c.stamp([
-            "....bbbb....",
-            "..bbbbbbbb..",
-            ".bbbbbbbbbB.",
-            "BBBBBBBBBBBB",
-        ], at: 1, 9, key: ["b": P.lampBody, "B": P.chairDark])
-        c.rect(3, 10, 3, 1, P.lampShine)
-        c.rect(4, 13, 6, 1, on ? P.lampOn : P.lampOff)             // bulb under the dome
-        c.outline(P.outline)
-        if on { c.rect(5, 14, 4, 1, P.lampGlow) }
-        return paint(c, theme)
+        Self.cached("ceilingLamp-\(on)-\(theme)") {
+            var c = PixelCanvas(width: ceilingLampWidth, height: ceilingLampHeight)
+            c.rect(6, 0, 1, 9, P.metalDark)                            // cord
+            c.stamp([
+                "....bbbb....",
+                "..bbbbbbbb..",
+                ".bbbbbbbbbB.",
+                "BBBBBBBBBBBB",
+            ], at: 1, 9, key: ["b": P.lampBody, "B": P.chairDark])
+            c.rect(3, 10, 3, 1, P.lampShine)
+            c.rect(4, 13, 6, 1, on ? P.lampOn : P.lampOff)             // bulb under the dome
+            c.outline(P.outline)
+            if on { c.rect(5, 14, 4, 1, P.lampGlow) }
+            return paint(c, theme)
+
+        }
     }
 
     public static let deskPlantWidth = 11, deskPlantHeight = 13
 
     /// Small bushy plant in a white pot, for the corner of the desk.
     public static func deskPlant(theme: OfficeTheme = .basic) -> CGImage? {
-        var c = PixelCanvas(width: deskPlantWidth, height: deskPlantHeight)
-        c.stamp([
-            "...lL.l..",
-            ".lLLdLLl.",
-            "LLdLLLLLL",
-            "LLLLdLLdL",
-            "LdLLLLLLL",
-            ".LLdLLdL.",
-        ], at: 1, 1, key: ["l": P.leafLight, "L": P.leaf, "d": P.leafDark])
-        c.rect(3, 7, 5, 1, P.plastic)
-        c.rect(3, 8, 5, 3, P.white)
-        c.rect(6, 8, 1, 3, P.plastic)
-        c.outline(P.outline, diagonals: true)
-        c.rect(3, 12, 5, 1, P.shadow)
-        return paint(c, theme)
+        Self.cached("deskPlant-\(theme)") {
+            var c = PixelCanvas(width: deskPlantWidth, height: deskPlantHeight)
+            c.stamp([
+                "...lL.l..",
+                ".lLLdLLl.",
+                "LLdLLLLLL",
+                "LLLLdLLdL",
+                "LdLLLLLLL",
+                ".LLdLLdL.",
+            ], at: 1, 1, key: ["l": P.leafLight, "L": P.leaf, "d": P.leafDark])
+            c.rect(3, 7, 5, 1, P.plastic)
+            c.rect(3, 8, 5, 3, P.white)
+            c.rect(6, 8, 1, 3, P.plastic)
+            c.outline(P.outline, diagonals: true)
+            c.rect(3, 12, 5, 1, P.shadow)
+            return paint(c, theme)
+
+        }
     }
 
     // MARK: Decor
@@ -425,68 +462,77 @@ public enum Props {
     public static let plantWidth = 18, plantHeight = 28
 
     public static func plant(theme: OfficeTheme = .basic) -> CGImage? {
-        var c = PixelCanvas(width: plantWidth, height: plantHeight)
-        c.stamp([
-            ".......l........",
-            "......lLl...l...",
-            "..l..lLLl..lL...",
-            ".lLl.lLLL.lLL...",
-            ".LLLllLLLlLLl.l.",
-            "..LLLLLdLLLL.lL.",
-            "l..dLLLLLdLLLLL.",
-            "Ll..LLdLLLLLdL..",
-            "LLLLLLLLdLLLL...",
-            ".dLLLdLLLLLLLLl.",
-            "..LLLLLdLLdLLLL.",
-            ".LLdLLLLLLLLdL..",
-            "..LLLLdLLLLLL...",
-            "...dLLLLLdLL....",
-            "....LLLdLLL.....",
-        ], at: 1, 1, key: ["l": P.leafLight, "L": P.leaf, "d": P.leafDark])
-        c.rect(3, 16, 12, 2, P.pot)
-        c.rect(3, 17, 12, 1, P.potDark)
-        c.rect(4, 18, 10, 7, P.pot)
-        c.rect(12, 18, 2, 7, P.potDark)
-        c.rect(5, 19, 1, 4, P.accent)
-        c.outline(P.outline, diagonals: true)
-        c.rect(3, 26, 12, 1, P.shadow)
-        return paint(c, theme)
+        Self.cached("plant-\(theme)") {
+            var c = PixelCanvas(width: plantWidth, height: plantHeight)
+            c.stamp([
+                ".......l........",
+                "......lLl...l...",
+                "..l..lLLl..lL...",
+                ".lLl.lLLL.lLL...",
+                ".LLLllLLLlLLl.l.",
+                "..LLLLLdLLLL.lL.",
+                "l..dLLLLLdLLLLL.",
+                "Ll..LLdLLLLLdL..",
+                "LLLLLLLLdLLLL...",
+                ".dLLLdLLLLLLLLl.",
+                "..LLLLLdLLdLLLL.",
+                ".LLdLLLLLLLLdL..",
+                "..LLLLdLLLLLL...",
+                "...dLLLLLdLL....",
+                "....LLLdLLL.....",
+            ], at: 1, 1, key: ["l": P.leafLight, "L": P.leaf, "d": P.leafDark])
+            c.rect(3, 16, 12, 2, P.pot)
+            c.rect(3, 17, 12, 1, P.potDark)
+            c.rect(4, 18, 10, 7, P.pot)
+            c.rect(12, 18, 2, 7, P.potDark)
+            c.rect(5, 19, 1, 4, P.accent)
+            c.outline(P.outline, diagonals: true)
+            c.rect(3, 26, 12, 1, P.shadow)
+            return paint(c, theme)
+
+        }
     }
 
     public static let coolerWidth = 12, coolerHeight = 29
 
     public static func waterCooler(theme: OfficeTheme = .basic) -> CGImage? {
-        var c = PixelCanvas(width: coolerWidth, height: coolerHeight)
-        c.rect(4, 1, 4, 1, P.glassDark)
-        c.rect(2, 2, 8, 8, P.water)
-        c.rect(3, 3, 1, 5, P.glassLight)
-        c.rect(1, 10, 10, 16, P.plastic)
-        c.rect(9, 10, 2, 16, P.frameShade)
-        c.rect(1, 10, 10, 1, P.frameShade)
-        c.dot(3, 13, P.accent)
-        c.dot(7, 13, P.glassDark)
-        c.rect(3, 17, 6, 1, P.metalDark)
-        c.rect(2, 24, 8, 2, P.metalDark)
-        c.outline(P.outline)
-        c.rect(1, 27, 10, 1, P.shadow)
-        return paint(c, theme)
+        Self.cached("waterCooler-\(theme)") {
+            var c = PixelCanvas(width: coolerWidth, height: coolerHeight)
+            c.rect(4, 1, 4, 1, P.glassDark)
+            c.rect(2, 2, 8, 8, P.water)
+            c.rect(3, 3, 1, 5, P.glassLight)
+            c.rect(1, 10, 10, 16, P.plastic)
+            c.rect(9, 10, 2, 16, P.frameShade)
+            c.rect(1, 10, 10, 1, P.frameShade)
+            c.dot(3, 13, P.accent)
+            c.dot(7, 13, P.glassDark)
+            c.rect(3, 17, 6, 1, P.metalDark)
+            c.rect(2, 24, 8, 2, P.metalDark)
+            c.outline(P.outline)
+            c.rect(1, 27, 10, 1, P.shadow)
+            return paint(c, theme)
+
+        }
     }
 
     public static let boardWidth = 24, boardHeight = 13
 
     /// Cork board with sticky notes, hung on the wall.
     public static func board(theme: OfficeTheme = .basic) -> CGImage? {
-        var c = PixelCanvas(width: boardWidth, height: boardHeight)
-        c.rect(1, 1, 22, 11, P.woodDark)
-        c.rect(2, 2, 20, 9, P.cork)
-        c.rect(2, 10, 20, 1, P.corkDark)
-        c.rect(4, 3, 4, 4, P.noteYellow); c.rect(5, 5, 2, 1, P.ink)
-        c.rect(10, 4, 4, 4, P.notePink); c.rect(11, 6, 2, 1, P.ink)
-        c.rect(16, 3, 4, 3, P.noteBlue)
-        c.rect(15, 7, 5, 3, P.noteYellow)
-        c.dot(5, 3, P.accent); c.dot(11, 4, P.accent); c.dot(17, 3, P.accent)
-        c.outline(P.outline)
-        return paint(c, theme)
+        Self.cached("board-\(theme)") {
+            var c = PixelCanvas(width: boardWidth, height: boardHeight)
+            c.rect(1, 1, 22, 11, P.woodDark)
+            c.rect(2, 2, 20, 9, P.cork)
+            c.rect(2, 10, 20, 1, P.corkDark)
+            c.rect(4, 3, 4, 4, P.noteYellow); c.rect(5, 5, 2, 1, P.ink)
+            c.rect(10, 4, 4, 4, P.notePink); c.rect(11, 6, 2, 1, P.ink)
+            c.rect(16, 3, 4, 3, P.noteBlue)
+            c.rect(15, 7, 5, 3, P.noteYellow)
+            c.dot(5, 3, P.accent); c.dot(11, 4, P.accent); c.dot(17, 3, P.accent)
+            c.outline(P.outline)
+            return paint(c, theme)
+
+        }
     }
 
     // MARK: Signals
@@ -495,22 +541,25 @@ public enum Props {
 
     /// ⚡ next to a desk: yellow when files overlap with another worktree, red on a merge conflict.
     public static func bolt(conflict: Bool) -> CGImage? {
-        var c = PixelCanvas(width: boltWidth, height: boltHeight)
-        c.stamp([
-            "...XXX.",
-            "..XXX..",
-            ".XXX...",
-            "XXXXXX.",
-            "..XXX..",
-            ".XXX...",
-            ".XX....",
-            "XX.....",
-            "X......",
-        ], at: 1, 1, key: ["X": P.special])
-        c.outline(P.outline)
-        var palette = Self.palette
-        palette.colors[P.special] = conflict ? RGBA(0xE5484D) : RGBA(0xF5C842)
-        return c.image(palette: palette)
+        Self.cached("bolt-\(conflict)") {
+            var c = PixelCanvas(width: boltWidth, height: boltHeight)
+            c.stamp([
+                "...XXX.",
+                "..XXX..",
+                ".XXX...",
+                "XXXXXX.",
+                "..XXX..",
+                ".XXX...",
+                ".XX....",
+                "XX.....",
+                "X......",
+            ], at: 1, 1, key: ["X": P.special])
+            c.outline(P.outline)
+            var palette = Self.palette
+            palette.colors[P.special] = conflict ? RGBA(0xE5484D) : RGBA(0xF5C842)
+            return c.image(palette: palette)
+
+        }
     }
 
     public enum Bubble: Sendable { case thinking, alert, done, sleep, error, unknown }
@@ -530,25 +579,43 @@ public enum Props {
     public static let bubbleSize = 13
 
     public static func bubble(_ kind: Bubble) -> CGImage? {
-        var c = PixelCanvas(width: bubbleSize, height: bubbleSize)
-        let fill: UInt8 = kind == .alert ? P.accent : P.white
-        c.rect(2, 1, 9, 9, fill)
-        c.rect(1, 2, 11, 7, fill)
-        c.rect(4, 10, 2, 1, fill)
-        c.dot(3, 11, fill)
-        c.outline(P.outline)
-        let mark: [String]
-        switch kind {
-        case .thinking: mark = [".......", ".......", ".......", "X.X.X..", "......."]
-        case .alert: mark = ["...W...", "...W...", "...W...", ".......", "...W..."]
-        case .done: mark = ["......G", ".....G.", "G...G..", ".G.G...", "..G...."]
-        case .sleep: mark = ["XXXX...", "..X....", ".X.....", "XXXX...", "......."]
-        case .error: mark = ["R...R..", ".R.R...", "..R....", ".R.R...", "R...R.."]
-        case .unknown: mark = [".XXX...", "X...X..", "...X...", "..X....", "..X...."]
+        Self.cached("bubble-\(kind)") {
+            var c = PixelCanvas(width: bubbleSize, height: bubbleSize)
+            let fill: UInt8 = kind == .alert ? P.accent : P.white
+            c.rect(2, 1, 9, 9, fill)
+            c.rect(1, 2, 11, 7, fill)
+            c.rect(4, 10, 2, 1, fill)
+            c.dot(3, 11, fill)
+            c.outline(P.outline)
+            let mark: [String]
+            switch kind {
+            case .thinking: mark = [".......", ".......", ".......", "X.X.X..", "......."]
+            case .alert: mark = ["...W...", "...W...", "...W...", ".......", "...W..."]
+            case .done: mark = ["......G", ".....G.", "G...G..", ".G.G...", "..G...."]
+            case .sleep: mark = ["XXXX...", "..X....", ".X.....", "XXXX...", "......."]
+            case .error: mark = ["R...R..", ".R.R...", "..R....", ".R.R...", "R...R.."]
+            case .unknown: mark = [".XXX...", "X...X..", "...X...", "..X....", "..X...."]
+            }
+            c.stamp(mark, at: 3, 3, key: ["X": P.ink, "W": P.white, "G": P.leafDark, "R": P.special])
+            var palette = Self.palette
+            palette.colors[P.special] = RGBA(0xD83A3A)
+            return c.image(palette: palette)
+
         }
-        c.stamp(mark, at: 3, 3, key: ["X": P.ink, "W": P.white, "G": P.leafDark, "R": P.special])
-        var palette = Self.palette
-        palette.colors[P.special] = RGBA(0xD83A3A)
-        return c.image(palette: palette)
+    }
+}
+
+extension Props {
+    /// Fixed-size props drawn once per variant (theme, state…): the same pixels every time, and
+    /// an office asks for them on every update. CGImages are immutable, so layers can share them.
+    nonisolated(unsafe) private static var images: [String: CGImage] = [:]
+    private static let imagesLock = NSLock()
+
+    static func cached(_ key: String, _ make: () -> CGImage?) -> CGImage? {
+        if let image = imagesLock.withLock({ images[key] }) { return image }
+        // Built outside the lock: a prop may be made of others.
+        guard let image = make() else { return nil }
+        imagesLock.withLock { images[key] = image }
+        return image
     }
 }

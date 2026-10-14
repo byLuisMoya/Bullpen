@@ -158,14 +158,17 @@ public struct OrcaActivity: Equatable, Sendable {
 }
 
 public extension Workspace {
+    private static func byPath(_ orca: [OrcaWorktree]) -> [String: OrcaWorktree] {
+        Dictionary(orca.map { (canonical($0.path), $0) }, uniquingKeysWith: { a, _ in a })
+    }
+
     /// Shows worktrees made outside Bullpen (with Orca, or plain git) in their project's office,
     /// for the projects registered here only. Worktrees that disappear from git leave Bullpen;
     /// one the user removed from Bullpen (an archived record) is not brought back.
     @discardableResult
     func syncExternalWorktrees(orca given: [OrcaWorktree]? = nil) async throws -> (added: Int, gone: Int) {
-        let orca: [OrcaWorktree]
-        if let given { orca = given } else { orca = await OrcaWorktree.list() }
-        let orcaByPath = Dictionary(orca.map { (Self.canonical($0.path), $0) }, uniquingKeysWith: { a, _ in a })
+        // Orca's list (a CLI run) only matters for worktrees not known yet: read it the first time one appears.
+        var orcaByPath: [String: OrcaWorktree]? = given.map { Self.byPath($0) }
         let known = Set(try database.allWorktrees().map { Self.canonical($0.path) })
         var added = 0, gone = 0
         for office in try database.offices() {
@@ -174,7 +177,10 @@ public extension Workspace {
             let paths = Set(onDisk.map { Self.canonical($0.path) })
             for found in onDisk {
                 let path = Self.canonical(found.path)
-                guard !known.contains(path), orcaByPath[path]?.archived != true else { continue }
+                guard !known.contains(path) else { continue }
+                if orcaByPath == nil { orcaByPath = Self.byPath(await OrcaWorktree.list()) }
+                let orcaByPath = orcaByPath ?? [:]
+                guard orcaByPath[path]?.archived != true else { continue }
                 let worktree = Worktree(
                     projectID: office.project.id,
                     branch: found.branch ?? URL(fileURLWithPath: found.path).lastPathComponent,

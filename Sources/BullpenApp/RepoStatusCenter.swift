@@ -20,6 +20,11 @@ final class RepoStatusCenter {
     @ObservationIgnored private let gh = GitHubCLI.locate()
     @ObservationIgnored private var lastPRFetch: Date = .distantPast
     @ObservationIgnored private let log = Logger.bullpen("repo-status")
+    /// Each project's repository (opening one is a git run), by path.
+    @ObservationIgnored private var repositories: [String: Repository] = [:]
+    /// ahead/behind and merge conflicts depend only on commits: recomputed when a branch moves.
+    @ObservationIgnored private let syncCounts = GitResultCache<[Int]>()
+    @ObservationIgnored private let conflictCache = GitResultCache<[String]>()
 
     func start(store: BuildingStore) async {
         while !Task.isCancelled {
@@ -28,22 +33,34 @@ final class RepoStatusCenter {
         }
     }
 
+    func refreshIfStale(store: BuildingStore, after seconds: TimeInterval) async {
+        guard Date().timeIntervalSince(lastPRFetch) > seconds else { return }
+        await refresh(store: store, includePRs: true)
+    }
+
     func refresh(store: BuildingStore, includePRs: Bool) async {
         var nextBranches: [UUID: BranchSync] = [:]
         var nextTurns: [UUID: Int] = [:]
         var nextPRs: [UUID: PullRequest] = includePRs ? [:] : pullRequests
         var nextWarnings: [UUID: WorktreeWarning] = includePRs ? [:] : warnings
         for office in store.offices where !office.worktrees.isEmpty {
-            guard let repo = try? await Repository.open(at: URL(fileURLWithPath: office.project.path)) else { continue }
+            guard let repo = await repository(at: office.project.path) else { continue }
+            // One git run for every branch tip and checkpoint of the project.
+            let refs = await repo.refState()
             for worktree in office.worktrees {
-                nextBranches[worktree.id] = await repo.branchSync(worktree.branch)
-                nextTurns[worktree.id] = (try? await repo.checkpoints(of: worktree.id).count) ?? 0
+                if let refs {
+                    nextBranches[worktree.id] = await repo.branchSync(worktree.branch, in: refs, counts: syncCounts)
+                    nextTurns[worktree.id] = refs.checkpoints[worktree.id] ?? 0
+                } else {
+                    nextBranches[worktree.id] = await repo.branchSync(worktree.branch)
+                    nextTurns[worktree.id] = (try? await repo.checkpoints(of: worktree.id).count) ?? 0
+                }
             }
             if includePRs {
                 // Pairwise merge simulations are the costly part: same cadence as PRs.
                 let report = await repo.overlapReport(office.worktrees.map {
                     (branch: $0.branch, path: URL(fileURLWithPath: $0.path), baseRef: $0.baseRef)
-                })
+                }, tips: refs?.heads ?? [:], cache: conflictCache)
                 // Agents of the same comparison run are expected to touch the same files: not a warning.
                 let runOf = Dictionary(office.worktrees.map { ($0.branch, $0.runID) }, uniquingKeysWith: { a, _ in a })
                 for worktree in office.worktrees {
@@ -75,6 +92,13 @@ final class RepoStatusCenter {
         if nextPRs != pullRequests { pullRequests = nextPRs }
         let nextWarningsShown = nextWarnings.filter { !$0.value.isEmpty }
         if nextWarningsShown != warnings { warnings = nextWarningsShown }
+    }
+
+    private func repository(at path: String) async -> Repository? {
+        if let known = repositories[path] { return known }
+        guard let repo = try? await Repository.open(at: URL(fileURLWithPath: path)) else { return nil }
+        repositories[path] = repo
+        return repo
     }
 
     /// A banner when a worktree's PR checks finish (were running, now pass or fail): the badge

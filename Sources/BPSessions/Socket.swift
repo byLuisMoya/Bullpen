@@ -88,6 +88,9 @@ final class FDWriter {
     private let fd: Int32
     private let source: DispatchSourceWrite
     private var pending = Data()
+    /// Bytes of `pending` already written: dropping them after every partial write would move
+    /// the rest of the buffer each time (a big snapshot to a slow client, over and over).
+    private var sent = 0
     private var resumed = false
     private(set) var failed = false
     let limit: Int
@@ -104,7 +107,7 @@ final class FDWriter {
     func write(_ data: Data) -> Bool {
         guard !failed else { return false }
         pending.append(data)
-        if pending.count > limit {
+        if pending.count - sent > limit {
             failed = true
             return false
         }
@@ -113,17 +116,26 @@ final class FDWriter {
     }
 
     private func flush() {
-        while !pending.isEmpty {
-            let n = pending.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
+        while sent < pending.count {
+            let n = pending.withUnsafeBytes { Darwin.write(fd, $0.baseAddress! + sent, $0.count - sent) }
             if n > 0 {
-                pending.removeSubrange(pending.startIndex..<pending.startIndex + n)
+                sent += n
             } else if n < 0 && (errno == EAGAIN || errno == EINTR) {
                 break
             } else {
                 failed = true
                 pending.removeAll()
+                sent = 0
                 break
             }
+        }
+        if sent == pending.count {
+            pending.removeAll(keepingCapacity: pending.count <= 1_048_576)
+            sent = 0
+        } else if sent > 1_048_576, sent > pending.count / 2 {
+            // Mostly written: drop that part once instead of on every write.
+            pending.removeSubrange(pending.startIndex..<pending.startIndex + sent)
+            sent = 0
         }
         if pending.isEmpty, resumed {
             source.suspend()

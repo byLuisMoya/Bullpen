@@ -22,7 +22,15 @@ final class SessionManager {
     /// Shown when a daemon from another version is still running sessions.
     private(set) var warning: String?
     /// Latest known state of every bpd session, refreshed by polling and by hook broadcasts.
-    private(set) var infos: [String: SessionInfo] = [:]
+    /// Not observed: it changes every poll while any terminal prints (its last output time), and
+    /// the centers that need it read it on their own ticks. Views only need which sessions exist.
+    @ObservationIgnored private(set) var infos: [String: SessionInfo] = [:] {
+        didSet {
+            let ids = Set(infos.keys)
+            if ids != sessionIDs { sessionIDs = ids }
+        }
+    }
+    private(set) var sessionIDs: Set<String> = []
     /// Agent hooks point at the `bp` executable that ships next to the app.
     let hooks: AgentHooks
 
@@ -193,7 +201,7 @@ final class SessionManager {
     /// Extra terminals of a worktree (`wt-<id>-t2`, `-t3`…), in the order they were opened.
     func tabs(for worktree: Worktree) -> [String] {
         let prefix = Self.tabPrefix(for: worktree)
-        return infos.keys.filter { $0.hasPrefix(prefix) }
+        return sessionIDs.filter { $0.hasPrefix(prefix) }
             .sorted { (Int($0.dropFirst(prefix.count)) ?? 0) < (Int($1.dropFirst(prefix.count)) ?? 0) }
     }
 

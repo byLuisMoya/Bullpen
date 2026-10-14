@@ -86,7 +86,22 @@ public extension Repository {
         let index = FileManager.default.temporaryDirectory.appendingPathComponent("bullpen-index-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: index) }
         let env = ["GIT_INDEX_FILE": index.path]
-        try await git.run(["read-tree", "HEAD"], in: path, environment: env)
+        // Start from a copy of the real index: its file stats let `add -A` skip unchanged files.
+        // From `read-tree HEAD` it would read and hash every tracked file of the repository.
+        let real = try? await git.run(["rev-parse", "--path-format=absolute", "--git-path", "index"], in: path)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var seeded = real.map { (try? FileManager.default.copyItem(atPath: $0, toPath: index.path)) != nil } ?? false
+        if seeded {
+            // Files marked assume-unchanged or skip-worktree would be skipped by `add -A` (their
+            // changes missed): with any of them, the old way. `ls-files -v` tags them h…/S.
+            let tags = (try? await git.run(["ls-files", "-v"], in: path, environment: env)) ?? "?"
+            seeded = !tags.split(separator: "\n").contains { $0.first.map { $0.isLowercase || $0 == "S" } ?? false }
+                && tags != "?"
+            if !seeded { try? FileManager.default.removeItem(at: index) }
+        }
+        if !seeded {
+            try await git.run(["read-tree", "HEAD"], in: path, environment: env)
+        }
         try await git.run(["add", "-A", "--", "."], in: path, environment: env)
         return try await git.run(["write-tree"], in: path, environment: env).trimmingCharacters(in: .whitespacesAndNewlines)
     }

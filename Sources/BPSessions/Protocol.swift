@@ -169,14 +169,23 @@ public enum Wire {
 /// Splits an incoming byte stream into newline-terminated frames.
 struct LineBuffer {
     private var pending = Data()
+    /// Bytes of `pending` already searched for a newline: a long frame (a terminal snapshot)
+    /// arrives in many reads, and searching it from the start each time adds up.
+    private var scanned = 0
 
     mutating func append(_ data: Data) -> [Data] {
         pending.append(data)
         var lines: [Data] = []
-        while let newline = pending.firstIndex(of: 0x0A) {
-            lines.append(pending[pending.startIndex..<newline])
-            pending.removeSubrange(pending.startIndex...newline)
+        var start = pending.startIndex
+        var from = pending.startIndex + scanned
+        while let newline = pending[from...].firstIndex(of: 0x0A) {
+            lines.append(pending[start..<newline])
+            start = newline + 1
+            from = start
         }
+        // Drop what was consumed once, not once per line.
+        if start > pending.startIndex { pending.removeSubrange(pending.startIndex..<start) }
+        scanned = pending.count
         return lines
     }
 }

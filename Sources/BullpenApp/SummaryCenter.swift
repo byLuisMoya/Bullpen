@@ -31,7 +31,9 @@ final class SummaryCenter {
 
     func refresh(store: BuildingStore, sessions: SessionManager, attention: AttentionCenter) async {
         let worktrees = store.offices.flatMap(\.worktrees)
-        summaries = summaries.filter { id, _ in worktrees.contains { $0.id == id } }
+        // Reassigning wakes every view that reads it: only when a worktree went away.
+        let kept = summaries.filter { id, _ in worktrees.contains { $0.id == id } }
+        if kept.count != summaries.count { summaries = kept }
         for worktree in worktrees {
             guard let state = attention.statuses[worktree.id]?.state, Self.activeStates.contains(state) else { continue }
             let transcript = sessions.infos[Workspace.sessionID(for: worktree)]?.agentActivity?.transcriptPath

@@ -15,8 +15,8 @@ public extension Repository {
     /// Paths changed on the worktree's branch since its merge base with `baseRef`, plus uncommitted
     /// and untracked files.
     func changedPaths(in path: URL, baseRef: String) async throws -> Set<String> {
-        let committedAndDirty = try await git.run(["diff", "--name-only", "--merge-base", baseRef], in: path)
-        let untracked = try await git.run(["ls-files", "--others", "--exclude-standard"], in: path)
+        let committedAndDirty = try await git.run(["diff", "--name-only", "--merge-base", baseRef], in: path, environment: Git.poll)
+        let untracked = try await git.run(["ls-files", "--others", "--exclude-standard"], in: path, environment: Git.poll)
         return Set((committedAndDirty + "\n" + untracked).split(separator: "\n").map(String.init))
     }
 
@@ -30,8 +30,11 @@ public extension Repository {
         return Array(Set(lines.dropFirst())).sorted()
     }
 
-    /// Overlaps and conflicts among `worktrees` (branch, path, base ref).
-    func overlapReport(_ worktrees: [(branch: String, path: URL, baseRef: String)]) async -> OverlapReport {
+    /// Overlaps and conflicts among `worktrees` (branch, path, base ref). With the branches'
+    /// `tips`, conflicts are kept in `cache` by the pair of commits: merging two commits always
+    /// gives the same answer, so only branches that moved are merged again.
+    func overlapReport(_ worktrees: [(branch: String, path: URL, baseRef: String)], tips: [String: String] = [:],
+                       cache: GitResultCache<[String]>? = nil) async -> OverlapReport {
         var report = OverlapReport()
         guard worktrees.count > 1 else { return report }
         var changed: [String: Set<String>] = [:]
@@ -46,7 +49,13 @@ public extension Repository {
                     report.overlaps[a, default: [:]][b] = shared
                     report.overlaps[b, default: [:]][a] = shared
                 }
-                if let conflicting = try? await mergeConflicts(a, b), !conflicting.isEmpty {
+                let conflicting: [String]
+                if let cache, let tipA = tips[a], let tipB = tips[b] {
+                    conflicting = await cache.value(for: "\(tipA) \(tipB)") { try? await mergeConflicts(tipA, tipB) } ?? []
+                } else {
+                    conflicting = (try? await mergeConflicts(a, b)) ?? []
+                }
+                if !conflicting.isEmpty {
                     report.conflicts[a, default: [:]][b] = conflicting
                     report.conflicts[b, default: [:]][a] = conflicting
                 }

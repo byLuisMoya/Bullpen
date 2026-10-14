@@ -159,20 +159,23 @@ extension Props {
     public static let partitionWidth = 5, partitionHeight = 34
 
     static func partition(_ kind: OfficeTheme.Partition, theme: OfficeTheme) -> CGImage? {
-        var c = PixelCanvas(width: partitionWidth, height: partitionHeight)
-        switch kind {
-        case .cubicle:
-            c.rect(1, 1, 3, 32, P.partition)
-            c.rect(1, 1, 3, 2, P.partitionLight)
-            c.rect(3, 3, 1, 30, P.partitionDark)
-        case .bars:
-            c.rect(1, 1, 3, 1, P.partitionLight)
-            c.rect(1, 1, 1, 32, P.partition)
-            c.rect(3, 1, 1, 32, P.partition)
-            c.rect(1, 32, 3, 1, P.partitionDark)
+        Self.cached("partition-\(kind)-\(theme)") {
+            var c = PixelCanvas(width: partitionWidth, height: partitionHeight)
+            switch kind {
+            case .cubicle:
+                c.rect(1, 1, 3, 32, P.partition)
+                c.rect(1, 1, 3, 2, P.partitionLight)
+                c.rect(3, 3, 1, 30, P.partitionDark)
+            case .bars:
+                c.rect(1, 1, 3, 1, P.partitionLight)
+                c.rect(1, 1, 1, 32, P.partition)
+                c.rect(3, 1, 1, 32, P.partition)
+                c.rect(1, 32, 3, 1, P.partitionDark)
+            }
+            c.outline(P.outline)
+            return paint(c, theme)
+
         }
-        c.outline(P.outline)
-        return paint(c, theme)
     }
 
     private static func draw(_ width: Int, _ height: Int, _ theme: OfficeTheme, _ body: (inout PixelCanvas) -> Void) -> (CGImage?, Int, Int) {

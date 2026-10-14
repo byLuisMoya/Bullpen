@@ -11,6 +11,12 @@ public final class OfficeView: NSView, NSViewToolTipOwner {
     private var occlusionObserver: NSObjectProtocol?
     /// 1 for the building, 1/3 for the sidebar strip (exactly one point per art pixel).
     public let zoom: CGFloat
+    /// What the tooltip rects were made for.
+    private var toolTipKey: ToolTipKey?
+    private struct ToolTipKey: Equatable {
+        var desks: [UUID]
+        var size: CGSize
+    }
 
     public init(frame: NSRect = .zero, compact: Bool = false) {
         zoom = compact ? 1 / OfficeLayer.scale : 1
@@ -53,17 +59,28 @@ public final class OfficeView: NSView, NSViewToolTipOwner {
     public func update(_ model: OfficeModel) {
         layoutOffice()
         office.update(model, reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        updatePause()
+        updateToolTips()
+    }
+
+    /// Tooltips follow the desks' places (which desks, the view's size), not their state: their
+    /// text is asked for on hover.
+    private func updateToolTips() {
+        let model = office.model
+        let key = ToolTipKey(desks: model.desks.map(\.id), size: bounds.size)
+        guard key != toolTipKey else { return }
+        toolTipKey = key
         removeAllToolTips()
         for index in model.desks.indices {
             let r = office.deskRect(at: index)
             addToolTip(CGRect(x: r.minX * zoom, y: r.minY * zoom, width: r.width * zoom, height: r.height * zoom), owner: self, userData: nil)
         }
-        updatePause()
     }
 
     public override func layout() {
         super.layout()
         if office.bounds.size != unzoomedBounds.size { layoutOffice(); office.update(office.model) }
+        updateToolTips()
     }
 
     private func layoutOffice() {

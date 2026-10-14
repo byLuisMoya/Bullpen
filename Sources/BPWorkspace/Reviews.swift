@@ -26,7 +26,7 @@ public extension Workspace {
 
     /// Whether a reviewer left uncommitted fixes (what "Aplicar arreglos" would commit).
     func hasReviewFixes(_ reviewer: Worktree) async -> Bool {
-        let out = try? await Git().run(["status", "--porcelain"], in: URL(fileURLWithPath: reviewer.path))
+        let out = try? await Git().run(["status", "--porcelain"], in: URL(fileURLWithPath: reviewer.path), environment: Git.poll)
         return !(out ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 

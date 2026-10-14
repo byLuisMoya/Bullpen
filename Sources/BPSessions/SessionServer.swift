@@ -191,8 +191,10 @@ public final class SessionServer: @unchecked Sendable {
     }
 
     private func broadcast(_ message: ServerMessage, to session: Session) {
+        // Encoded once for every window showing the session.
+        guard !session.subscribers.isEmpty, let frame = try? Wire.frame(message) else { return }
         for id in session.subscribers {
-            clients[id]?.send(message)
+            clients[id]?.send(frame: frame)
         }
     }
 
@@ -541,6 +543,11 @@ final class Client {
 
     func send(_ message: ServerMessage) {
         guard !closed, let frame = try? Wire.frame(message) else { return }
+        send(frame: frame)
+    }
+
+    func send(frame: Data) {
+        guard !closed else { return }
         if !writer.write(frame) { close() }
     }
 

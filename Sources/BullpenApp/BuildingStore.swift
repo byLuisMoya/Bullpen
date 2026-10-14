@@ -56,7 +56,7 @@ final class BuildingStore {
                     self.offices = fresh
                 }
             }
-            for try await offices in database.observeOffices() {
+            for try await offices in database.observeOffices() where offices != self.offices {
                 self.offices = offices
             }
         } catch {

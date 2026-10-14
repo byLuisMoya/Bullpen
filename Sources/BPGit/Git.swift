@@ -13,6 +13,10 @@ public struct GitError: Error, LocalizedError, Equatable {
 
 /// Thin wrapper over the `git` command line (PLAN §4.2: libgit2 does not cover worktrees well).
 public struct Git: Sendable {
+    /// For polls of a working tree (status, diff): without it git may take index.lock to refresh
+    /// the index, and an agent's own `git add`/`commit` at that moment would fail.
+    public static let poll = ["GIT_OPTIONAL_LOCKS": "0"]
+
     public var executable: URL
 
     public init(executable: URL = URL(fileURLWithPath: "/usr/bin/git")) {
@@ -35,8 +39,8 @@ public struct Git: Sendable {
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
-        let stdoutTask = Task.detached { out.fileHandleForReading.readDataToEndOfFile() }
-        let stderrTask = Task.detached { err.fileHandleForReading.readDataToEndOfFile() }
+        let stdoutTask = Self.readToEnd(out)
+        let stderrTask = Self.readToEnd(err)
 
         let status: Int32 = try await withCheckedThrowingContinuation { continuation in
             process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
@@ -56,5 +60,41 @@ public struct Git: Sendable {
             throw GitError(arguments: arguments, status: status, stderr: String(decoding: await stderrTask.value, as: UTF8.self), stdout: stdout)
         }
         return stdout
+    }
+
+    /// Collects a pipe's output as it arrives, without blocking any thread while git runs (a
+    /// blocking read would hold one for as long as the process lives: a slow push, many polls).
+    private static func readToEnd(_ pipe: Pipe) -> Task<Data, Never> {
+        let handle = pipe.fileHandleForReading
+        let collected = Collected()
+        return Task {
+            await withCheckedContinuation { continuation in
+                handle.readabilityHandler = { handle in
+                    let chunk = handle.availableData
+                    if chunk.isEmpty {
+                        handle.readabilityHandler = nil
+                        // End of file once: a late call after it must not resume again.
+                        if let data = collected.finish() { continuation.resume(returning: data) }
+                    } else {
+                        collected.append(chunk)
+                    }
+                }
+            }
+        }
+    }
+
+    private final class Collected: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+        private var finished = false
+        func append(_ chunk: Data) { lock.withLock { data.append(chunk) } }
+        /// The output, the first time only.
+        func finish() -> Data? {
+            lock.withLock {
+                guard !finished else { return nil }
+                finished = true
+                return data
+            }
+        }
     }
 }

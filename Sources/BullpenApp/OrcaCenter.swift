@@ -16,8 +16,9 @@ final class OrcaCenter {
     func start(store: BuildingStore) async {
         guard OrcaWorktree.locate() != nil else { return }
         while !Task.isCancelled {
-            // `orca worktree ps` is a whole CLI run: only while some worktree came from outside.
-            if store.offices.contains(where: { $0.worktrees.contains(where: \.external) }) {
+            // `orca worktree ps` is a whole CLI run: only while some worktree from outside has no
+            // agent of Bullpen's (once it has one, its state is Bullpen's own and this isn't read).
+            if store.offices.contains(where: { $0.worktrees.contains { $0.external && $0.agentProfileID == nil } }) {
                 let rows = await OrcaActivity.list()
                 let next = Dictionary(rows.map { (Workspace.canonical($0.path), $0) }, uniquingKeysWith: { a, _ in a })
                 if next != activity { activity = next }

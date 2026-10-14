@@ -72,7 +72,8 @@ struct BullpenApp: App {
                     Task { await repoStatus.refresh(store: store, includePRs: true) }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-                    Task { await repoStatus.refresh(store: store, includePRs: true) }
+                    // Coming back to the app: fresh PRs, but not again on every ⌘-Tab.
+                    Task { await repoStatus.refreshIfStale(store: store, after: 15) }
                 }
                 .frame(minWidth: 900, minHeight: 560)
         }

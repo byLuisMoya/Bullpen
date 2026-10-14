@@ -25,6 +25,29 @@ import Testing
         #expect(try await repo.checkpoints(of: UUID()).isEmpty)
     }
 
+    /// The snapshot starts from a copy of the real index; files marked skip-worktree in it must
+    /// still be saved with their changes.
+    @Test func savesChangesToFilesMarkedSkipWorktree() async throws {
+        let (repo, dir) = try await makeRepo()
+        let wt = UUID()
+        try await Git().run(["update-index", "--skip-worktree", "README.md"], in: dir)
+        let first = try #require(try await repo.createCheckpoint(of: wt, in: dir, message: "uno"))
+        try write("cambiado\n", "README.md", in: dir)
+        let second = try #require(try await repo.createCheckpoint(of: wt, in: dir, message: "dos"))
+        #expect(second.commit != first.commit)
+        let saved = try await Git().run(["show", "\(second.commit):README.md"], in: dir)
+        #expect(saved == "cambiado\n")
+    }
+
+    @Test func readsLargeOutputWhole() async throws {
+        let (_, dir) = try await makeRepo()
+        let big = String(repeating: "0123456789abcdef\n", count: 80_000)   // ~1.3 MB, past any pipe buffer
+        try write(big, "big.txt", in: dir)
+        try await Git().run(["add", "big.txt"], in: dir)
+        try await Git().run(["commit", "-q", "-m", "big"], in: dir)
+        #expect(try await Git().run(["show", "HEAD:big.txt"], in: dir) == big)
+    }
+
     @Test func diffsSinceACheckpointIncludeUntrackedFiles() async throws {
         let (repo, dir) = try await makeRepo()
         let wt = UUID()
