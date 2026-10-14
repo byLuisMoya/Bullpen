@@ -36,7 +36,7 @@ public struct MCPServer: Sendable {
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": [:]],
                 "serverInfo": ["name": "bullpen", "version": version],
-                "instructions": "Bullpen manages git worktrees, each with its own terminal and coding agent. Use list_worktrees first; refer to worktrees by branch name. current_worktree tells you which one you are in. To delegate work, create_worktree with an agent and a task (or pick an existing worktree), then wait_for_worktree until it stops, or use ask_worktree to send a message and get the answer back. send_message types into the other agent's terminal right away; post_message leaves it in its mailbox and Bullpen delivers it when that agent finishes its turn (use it while the other agent is busy, or to tell the user something with to=\"user\"). Each project has a shared task board: create_task, list_tasks, claim_task before starting one, complete_task with its result (the creator gets it by mailbox). Check read_inbox when you start and between tasks. Only remove worktrees the user asked you to remove.",
+                "instructions": "Bullpen manages git worktrees, each with its own terminal and coding agent. Use list_worktrees first; refer to worktrees by branch name. current_worktree tells you which one you are in. Work only in your own worktree: when a task also needs changes on another branch or in another project (e.g. the backend in another repository), delegate them with create_worktree and a complete task, so another agent does them in parallel; never edit files in another worktree's folder yourself. Then keep going with your part; the other agent reports back to your mailbox (read_inbox), or wait_for_worktree until it stops, or use ask_worktree to send a message and get the answer back. send_message types into the other agent's terminal right away; post_message leaves it in its mailbox and Bullpen delivers it when that agent finishes its turn (use it while the other agent is busy, or to tell the user something with to=\"user\"). Each project has a shared task board: create_task, list_tasks, claim_task before starting one, complete_task with its result (the creator gets it by mailbox). Check read_inbox when you start and between tasks. Only remove worktrees the user asked you to remove.",
             ])
         case "ping":
             return reply(id: id, result: [:])
@@ -71,11 +71,24 @@ public struct MCPServer: Sendable {
         case "list_worktrees":
             return try json(try await service.worktrees(project: args["project"] as? String))
         case "create_worktree":
+            // Delegating is the point: another agent works there, in parallel. Without `agent`
+            // it is the caller's own (an empty worktree only with agent "none").
+            let caller = try? service.current()
+            let requested = (args["agent"] as? String)?.trimmingCharacters(in: .whitespaces)
+            let agent = requested == "none" ? nil : (requested?.nilIfBlank ?? caller?.agent ?? "claude")
+            var task = (args["task"] as? String)?.nilIfBlank
+            if agent != nil, task == nil {
+                throw ControlError("Falta «task»: lo que tiene que hacer el agente del nuevo worktree. Para un worktree vacío, sin agente, pasa agent \"none\".")
+            }
+            if let caller, let given = task {
+                task = given + "\n\nTe lo ha encargado el agente de «\(caller.branch)» (\(caller.project)). Cuando termines, mándale el resultado (qué has hecho, rama y PR) con post_message a «\(caller.branch)»."
+            }
             let wt = try await service.create(
                 project: try string("project"), branch: try string("branch"), base: args["base"] as? String,
-                agent: args["agent"] as? String, model: args["model"] as? String, task: args["task"] as? String
+                agent: agent, model: args["model"] as? String, task: task
             )
-            return "Creado «\(wt.branch)» en \(wt.path)" + (wt.agentProfileID.map { " con \($0)" } ?? "")
+            guard let agent = wt.agentProfileID else { return "Creado «\(wt.branch)» en \(wt.path), sin agente." }
+            return "Creado «\(wt.branch)» en \(wt.path). Su agente (\(agent)) ya está trabajando en la tarea: no la hagas tú ni toques sus ficheros. Sigue con lo tuyo; te mandará el resultado a tu buzón (read_inbox), o espéralo con wait_for_worktree."
         case "send_message":
             try await service.send(try string("worktree"), text: try string("text"))
             return "Enviado."
@@ -173,10 +186,12 @@ public struct MCPServer: Sendable {
         tool("list_projects", "Projects (git repositories) registered in Bullpen.", [:], []),
         tool("list_worktrees", "Active worktrees with their agent and live state (working, needsYou, done…).",
              ["project": ["type": "string", "description": "Only this project"]], []),
-        tool("create_worktree", "Create a worktree on a new branch and optionally start a coding agent in it with a task.",
+        tool("create_worktree", "Delegate work on another branch (of this or another project) to a new agent working in parallel: creates the worktree and starts its own agent with the task. Don't do that work yourself.",
              ["project": ["type": "string"], "branch": ["type": "string"], "base": ["type": "string", "description": "Base ref (default: project's)"],
-              "agent": ["type": "string", "description": "claude, codex, gemini, opencode, …"], "model": ["type": "string"],
-              "task": ["type": "string", "description": "What the agent should do"]], ["project", "branch"]),
+              "agent": ["type": "string", "description": "claude, codex, gemini, opencode, … (default: the same as yours; \"none\" for an empty worktree)"],
+              "model": ["type": "string"],
+              "task": ["type": "string", "description": "Everything the new agent needs to do the work on its own: goal, context, contracts with your side (endpoints, fields…), and how to verify it"]],
+             ["project", "branch", "task"]),
         tool("send_message", "Send a message to the agent (or shell) running in a worktree's terminal.",
              ["worktree": ["type": "string", "description": "Branch name or id"], "text": ["type": "string"]], ["worktree", "text"]),
         tool("current_worktree", "The worktree you are running in (project, branch, path), if Bullpen started you.", [:], []),

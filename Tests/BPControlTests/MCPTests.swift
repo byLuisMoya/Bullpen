@@ -71,7 +71,7 @@ import Testing
     @Test func createMessageReadAndRemove() async throws {
         let env = try await make()
         defer { env.server.stop() }
-        let created = try await call(env.mcp, "create_worktree", ["project": "api", "branch": "feature/mcp"])
+        let created = try await call(env.mcp, "create_worktree", ["project": "api", "branch": "feature/mcp", "agent": "none"])
         #expect(!created.isError, "\(created.text)")
 
         let list = try await call(env.mcp, "list_worktrees", [:])
@@ -112,7 +112,10 @@ import Testing
         let env = try await make()
         defer { env.server.stop() }
         #expect(try await call(env.mcp, "create_worktree", ["project": "nope", "branch": "x"]).isError)
-        #expect(try await call(env.mcp, "create_worktree", ["project": "api", "branch": "x", "agent": "skynet"]).text.contains("Agente desconocido"))
+        #expect(try await call(env.mcp, "create_worktree", ["project": "api", "branch": "x", "agent": "skynet", "task": "t"]).text.contains("Agente desconocido"))
+        // Delegating starts an agent, so it needs something to do.
+        let noTask = try await call(env.mcp, "create_worktree", ["project": "api", "branch": "x"])
+        #expect(noTask.isError && noTask.text.contains("Falta «task»"))
         #expect(try await call(env.mcp, "send_message", ["worktree": "ghost", "text": "hi"]).isError)
         #expect(try await call(env.mcp, "read_terminal", [:]).text.contains("Falta"))
     }
