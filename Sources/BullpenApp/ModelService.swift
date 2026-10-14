@@ -27,7 +27,7 @@ enum ModelService {
     /// summaries and branch names then work out of the box with a Claude subscription.
     static func effectiveChoice(for job: ModelJob) -> ModelChoice {
         let configured = choice(for: job)
-        let missingKey = configured.provider.needsKey && (keys.key(for: configured.provider) ?? "").isEmpty
+        let missingKey = configured.provider.needsKey && !keys.hasKey(for: configured.provider)
         guard missingKey, ClaudeCodeCLI.locate() != nil else { return configured }
         return ModelChoice(provider: .claudeCode, model: job == .quick ? "haiku" : "opus")
     }
@@ -35,7 +35,7 @@ enum ModelService {
     /// Something can answer: a key for the chosen provider, a local server, or Claude Code.
     static func available(for job: ModelJob) -> Bool {
         let choice = effectiveChoice(for: job)
-        return !choice.provider.needsKey || !(keys.key(for: choice.provider) ?? "").isEmpty
+        return !choice.provider.needsKey || keys.hasKey(for: choice.provider)
     }
 
     /// `fix/login-timeout` from a task description.

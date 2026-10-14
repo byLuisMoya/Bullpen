@@ -63,8 +63,10 @@ import Testing
         #expect(store.key(for: .openai) == "one")
         try store.setKey("two", for: .openai)
         #expect(store.key(for: .openai) == "two")
+        #expect(store.hasKey(for: .openai))
         try store.setKey(nil, for: .openai)
         #expect(store.key(for: .openai) == nil)
+        #expect(!store.hasKey(for: .openai))
     }
 }
 

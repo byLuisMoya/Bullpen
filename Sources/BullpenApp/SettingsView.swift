@@ -187,7 +187,6 @@ private struct SetupScriptSettings: View {
 
 /// Keys (Keychain) and which model does what. Only for Bullpen's own small jobs; agents use their own accounts.
 private struct ModelSettings: View {
-    @State private var keys: [ProviderID: String] = [:]
     @State private var quick = ModelService.choice(for: .quick)
     @State private var judge = ModelService.choice(for: .judge)
     @State private var testResult: String?
@@ -206,37 +205,22 @@ private struct ModelSettings: View {
             } footer: {
                 Text("Son opcionales: sin ellos, Bullpen funciona igual y estas funciones se ocultan o piden configuración.")
             }
-            Section("Claves (se guardan en el Llavero)") {
+            Section {
                 ForEach(ProviderID.allCases.filter(\.needsKey)) { provider in
-                    LabeledContent(provider.name) {
-                        SecureField(provider.name, text: Binding(
-                            get: { keys[provider] ?? "" },
-                            set: { keys[provider] = $0 }
-                        ))
-                        .labelsHidden()
-                        .frame(width: 100)
-                        .onSubmit { save(provider) }
-                    }
+                    SecretField(title: provider.name, prompt: "Pega la clave", account: provider.rawValue, label: provider.name)
                 }
-                Button("Guardar claves") { ProviderID.allCases.filter(\.needsKey).forEach(save) }
+            } header: {
+                Text("Claves (se guardan en el Llavero)")
+            } footer: {
+                Text("Las claves guardadas no se vuelven a mostrar: así Bullpen no tiene que pedir acceso al Llavero al abrir Ajustes.")
             }
         }
         .formStyle(.grouped)
-        .onAppear {
-            for provider in ProviderID.allCases where provider.needsKey {
-                keys[provider] = ModelService.keys.key(for: provider) ?? ""
-            }
-        }
         .onChange(of: quick) { _, value in ModelService.setChoice(value, for: .quick) }
         .onChange(of: judge) { _, value in ModelService.setChoice(value, for: .judge) }
     }
 
-    private func save(_ provider: ProviderID) {
-        try? ModelService.keys.setKey(keys[provider]?.trimmingCharacters(in: .whitespacesAndNewlines), for: provider)
-    }
-
     private func test() async {
-        ProviderID.allCases.filter(\.needsKey).forEach(save)
         testResult = "Probando…"
         do {
             testResult = "✓ " + (try await ModelService.suggestBranchName(for: "Arreglar el timeout del login", project: "demo"))
@@ -291,7 +275,6 @@ private struct LimitSettings: View {
 }
 
 private struct IntegrationSettings: View {
-    @State private var linearKey = ""
     @AppStorage("tickets.updateLinear") private var updateLinear = true
     @AppStorage(PRCommentCenter.enabledKey) private var commentsToAgent = true
 
@@ -306,15 +289,8 @@ private struct IntegrationSettings: View {
                 Text("Los issues abiertos del repo aparecen en «Desde ticket…». Las PR incluyen «Closes #n». Los comentarios nuevos llegan al agente de la rama por su buzón, cuando termina su turno; los de bots no, y de los tuyos solo los que dejas en líneas de código (los demás pueden ser del propio agente, que usa tu cuenta de gh).")
             }
             Section {
-                LabeledContent("Clave personal de Linear") {
-                    // Narrow on purpose: the key is hidden, a full-width row is only dots.
-                    SecureField("Clave personal de Linear", text: $linearKey, prompt: Text("lin_api…"))
-                        .labelsHidden()
-                        .frame(width: 100)
-                        .onSubmit(save)
-                }
+                SecretField(title: "Clave personal de Linear", prompt: "lin_api…", account: "linear", label: "Linear")
                 Toggle("Mover a In Progress al crear y a In Review al abrir la PR", isOn: $updateLinear)
-                Button("Guardar", action: save)
             } header: {
                 Text("Linear")
             } footer: {
@@ -322,11 +298,52 @@ private struct IntegrationSettings: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { linearKey = ModelService.keys.secret("linear") ?? "" }
+    }
+}
+
+/// A secret you can only write: a saved one is never read back into the view (reading it is
+/// what makes macOS ask for Keychain access), so the field starts empty and empties on saving.
+private struct SecretField: View {
+    let title: String
+    let prompt: String
+    let account: String
+    let label: String
+    @State private var text = ""
+    @State private var saved = false
+    @State private var error: String?
+
+    var body: some View {
+        LabeledContent(title) {
+            HStack {
+                SecureField(title, text: $text, prompt: Text(saved ? "Guardada · escribe para cambiarla" : prompt))
+                    .labelsHidden()
+                    .onSubmit(save)
+                Button("Guardar", action: save)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if saved {
+                    Button("Quitar", role: .destructive) { write(nil) }
+                }
+            }
+        }
+        .onAppear { saved = ModelService.keys.hasSecret(account) }
+        if let error { Text(error).font(.caption).foregroundStyle(.red) }
     }
 
     private func save() {
-        try? ModelService.keys.setSecret(linearKey.trimmingCharacters(in: .whitespacesAndNewlines), account: "linear", label: "Linear")
+        let key = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+        write(key)
+    }
+
+    private func write(_ key: String?) {
+        do {
+            try ModelService.keys.setSecret(key, account: account, label: label)
+            text = ""
+            saved = key != nil
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 }
 

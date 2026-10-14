@@ -503,7 +503,7 @@ struct NewWorktreeSheet: View {
         case .github where !tickets.contains { $0.source == .github } && pullRequests.isEmpty:
             return ticketProblems.first { $0.hasPrefix("GitHub") }
                 ?? (GitHubCLI.locate() == nil ? "Instala gh y ejecuta gh auth login para ver issues y PR." : "No hay issues ni PR abiertas.")
-        case .linear where Tickets.linearKey == nil:
+        case .linear where !Tickets.hasLinearKey:
             return "Añade tu clave de Linear en Ajustes › Integraciones."
         case .linear where !tickets.contains { $0.source == .linear }:
             return ticketProblems.first { !$0.hasPrefix("GitHub") } ?? "No tienes tickets abiertos en Linear."

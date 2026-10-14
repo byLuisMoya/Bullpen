@@ -8,6 +8,8 @@ import SwiftUI
 /// Ticket sources for a project and the follow-ups on their state (PLAN §11.5).
 enum Tickets {
     static var linearKey: String? { ModelService.keys.secret("linear") }
+    /// For views: whether the key is saved, without reading it.
+    static var hasLinearKey: Bool { ModelService.keys.hasSecret("linear") }
     static var updateLinear: Bool { UserDefaults.standard.object(forKey: "tickets.updateLinear") as? Bool ?? true }
 
     static func load(project: Project) async -> (tickets: [Ticket], problems: [String]) {
@@ -22,7 +24,7 @@ enum Tickets {
                 if !message.contains("disabled issues") { problems.append("GitHub: " + message) }
             }
         }
-        if let key = linearKey {
+        if hasLinearKey, let key = linearKey {
             do {
                 tickets += try await LinearClient(apiKey: key).myOpenIssues(team: config.linearTeam)
             } catch {
@@ -88,7 +90,7 @@ struct TicketPicker: View {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 200)
             } else if filtered.isEmpty {
                 ContentUnavailableView("Sin tickets", systemImage: "tray",
-                                       description: Text(Tickets.linearKey == nil ? "Añade tu clave de Linear en Ajustes › Integraciones para ver tus tickets." : "No hay tickets abiertos asignados."))
+                                       description: Text(!Tickets.hasLinearKey ? "Añade tu clave de Linear en Ajustes › Integraciones para ver tus tickets." : "No hay tickets abiertos asignados."))
                     .frame(minHeight: 200)
             } else {
                 List(filtered) { ticket in
