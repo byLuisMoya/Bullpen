@@ -1,4 +1,5 @@
 @preconcurrency import AVFoundation
+import CoreAudio
 import Observation
 import os
 @preconcurrency import Speech
@@ -34,6 +35,8 @@ final class Dictation {
     @ObservationIgnored private var onDevice = true
     /// The recognizer's last text: once stopped, its late words only replace an unedited text.
     @ObservationIgnored private var heard = ""
+    /// Loudest level of this recording: still 0 after a while means the microphone sends silence.
+    @ObservationIgnored private var loudest: Double = 0
     @ObservationIgnored private let log = Logger.bullpen("dictation")
 
     /// Language of the recognizer (Ajustes › General), Spanish by default.
@@ -75,6 +78,15 @@ final class Dictation {
 
         let engine = AVAudioEngine()
         let input = engine.inputNode
+        // Record from the default input alone. Left to itself, the engine pairs it with the
+        // default output, and when they are different devices (headphones out, the Mac's
+        // microphone in) the combined device it makes delivers only silence.
+        if let device = Self.defaultInputDevice(), let unit = input.audioUnit {
+            var id = device
+            let status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                              &id, UInt32(MemoryLayout<AudioDeviceID>.size))
+            if status != noErr { log.error("Microphone: cannot select input device (\(status))") }
+        }
         let format = input.outputFormat(forBus: 0)
         guard format.channelCount > 0, format.sampleRate > 0 else {
             problem = "No hay ningún micrófono disponible."
@@ -83,7 +95,10 @@ final class Dictation {
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self, request] buffer, _ in
             request.append(buffer)
             let level = Self.level(of: buffer)
-            Task { @MainActor in self?.level = level }
+            Task { @MainActor in
+                self?.level = level
+                self?.loudest = max(self?.loudest ?? 0, level)
+            }
         }
         do {
             engine.prepare()
@@ -99,7 +114,16 @@ final class Dictation {
         generation += 1
         let current = generation
         startedAt = Date()
+        loudest = 0
         state = .listening
+        // macOS gives silence, not an error, when the permission was saved for an older
+        // signature of the app (Settings still shows it on): say so instead of hearing nothing.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard let self, self.generation == current, self.state == .listening, self.loudest == 0 else { return }
+            self.log.error("Microphone: no sound after 3 s")
+            self.problem = "No llega sonido del micrófono. Si en Ajustes del Sistema › Privacidad y seguridad › Micrófono Bullpen está activado, desactívalo y vuelve a activarlo, y reinicia Bullpen."
+        }
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             let heard = result?.bestTranscription.formattedString
             let isFinal = result?.isFinal ?? false
@@ -189,6 +213,15 @@ final class Dictation {
                 SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0 == .authorized) }
             }
         }
+    }
+
+    private static func defaultInputDevice() -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice,
+                                                 mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var device = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device)
+        return status == noErr && device != 0 ? device : nil
     }
 
     nonisolated private static func level(of buffer: AVAudioPCMBuffer) -> Double {

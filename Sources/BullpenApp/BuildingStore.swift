@@ -17,10 +17,17 @@ final class BuildingStore {
     /// How to reach bpd (the session manager's connection, which can launch it).
     @ObservationIgnored var connectToDaemon: @Sendable () async throws -> SessionClient = { try SessionClient.connect() }
     @ObservationIgnored var hooks = AgentHooks.standard(bpPath: "/usr/local/bin/bp")
-    private(set) var offices: [Office] = []
+    private(set) var offices: [Office] = [] {
+        didSet {
+            // Their desk is gone: nobody left to walk out.
+            let present = Set(offices.flatMap(\.worktrees).map(\.id))
+            if !leaving.isSubset(of: present) { leaving.formIntersection(present) }
+        }
+    }
     /// Last error to show to the user; cleared when dismissed.
     var errorMessage: String?
-    /// Worktrees being deleted: their person walks out while the terminal and folder go.
+    /// Worktrees being deleted: their person walks out while the terminal and folder go. Kept
+    /// until the desk is gone, or it would be back for a moment and walk out a second time.
     private(set) var leaving: Set<UUID> = []
     /// Review checkouts no reviewer points at that still have changes: the user decides.
     var orphanReviews: [URL] = []
@@ -229,10 +236,10 @@ final class BuildingStore {
     /// Hangs up its terminal, runs teardown, removes the folder (the branch is kept) and archives it.
     func removeWorktree(_ worktree: Worktree, in project: Project, force: Bool, deleteExternal: Bool = false) async {
         leaving.insert(worktree.id)
-        defer { leaving.remove(worktree.id) }
         do {
             try await workspace?.removeWorktree(worktree, in: project, force: force, deleteExternal: deleteExternal)
         } catch {
+            leaving.remove(worktree.id)
             report(error, "Remove worktree failed")
         }
     }
