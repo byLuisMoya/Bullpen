@@ -1,5 +1,6 @@
 @preconcurrency import AVFoundation
 import CoreAudio
+import IOKit
 import Observation
 import os
 @preconcurrency import Speech
@@ -81,7 +82,7 @@ final class Dictation {
         // Record from the default input alone. Left to itself, the engine pairs it with the
         // default output, and when they are different devices (headphones out, the Mac's
         // microphone in) the combined device it makes delivers only silence.
-        if let device = Self.defaultInputDevice(), let unit = input.audioUnit {
+        if let device = Self.inputDevice(), let unit = input.audioUnit {
             var id = device
             let status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
                                               &id, UInt32(MemoryLayout<AudioDeviceID>.size))
@@ -122,7 +123,8 @@ final class Dictation {
             try? await Task.sleep(for: .seconds(3))
             guard let self, self.generation == current, self.state == .listening, self.loudest == 0 else { return }
             self.log.error("Microphone: no sound after 3 s")
-            self.problem = "No llega sonido del micrófono. Si en Ajustes del Sistema › Privacidad y seguridad › Micrófono Bullpen está activado, desactívalo y vuelve a activarlo, y reinicia Bullpen."
+            let name = Self.inputDevice().flatMap(Self.name(of:)).map { " («\($0)»)" } ?? ""
+            self.problem = "No llega sonido del micrófono\(name). Elige otro en Ajustes del Sistema › Sonido › Entrada, o comprueba que no esté silenciado."
         }
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             let heard = result?.bestTranscription.formattedString
@@ -215,13 +217,64 @@ final class Dictation {
         }
     }
 
-    private static func defaultInputDevice() -> AudioDeviceID? {
-        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice,
-                                                 mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    /// The microphone to record from: the system's default input, except the Mac's own when its
+    /// lid is closed (it is cut off then and only gives silence, though macOS keeps it as the
+    /// default): another one, preferably on the headphones being listened to.
+    private static func inputDevice() -> AudioDeviceID? {
+        guard let input = systemDevice(kAudioHardwarePropertyDefaultInputDevice) else { return nil }
+        guard isBuiltIn(input), lidClosed() else { return input }
+        let others = allDevices().filter { hasInput($0) && !isBuiltIn($0) }
+        let output = systemDevice(kAudioHardwarePropertyDefaultOutputDevice).flatMap(name(of:))
+        return others.first { name(of: $0) == output } ?? others.first ?? input
+    }
+
+    private static func lidClosed() -> Bool {
+        let root = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
+        guard root != 0 else { return false }
+        defer { IOObjectRelease(root) }
+        let state = IORegistryEntryCreateCFProperty(root, "AppleClamshellState" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
+        return (state as? Bool) == true
+    }
+
+    private static func systemDevice(_ selector: AudioObjectPropertySelector) -> AudioDeviceID? {
         var device = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        let status = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device)
-        return status == noErr && device != 0 ? device : nil
+        let ok = property(AudioObjectID(kAudioObjectSystemObject), selector, &device)
+        return ok && device != 0 ? device : nil
+    }
+
+    private static func allDevices() -> [AudioDeviceID] {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
+                                                 mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr else { return [] }
+        var devices = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &devices) == noErr else { return [] }
+        return devices
+    }
+
+    private static func hasInput(_ device: AudioDeviceID) -> Bool {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams,
+                                                 mScope: kAudioObjectPropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        return AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr && size > 0
+    }
+
+    private static func isBuiltIn(_ device: AudioDeviceID) -> Bool {
+        var transport: UInt32 = 0
+        return property(device, kAudioDevicePropertyTransportType, &transport) && transport == kAudioDeviceTransportTypeBuiltIn
+    }
+
+    private static func name(of device: AudioDeviceID) -> String? {
+        var name: Unmanaged<CFString>?
+        guard property(device, kAudioObjectPropertyName, &name), let name else { return nil }
+        return name.takeRetainedValue() as String
+    }
+
+    private static func property<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, _ value: inout T) -> Bool {
+        var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var size = UInt32(MemoryLayout<T>.size)
+        return AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value) == noErr
     }
 
     nonisolated private static func level(of buffer: AVAudioPCMBuffer) -> Double {
