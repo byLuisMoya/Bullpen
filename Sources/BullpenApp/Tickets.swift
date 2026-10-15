@@ -35,6 +35,28 @@ enum Tickets {
         return (tickets, problems)
     }
 
+    /// Linear issues for what was typed (see `LinearLookup`), beyond the open ones assigned to me:
+    /// exact identifiers first, then Linear's search. Empty without a key or on any failure.
+    static func findLinear(_ text: String, teams: [String]) async -> [Ticket] {
+        let lookup = LinearLookup.parse(text, teams: teams)
+        guard !lookup.isEmpty, Tickets.hasLinearKey, let key = await linearKey else { return [] }
+        let client = LinearClient(apiKey: key)
+        // All at once: one round trip of waiting, not one per team.
+        let term = lookup.searchTerm
+        async let searched: [Ticket] = term == nil ? [] : (try? await client.search(term!)) ?? []
+        let exact = await withTaskGroup(of: (Int, Ticket?).self) { group in
+            for (i, identifier) in lookup.identifiers.enumerated() {
+                group.addTask { (i, try? await client.issue(identifier)) }
+            }
+            var byIndex: [Int: Ticket] = [:]
+            for await (i, ticket) in group { byIndex[i] = ticket }
+            return lookup.identifiers.indices.compactMap { byIndex[$0] }
+        }
+        let results = await searched
+        let wanted = lookup.number.map { number in results.filter { $0.key.hasSuffix("-\(number)") } } ?? results
+        return exact + wanted.filter { r in !exact.contains { $0.key == r.key } }
+    }
+
     /// The task text for a ticket, from `[prompt.sources.<source>] template` or the default.
     static func task(for ticket: Ticket, project: Project) -> String {
         let config = (try? BullpenConfig.load(from: URL(fileURLWithPath: project.path))) ?? BullpenConfig()

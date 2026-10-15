@@ -96,14 +96,15 @@ public struct Repository: Sendable {
         let changes = status.split(separator: "\n").count
         if changes > 0 { guards.append(.uncommittedChanges(count: changes)) }
 
-        // Commits not on the upstream, or not on the base ref when there is no upstream yet.
-        let range: String
+        // Commits not on the upstream, or, with no upstream yet, on neither the base ref nor any
+        // remote branch (a local base not pulled lately would count everything since as unpushed).
+        let range: [String]
         if (try? await git.run(["rev-parse", "--abbrev-ref", "@{upstream}"], in: path)) != nil {
-            range = "@{upstream}..HEAD"
+            range = ["@{upstream}..HEAD"]
         } else {
-            range = "\(baseRef)..HEAD"
+            range = ["HEAD", "--not", baseRef, "--remotes"]
         }
-        if let count = Int(try await git.run(["rev-list", "--count", range], in: path)
+        if let count = Int(try await git.run(["rev-list", "--count"] + range, in: path)
             .trimmingCharacters(in: .whitespacesAndNewlines)), count > 0 {
             guards.append(.unpushedCommits(count: count))
         }

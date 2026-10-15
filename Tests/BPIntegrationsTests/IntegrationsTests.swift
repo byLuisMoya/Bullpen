@@ -56,3 +56,17 @@ import Testing
         #expect(LinearClient.state(in: [states[2]], matching: .inReview) == nil)
     }
 }
+
+@Suite struct LinearLookupTests {
+    @Test func identifiersFromURLsKeysAndNumbers() {
+        #expect(LinearLookup.parse("https://linear.app/fitness-kpi/issue/FIT-3476/internal-accesses-mejoras", teams: ["FIT"])
+            == LinearLookup(identifiers: ["FIT-3476"]))
+        #expect(LinearLookup.parse(" fit-3477 ", teams: ["FIT"]) == LinearLookup(identifiers: ["FIT-3477"]))
+        #expect(LinearLookup.parse("3477", teams: ["FIT", "IMP"])
+            == LinearLookup(identifiers: ["FIT-3477", "IMP-3477"], searchTerm: "3477", number: "3477"))
+        #expect(LinearLookup.parse("#12", teams: []) == LinearLookup(identifiers: [], searchTerm: "12", number: "12"))
+        #expect(LinearLookup.parse("selector de chains", teams: ["FIT"]) == LinearLookup(searchTerm: "selector de chains"))
+        #expect(LinearLookup.parse("ab", teams: ["FIT"]).isEmpty)
+        #expect(LinearLookup.parse("https://github.com/o/r/issues/4", teams: ["FIT"]).isEmpty)
+    }
+}

@@ -28,6 +28,11 @@ struct NewWorktreeSheet: View {
     @State private var tickets: [Ticket] = []
     @State private var ticketProblems: [String] = []
     @State private var loadingTickets = true
+    /// Linear issues found for what is typed (any assignee or state), beyond `tickets`.
+    @State private var linearFound: [Ticket] = []
+    /// The text `linearFound` answers: results for older text are never shown.
+    @State private var linearFoundFor = ""
+    @State private var searchingLinear = false
     @State private var pullRequests: [OpenPullRequest] = []
     @State private var localBranches: [String] = []
     @State private var remoteBranches: [String] = []
@@ -151,6 +156,8 @@ struct NewWorktreeSheet: View {
             loadingTickets = false
             pickFirstCandidate()
         }
+        // Linear by identifier, URL, number or words, once typing pauses.
+        .task(id: "\(source)|\(query)|\(loadingTickets)") { await lookUpLinear() }
         // The setup script is the project's: saved as you type, used by every new worktree.
         .task(id: setupScript) {
             try? await Task.sleep(for: .milliseconds(500))
@@ -340,9 +347,9 @@ struct NewWorktreeSheet: View {
 
         var placeholder: String {
             switch self {
-            case .smart: "Escribe un nombre, #1234, una rama o una URL de GitHub o Linear"
+            case .smart: "Escribe un nombre, FIT-123, 1234, una rama o una URL de GitHub o Linear"
             case .github: "Busca un issue por número o título"
-            case .linear: "Busca un ticket de Linear (ABC-123 o título)"
+            case .linear: "Busca en Linear: ABC-123, 123, su URL o texto"
             case .branch: "Busca una rama existente"
             case .name: "Nombre de la rama nueva"
             }
@@ -366,17 +373,51 @@ struct NewWorktreeSheet: View {
         }
     }
 
+    private func lookUpLinear() async {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard source == .smart || source == .linear, !q.isEmpty else {
+            linearFound = []
+            searchingLinear = false
+            return
+        }
+        // Team keys come from my tickets: a bare number waits for them (this runs again when they load).
+        guard !loadingTickets || LinearLookup.parse(q, teams: []).number == nil else { return }
+        try? await Task.sleep(for: .milliseconds(350))
+        guard !Task.isCancelled else { return }
+        // Team keys from my tickets (`FIT-…`) and the project's config, for a bare number.
+        var teams = Set(tickets.filter { $0.source == .linear }.compactMap { $0.key.split(separator: "-").first.map(String.init) })
+        if let team = (try? config.get())?.linearTeam { teams.insert(team.uppercased()) }
+        searchingLinear = true
+        let found = await Tickets.findLinear(q, teams: teams.sorted())
+        guard !Task.isCancelled else { return }   // the newer lookup clears `searchingLinear`
+        searchingLinear = false
+        linearFound = found
+        linearFoundFor = q
+        // A ticket asked for by its identifier, URL or number is picked like a typed one; words
+        // only list what Linear found (they may be a branch name the user is typing).
+        let byIdentifier = !LinearLookup.parse(q, teams: teams.sorted()).identifiers.isEmpty
+        if byIdentifier, origin == nil || { if case .name = origin { true } else { false } }() { pickFirstCandidate() }
+    }
+
     /// What the search field matches in the current tab, best match first.
     private var candidates: [Origin] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         func ticketsMatching(_ source: Ticket.Source?) -> [Origin] {
-            let pool = tickets.filter { source == nil || $0.source == source }
+            let found = linearFoundFor == q ? linearFound.filter { f in !tickets.contains { $0.key == f.key } } : []
+            let pool = (tickets + found).filter { source == nil || $0.source == source }
             guard !q.isEmpty else { return source == nil ? [] : pool.prefix(6).map { .ticket($0) } }
             if let key = WorktreeSource.ticketKey(in: q) {
-                return pool.filter { $0.key.caseInsensitiveCompare(key) == .orderedSame }.map { .ticket($0) }
+                // `3477` / `#3477`: GitHub's #3477 or any Linear team's -3477.
+                let number = key.hasPrefix("#") ? String(key.dropFirst()) : nil
+                return pool.filter {
+                    $0.key.caseInsensitiveCompare(key) == .orderedSame
+                        || (number != nil && $0.source == .linear && $0.key.hasSuffix("-\(number!)"))
+                }.map { .ticket($0) }
             }
-            return pool.filter { $0.title.localizedCaseInsensitiveContains(q) || $0.key.localizedCaseInsensitiveContains(q) }
-                .prefix(6).map { .ticket($0) }
+            // Linear's search matches more than the title (description, fuzzy): keep what it found.
+            let local = pool.filter { $0.title.localizedCaseInsensitiveContains(q) || $0.key.localizedCaseInsensitiveContains(q) }
+            let searched = found.filter { f in (source == nil || f.source == source) && !local.contains { $0.key == f.key } }
+            return (local + searched).prefix(6).map { .ticket($0) }
         }
         func pullRequestsMatching() -> [Origin] {
             guard !q.isEmpty else { return pullRequests.prefix(6).map { .pullRequest($0) } }
@@ -397,7 +438,7 @@ struct NewWorktreeSheet: View {
         case .smart:
             guard !q.isEmpty else { return [] }
             let exact = localBranches.contains(q) ? [Origin.branch(q)] : []
-            var result = ticketsMatching(nil).prefix(3) + (q.count > 1 || WorktreeSource.ticketKey(in: q) != nil ? pullRequestsMatching().prefix(3) : []) + exact
+            var result = ticketsMatching(nil).prefix(4) + (q.count > 1 || WorktreeSource.ticketKey(in: q) != nil ? pullRequestsMatching().prefix(3) : []) + exact
             if WorktreeSource.ticketKey(in: q) == nil {
                 result += branchesMatching(limit: 3).filter { !exact.contains($0) }
                 if exact.isEmpty { result.append(.name(q)) }
@@ -413,7 +454,8 @@ struct NewWorktreeSheet: View {
     /// Results in a box of their own: scrolls inside, never over the fields around it.
     @ViewBuilder private var candidatesList: some View {
         let rows = candidates
-        let waiting = loadingTickets && [.github, .linear, .smart].contains(source)
+        let waiting = (loadingTickets && [.github, .linear, .smart].contains(source))
+            || (searchingLinear && [.linear, .smart].contains(source))
         if !rows.isEmpty || waiting || !hint.isEmpty {
             VStack(spacing: 0) {
                 if !rows.isEmpty {
@@ -498,17 +540,21 @@ struct NewWorktreeSheet: View {
 
     /// Why a tab shows nothing.
     private var hint: String {
-        guard !loadingTickets else { return "" }
+        guard !loadingTickets, !searchingLinear else { return "" }
         switch source {
         case .github where !tickets.contains { $0.source == .github } && pullRequests.isEmpty:
             return ticketProblems.first { $0.hasPrefix("GitHub") }
                 ?? (GitHubCLI.locate() == nil ? "Instala gh y ejecuta gh auth login para ver issues y PR." : "No hay issues ni PR abiertas.")
         case .linear where !Tickets.hasLinearKey:
             return "Añade tu clave de Linear en Ajustes › Integraciones."
+        case .linear where ticketProblems.contains { !$0.hasPrefix("GitHub") }:
+            return ticketProblems.first { !$0.hasPrefix("GitHub") } ?? ""
+        case .linear where !query.isEmpty && candidates.isEmpty:
+            return "No se encuentra en Linear."
         case .linear where !tickets.contains { $0.source == .linear }:
-            return ticketProblems.first { !$0.hasPrefix("GitHub") } ?? "No tienes tickets abiertos en Linear."
+            return "No tienes tickets abiertos en Linear."
         case .smart where WorktreeSource.ticketKey(in: query) != nil && candidates.isEmpty:
-            return "No está entre los tickets abiertos."
+            return Tickets.hasLinearKey ? "No se encuentra en GitHub ni en Linear." : "No está entre los issues y PR abiertos."
         default:
             return ""
         }

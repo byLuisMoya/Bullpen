@@ -21,11 +21,34 @@ public struct LinearClient: Sendable {
         let teamFilter = team.map { #", team: { key: { eq: "\#($0)" } }"# } ?? ""
         let query = """
         query { viewer { assignedIssues(first: 50, orderBy: updatedAt, filter: { state: { type: { nin: ["completed", "canceled"] } }\(teamFilter) }) {
-          nodes { id identifier title description url branchName state { name } team { id } labels { nodes { name } }
-                 comments(first: 25) { nodes { body createdAt user { name displayName } botActor { name } } } }
+          nodes { \(Self.issueFields) }
         } } }
         """
         return try Self.parseIssues(try await graphQL(query))
+    }
+
+    static let issueFields = """
+    id identifier title description url branchName state { name } team { id } labels { nodes { name } }
+    comments(first: 25) { nodes { body createdAt user { name displayName } botActor { name } } }
+    """
+
+    /// Any issue by its identifier (`FIT-3477`), whoever it's assigned to and whatever its state;
+    /// nil when there is none.
+    public func issue(_ identifier: String) async throws -> Ticket? {
+        let query = "query($id: String!) { issue(id: $id) { \(Self.issueFields) } }"
+        do {
+            let data = try await graphQL(query, variables: ["id": identifier])
+            return Self.parseNodes([data["issue"] as? [String: Any]].compactMap { $0 }).first
+        } catch let failure as Failure where failure.message.localizedCaseInsensitiveContains("not found") {
+            return nil
+        }
+    }
+
+    /// Linear's own search (title, description, number) across the workspace.
+    public func search(_ term: String, limit: Int = 8) async throws -> [Ticket] {
+        let query = "query($term: String!, $first: Int!) { searchIssues(term: $term, first: $first) { nodes { \(Self.issueFields) } } }"
+        let data = try await graphQL(query, variables: ["term": term, "first": limit])
+        return Self.parseNodes(((data["searchIssues"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? [])
     }
 
     /// Moves the issue to the team's first "started" state ("In Progress").
@@ -112,8 +135,11 @@ public struct LinearClient: Sendable {
     }
 
     static func parseIssues(_ data: [String: Any]) throws -> [Ticket] {
-        let nodes = (((data["viewer"] as? [String: Any])?["assignedIssues"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
-        return nodes.compactMap { n in
+        parseNodes((((data["viewer"] as? [String: Any])?["assignedIssues"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? [])
+    }
+
+    static func parseNodes(_ nodes: [[String: Any]]) -> [Ticket] {
+        nodes.compactMap { n in
             guard let id = n["id"] as? String, let key = n["identifier"] as? String, let title = n["title"] as? String else { return nil }
             let labels = ((n["labels"] as? [String: Any])?["nodes"] as? [[String: Any]])?.compactMap { $0["name"] as? String } ?? []
             return Ticket(
@@ -125,4 +151,38 @@ public struct LinearClient: Sendable {
             )
         }
     }
+}
+
+/// What to ask Linear for from the text typed in the new-worktree search: issues by identifier
+/// (a URL, `FIT-3477`, `fit-3477`, or a bare number with each known team key) and a term for
+/// Linear's search (a number or words), so tickets not assigned to me or closed are found too.
+public struct LinearLookup: Equatable, Sendable {
+    public var identifiers: [String] = []
+    public var searchTerm: String?
+    /// A bare number: search results only count when their number is this one.
+    public var number: String?
+
+    public static func parse(_ text: String, teams: [String]) -> LinearLookup {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var lookup = LinearLookup()
+        if let url = URL(string: t), let host = url.host {
+            let parts = url.pathComponents
+            if host.hasSuffix("linear.app"), let i = parts.firstIndex(of: "issue"), i + 1 < parts.count {
+                lookup.identifiers = [parts[i + 1].uppercased()]
+            }
+            return lookup
+        }
+        if t.range(of: #"^[A-Za-z][A-Za-z0-9]*-\d+$"#, options: .regularExpression) != nil {
+            lookup.identifiers = [t.uppercased()]
+        } else if let digits = t.range(of: #"^#?\d+$"#, options: .regularExpression).map({ String(t[$0].drop { $0 == "#" }) }) {
+            lookup.identifiers = teams.map { "\($0.uppercased())-\(digits)" }
+            lookup.searchTerm = digits
+            lookup.number = digits
+        } else if t.count >= 3 {
+            lookup.searchTerm = t
+        }
+        return lookup
+    }
+
+    public var isEmpty: Bool { identifiers.isEmpty && searchTerm == nil }
 }

@@ -15,9 +15,24 @@ public extension Repository {
     /// Paths changed on the worktree's branch since its merge base with `baseRef`, plus uncommitted
     /// and untracked files.
     func changedPaths(in path: URL, baseRef: String) async throws -> Set<String> {
-        let committedAndDirty = try await git.run(["diff", "--name-only", "--merge-base", baseRef], in: path, environment: Git.poll)
+        let base = await effectiveBase(baseRef, in: path)
+        let committedAndDirty = try await git.run(["diff", "--name-only", "--merge-base", base], in: path, environment: Git.poll)
         let untracked = try await git.run(["ls-files", "--others", "--exclude-standard"], in: path, environment: Git.poll)
         return Set((committedAndDirty + "\n" + untracked).split(separator: "\n").map(String.init))
+    }
+
+    /// `baseRef`, or its upstream (`main` → `origin/main`) when the branch started further along
+    /// it: a local `main` not pulled for a while would make every commit since look like this
+    /// branch's own changes (and every worktree share them).
+    func effectiveBase(_ baseRef: String, in path: URL) async -> String {
+        func run(_ args: [String]) async -> String? {
+            (try? await git.run(args, in: path, environment: Git.poll))?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard let upstream = await run(["rev-parse", "--abbrev-ref", "\(baseRef)@{upstream}"]), !upstream.isEmpty,
+              let local = await run(["merge-base", "HEAD", baseRef]),
+              let remote = await run(["merge-base", "HEAD", upstream]), local != remote else { return baseRef }
+        // The newer fork point: the upstream's when the local one is behind it.
+        return await run(["merge-base", "--is-ancestor", local, remote]) != nil ? upstream : baseRef
     }
 
     /// Files that would conflict if `a` and `b` were merged (committed work only); empty if clean.
