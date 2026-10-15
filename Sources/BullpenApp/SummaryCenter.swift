@@ -44,12 +44,12 @@ final class SummaryCenter {
             if let fromOrca {
                 digest = ActivityDigest(request: fromOrca.prompt, lastMessage: fromOrca.lastMessage)
             } else {
-                digest = await Task.detached {
+                digest = await offPool {
                     if let transcript, let text = Self.tail(transcript, bytes: 96_000) {
                         return ActivityDigest.fromClaudeTranscript(text)
                     }
                     return ActivityDigest.fromTerminal(Self.tail(log, bytes: 12_000) ?? "")
-                }.value
+                }
             }
             guard !digest.isEmpty, digest.modelPrompt != lastInput[worktree.id] else { continue }
             lastInput[worktree.id] = digest.modelPrompt

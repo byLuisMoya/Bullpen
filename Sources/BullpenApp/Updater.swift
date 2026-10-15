@@ -114,7 +114,7 @@ final class Updater {
 
             state = .installing("Comprobando la descarga…")
             let expected = ReleaseVersion.sha256(for: zip.lastPathComponent, in: String(decoding: sumsData, as: UTF8.self))
-            let actual = try await Task.detached { SHA256.hash(data: try Data(contentsOf: zip)).map { String(format: "%02x", $0) }.joined() }.value
+            let actual = try await offPool(qos: .userInitiated) { SHA256.hash(data: try Data(contentsOf: zip)).map { String(format: "%02x", $0) }.joined() }
             guard let expected, expected == actual else {
                 throw UpdateError("La descarga no coincide con SHA256SUMS.txt; no se instala.")
             }
@@ -190,7 +190,7 @@ final class Updater {
     }
 
     private static func run(_ tool: String, _ arguments: [String]) async throws {
-        try await Task.detached {
+        try await offPool(qos: .userInitiated) {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: tool)
             process.arguments = arguments
@@ -199,7 +199,7 @@ final class Updater {
             try process.run()
             process.waitUntilExit()
             guard process.terminationStatus == 0 else { throw UpdateError("\(tool) falló (\(process.terminationStatus))") }
-        }.value
+        }
     }
 }
 

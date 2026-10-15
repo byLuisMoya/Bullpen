@@ -1,3 +1,4 @@
+import BPCore
 import Darwin
 import Foundation
 
@@ -50,7 +51,8 @@ public enum BrowserBridge {
 
     /// Sends one request to the app and waits for its answer.
     public static func send(_ request: BrowserRequest, socketPath: String = socketPath, timeout: Int = 60) async throws -> BrowserResponse {
-        try await Task.detached {
+        // Blocking socket calls (each read waits up to `timeout`): on a GCD thread.
+        try await offPool(qos: .userInitiated) {
             let fd: Int32
             do { fd = try UnixSocket.connect(to: socketPath) } catch {
                 throw SessionError(message: "El navegador está en la app de Bullpen: ábrela para usarlo.")
@@ -67,7 +69,7 @@ public enum BrowserBridge {
                 line.append(contentsOf: buffer[0..<n])
             }
             return try Wire.decoder.decode(BrowserResponse.self, from: line.prefix { $0 != 0x0A })
-        }.value
+        }
     }
 
     /// The app's side: answers each connection's request with `handler`.

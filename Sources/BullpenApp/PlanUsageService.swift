@@ -1,3 +1,4 @@
+import BPCore
 import BPAgents
 import BPHabitat
 import BPProviders
@@ -38,7 +39,7 @@ enum PlanUsageService {
         case "openrouter": (.openrouter, URL(string: "https://openrouter.ai/api/v1/credits")!)
         default: (.deepseek, URL(string: "https://api.deepseek.com/user/balance")!)
         }
-        guard let key = ModelService.keys.key(for: provider), !key.isEmpty else {
+        guard let key = await offPool({ ModelService.keys.key(for: provider) }), !key.isEmpty else {
             return .unavailable("Añade la clave de \(provider.name) en Ajustes › Modelos")
         }
         var request = URLRequest(url: url, timeoutInterval: 10)
@@ -82,7 +83,7 @@ enum PlanUsageService {
     /// Claude Code keeps its sign-in in the login Keychain (written with `security`, so reading
     /// it the same way doesn't prompt), or in ~/.claude/.credentials.json on some setups.
     private static func claudeToken() async -> String? {
-        let fromKeychain = await Task.detached { () -> Data? in
+        let fromKeychain = await offPool { () -> Data? in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
             process.arguments = ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
@@ -93,7 +94,7 @@ enum PlanUsageService {
             let data = out.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
             return process.terminationStatus == 0 ? data : nil
-        }.value
+        }
         if let data = fromKeychain, let token = PlanLimits.claudeAccessToken(fromCredentials: data) { return token }
         let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/.credentials.json")
         return (try? Data(contentsOf: file)).flatMap(PlanLimits.claudeAccessToken(fromCredentials:))
@@ -103,7 +104,7 @@ enum PlanUsageService {
 
     /// OpenCode keeps its own tally (any provider): the last day's tokens and cost.
     private static func opencode() async -> PlanUsage {
-        let output = await Task.detached { () -> String? in
+        let output = await offPool { () -> String? in
             guard let path = ShellEnvironment.locate("opencode") else { return nil }
             let process = Process()
             process.executableURL = URL(fileURLWithPath: path)
@@ -117,7 +118,7 @@ enum PlanUsageService {
             let data = out.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
             return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
-        }.value
+        }
         guard let output else { return .unavailable("No encuentro opencode en el PATH") }
         return PlanLimits.parseOpenCodeStats(output) ?? .unavailable("OpenCode no devolvió el uso")
     }
@@ -160,12 +161,12 @@ enum PlanUsageService {
     private static func codexTokensToday() async -> Int {
         let parts = Calendar.current.dateComponents([.year, .month, .day], from: Date())
         let dir = codexHome.appendingPathComponent(String(format: "sessions/%04d/%02d/%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0))
-        return await Task.detached {
+        return await offPool {
             let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
             return files.filter { $0.pathExtension == "jsonl" }.reduce(0) { sum, file in
                 sum + PlanLimits.codexSessionTokens((try? String(contentsOf: file, encoding: .utf8)) ?? "")
             }
-        }.value
+        }
     }
 }
 

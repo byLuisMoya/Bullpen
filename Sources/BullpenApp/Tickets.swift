@@ -7,7 +7,8 @@ import SwiftUI
 
 /// Ticket sources for a project and the follow-ups on their state (PLAN §11.5).
 enum Tickets {
-    static var linearKey: String? { ModelService.keys.secret("linear") }
+    /// Read through `security` (a process) the first time: off the main thread and Swift's pool.
+    static var linearKey: String? { get async { await offPool { ModelService.keys.secret("linear") } } }
     /// For views: whether the key is saved, without reading it.
     static var hasLinearKey: Bool { ModelService.keys.hasSecret("linear") }
     static var updateLinear: Bool { UserDefaults.standard.object(forKey: "tickets.updateLinear") as? Bool ?? true }
@@ -24,7 +25,7 @@ enum Tickets {
                 if !message.contains("disabled issues") { problems.append("GitHub: " + message) }
             }
         }
-        if hasLinearKey, let key = linearKey {
+        if hasLinearKey, let key = await linearKey {
             do {
                 tickets += try await LinearClient(apiKey: key).myOpenIssues(team: config.linearTeam)
             } catch {
@@ -46,12 +47,12 @@ enum Tickets {
     }
 
     static func started(_ ref: TicketRef) async throws {
-        guard ref.source == "linear", updateLinear, let key = linearKey else { return }
+        guard ref.source == "linear", updateLinear, let key = await linearKey else { return }
         try await LinearClient(apiKey: key).markInProgress(Ticket(ref: ref))
     }
 
     static func pullRequestOpened(_ ref: TicketRef, url: URL?) async throws {
-        guard ref.source == "linear", updateLinear, let key = linearKey else { return }
+        guard ref.source == "linear", updateLinear, let key = await linearKey else { return }
         let client = LinearClient(apiKey: key)
         try await client.markInReview(Ticket(ref: ref))
         if let url { try await client.comment(on: Ticket(ref: ref), "PR abierta desde Bullpen: \(url.absoluteString)") }

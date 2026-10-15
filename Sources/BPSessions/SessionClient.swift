@@ -1,3 +1,4 @@
+import BPCore
 import Darwin
 import Foundation
 import os
@@ -56,7 +57,7 @@ public final class SessionClient: @unchecked Sendable {
         // Plus the PATH of whoever asks, after it: when `bp` runs inside an agent, its PATH already
         // has everything, so nothing is lost if the shell doesn't answer.
         if spec.environment["PATH"] == nil {
-            let user = await Task.detached(operation: { ShellEnvironment.userPath }).value
+            let user = await offPool { ShellEnvironment.userPath }
             spec.environment["PATH"] = ShellEnvironment.merge(user, ProcessInfo.processInfo.environment["PATH"])
         }
         // `bp` (next to this program inside Bullpen.app) on the PATH, last, so scripts and agents

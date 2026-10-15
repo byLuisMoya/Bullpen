@@ -72,7 +72,7 @@ struct SessionLogView: View {
                 if seen.map({ $0.size != stamp.0 || $0.modified != stamp.1 }) ?? true {
                     seen = (stamp.0, stamp.1)
                     let wt = worktree
-                    events = await Task.detached { SessionLog.events(for: wt) }.value
+                    events = await offPool { SessionLog.events(for: wt) }
                 }
                 try? await Task.sleep(for: .seconds(3))
             }

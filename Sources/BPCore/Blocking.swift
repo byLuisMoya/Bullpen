@@ -8,3 +8,10 @@ public func offPool<T: Sendable>(qos: DispatchQoS.QoSClass = .utility, _ work: @
         DispatchQueue.global(qos: qos).async { continuation.resume(returning: work()) }
     }
 }
+
+/// `offPool` for work that throws.
+public func offPool<T: Sendable>(qos: DispatchQoS.QoSClass = .utility, _ work: @escaping @Sendable () throws -> T) async throws -> T {
+    try await withCheckedThrowingContinuation { continuation in
+        DispatchQueue.global(qos: qos).async { continuation.resume(with: Result { try work() }) }
+    }
+}

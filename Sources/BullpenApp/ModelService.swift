@@ -1,3 +1,4 @@
+import BPCore
 import BPProviders
 import Foundation
 
@@ -20,7 +21,10 @@ enum ModelService {
     }
 
     static func complete(_ job: ModelJob, _ request: CompletionRequest) async throws -> String {
-        try await ModelClient(choice: effectiveChoice(for: job), apiKey: keys.key(for: effectiveChoice(for: job).provider)).complete(request)
+        let choice = effectiveChoice(for: job)
+        // `security` (a process) reads the key the first time.
+        let key = await offPool { keys.key(for: choice.provider) }
+        return try await ModelClient(choice: choice, apiKey: key).complete(request)
     }
 
     /// The configured model, or the user's own Claude Code when that provider has no key yet:

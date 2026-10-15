@@ -1,3 +1,4 @@
+import BPCore
 import Foundation
 
 /// Bullpen's small jobs through the user's own Claude Code (`claude -p`), so they work with a
@@ -21,7 +22,8 @@ public enum ClaudeCodeCLI {
     public static func complete(_ request: CompletionRequest, model: String, timeout: TimeInterval = 90) async throws -> String {
         guard let claude = locate() else { throw ProviderError("No se encuentra Claude Code (claude).") }
         let args = arguments(request, model: model)
-        return try await Task.detached {
+        // Waits for the CLI up to `timeout`: on a GCD thread, never one of Swift concurrency's.
+        return try await offPool(qos: .userInitiated) {
             let dir = FileManager.default.temporaryDirectory.appendingPathComponent("bullpen-claude-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: dir) }
@@ -40,15 +42,24 @@ public enum ClaudeCodeCLI {
             try process.run()
             let timer = DispatchWorkItem { process.terminate() }
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
+            // stderr drained alongside: a full pipe would stall claude until the timeout.
+            nonisolated(unsafe) var errData = Data()
+            let errDone = DispatchGroup()
+            errDone.enter()
+            DispatchQueue.global(qos: .utility).async {
+                errData = err.fileHandleForReading.readDataToEndOfFile()
+                errDone.leave()
+            }
             let data = out.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
+            errDone.wait()
             timer.cancel()
             let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             guard process.terminationStatus == 0, !text.isEmpty else {
-                let message = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                let message = String(decoding: errData, as: UTF8.self)
                 throw ProviderError("Claude Code falló (\(process.terminationStatus)): \(message.prefix(200))")
             }
             return text
-        }.value
+        }
     }
 }

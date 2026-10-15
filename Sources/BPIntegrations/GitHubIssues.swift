@@ -1,3 +1,4 @@
+import BPCore
 import Foundation
 
 /// GitHub issues through the `gh` CLI the user is already signed into.
@@ -55,8 +56,8 @@ enum CLI {
             let out = Pipe(), err = Pipe()
             process.standardOutput = out
             process.standardError = err
-            let stdout = Task.detached { out.fileHandleForReading.readDataToEndOfFile() }
-            let stderr = Task.detached { err.fileHandleForReading.readDataToEndOfFile() }
+            let stdout = Task { await offPool { out.fileHandleForReading.readDataToEndOfFile() } }
+            let stderr = Task { await offPool { err.fileHandleForReading.readDataToEndOfFile() } }
             process.terminationHandler = { p in
                 Task {
                     let o = String(decoding: await stdout.value, as: UTF8.self)

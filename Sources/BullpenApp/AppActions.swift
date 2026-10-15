@@ -66,7 +66,7 @@ enum AppActions {
             let pipe = Pipe()
             process.standardOutput = pipe
             process.standardError = pipe
-            let output = Task.detached { pipe.fileHandleForReading.readDataToEndOfFile() }
+            let output = Task { await offPool { pipe.fileHandleForReading.readDataToEndOfFile() } }
             process.terminationHandler = { p in
                 Task { continuation.resume(returning: (p.terminationStatus, String(decoding: await output.value, as: UTF8.self))) }
             }

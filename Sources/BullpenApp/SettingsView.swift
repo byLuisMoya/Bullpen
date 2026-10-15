@@ -335,14 +335,18 @@ private struct SecretField: View {
         write(key)
     }
 
+    /// `security` runs (up to two processes): off the main thread.
     private func write(_ key: String?) {
-        do {
-            try ModelService.keys.setSecret(key, account: account, label: label)
-            text = ""
-            saved = key != nil
-            error = nil
-        } catch {
-            self.error = error.localizedDescription
+        let account = account, label = label
+        Task {
+            do {
+                try await offPool(qos: .userInitiated) { try ModelService.keys.setSecret(key, account: account, label: label) }
+                text = ""
+                saved = key != nil
+                error = nil
+            } catch {
+                self.error = error.localizedDescription
+            }
         }
     }
 }
@@ -555,10 +559,9 @@ private struct CustomAgentSheet: View {
     @State private var mcpFlag = "--mcp-config"
     @State private var error: String?
 
-    private var found: Bool? {
-        guard let executable = command.split(separator: " ").first.map(String.init), !executable.isEmpty else { return nil }
-        return ShellEnvironment.locate(executable) != nil
-    }
+    /// Whether the command's program is in the user's PATH; looked up off the main thread (the
+    /// first lookup asks the login shell for its PATH).
+    @State private var found: Bool?
 
     var body: some View {
         Form {
@@ -571,6 +574,15 @@ private struct CustomAgentSheet: View {
                           systemImage: found ? "checkmark.circle" : "exclamationmark.triangle")
                         .font(.caption).foregroundStyle(found ? Color.secondary : Color.orange)
                 }
+            }
+            .task(id: command) {
+                found = nil
+                guard let executable = command.split(separator: " ").first.map(String.init), !executable.isEmpty else { return }
+                // Once typing pauses: each lookup may ask the login shell, and a queued one can't be called back.
+                try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled else { return }
+                let located = await offPool(qos: .userInitiated) { ShellEnvironment.locate(executable) != nil }
+                if !Task.isCancelled { found = located }
             }
             Section("La tarea inicial") {
                 Picker("Se la pasa", selection: $delivery) {

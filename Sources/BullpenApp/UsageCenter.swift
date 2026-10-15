@@ -35,9 +35,9 @@ final class UsageCenter {
         }
         let reader = self.reader
         let startOfDay = Calendar.current.startOfDay(for: Date())
-        let result = await Task.detached {
+        let result = await offPool {
             paths.map { id, path in (id, reader.totals(for: path), reader.totals(for: path, since: startOfDay)) }
-        }.value
+        }
         let nextUsage = Dictionary(result.map { ($0.0, $0.1) }, uniquingKeysWith: { a, _ in a })
         if nextUsage != usage { usage = nextUsage }
         let nextToday = result.reduce(UsageTotals()) { $0 + $1.2 }

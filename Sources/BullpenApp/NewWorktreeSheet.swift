@@ -784,9 +784,9 @@ extension NewWorktreeSheet {
     /// minimal PATH, and a non-interactive shell misses what ~/.zshrc adds).
     private func detectInstalledAgents() async {
         let profiles = AgentProfile.all
-        let found = await Task.detached {
+        let found = await offPool(qos: .userInitiated) {
             Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, ShellEnvironment.locate($0.executable) != nil) })
-        }.value
+        }
         installed = found
     }
 }
