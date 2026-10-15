@@ -23,6 +23,8 @@ public struct KeyStore: Sendable {
 
     /// Read secrets, kept for the rest of the launch: each one is read at most once.
     private static let cache = Cache()
+    /// `hasSecret` answers, for a minute.
+    private static let presence = PresenceCache()
 
     /// Any other secret Bullpen keeps (e.g. `linear`). Only for using it: views ask `hasSecret`.
     public func secret(_ account: String) -> String? {
@@ -43,19 +45,26 @@ public struct KeyStore: Sendable {
     }
 
     /// Whether a secret is saved, without reading it: only its attributes, which never asks for access.
+    /// Remembered for a minute (views and status ticks ask often; each is a call to the Keychain
+    /// daemon, which can be slow); saving or removing it here forgets the answer.
     public func hasSecret(_ account: String) -> Bool {
-        if Self.cache.get("\(service)/\(account)") != nil { return true }
-        return [service, legacyService].compactMap { $0 }.contains { service in
+        let id = "\(service)/\(account)"
+        if Self.cache.get(id) != nil { return true }
+        if let known = Self.presence.get(id) { return known }
+        let found = [service, legacyService].compactMap { $0 }.contains { service in
             var query = Self.query(service: service, account: account)
             query[kSecReturnAttributes as String] = true
             query[kSecMatchLimit as String] = kSecMatchLimitOne
             return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
         }
+        Self.presence.set(id, found)
+        return found
     }
 
     /// Saves `key`, or removes the secret when it is nil or empty.
     public func setSecret(_ key: String?, account: String, label: String) throws {
         Self.cache.set("\(service)/\(account)", nil)
+        Self.presence.set("\(service)/\(account)", nil)
         guard let key, !key.isEmpty else {
             _ = Self.security(["delete-generic-password", "-s", service, "-a", account])
             if let legacyService { SecItemDelete(Self.query(service: legacyService, account: account) as CFDictionary) }
@@ -73,7 +82,10 @@ public struct KeyStore: Sendable {
     }
 
     /// Forgets what was read this launch (tests).
-    static func forgetReads() { cache.removeAll() }
+    static func forgetReads() {
+        cache.removeAll()
+        presence.removeAll()
+    }
 
     // MARK: Helpers
 
@@ -113,6 +125,23 @@ public struct KeyStore: Sendable {
         process.waitUntilExit()
         return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
     }
+}
+
+/// Short-lived answers: a change made outside Bullpen (Keychain Access, `security`) or one that
+/// raced a lookup is seen within `lifetime`.
+private final class PresenceCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: (found: Bool, at: Date)] = [:]
+    private let lifetime: TimeInterval = 60
+
+    func get(_ id: String) -> Bool? {
+        lock.withLock {
+            guard let value = values[id], Date().timeIntervalSince(value.at) < lifetime else { return nil }
+            return value.found
+        }
+    }
+    func set(_ id: String, _ found: Bool?) { lock.withLock { values[id] = found.map { ($0, Date()) } } }
+    func removeAll() { lock.withLock { values.removeAll() } }
 }
 
 private final class Cache: @unchecked Sendable {

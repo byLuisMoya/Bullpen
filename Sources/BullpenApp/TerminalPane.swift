@@ -39,6 +39,11 @@ struct TerminalPane: NSViewRepresentable {
             self.view = view
             Task {
                 do {
+                    // Before layout the view is 2×1: told that size, the agent redraws for it, and
+                    // again (its whole conversation) at the real one — a black screen meanwhile.
+                    for _ in 0..<60 where !Self.isLaidOut(view.getTerminal()) && !stopped {
+                        try await Task.sleep(for: .milliseconds(16))
+                    }
                     let terminal = view.getTerminal()
                     let cols = UInt16(max(terminal.cols, 20)), rows = UInt16(max(terminal.rows, 5))
                     let id = if let tab {
@@ -46,9 +51,13 @@ struct TerminalPane: NSViewRepresentable {
                     } else {
                         try await sessions.ensureMain(for: worktree, environment: environment, cols: cols, rows: rows)
                     }
+                    // Gone while the session was being readied: don't attach a view nobody shows.
+                    guard !stopped else { return }
                     sessionID = id
+                    // Size first: when it is the session's own, nothing changes and the snapshot
+                    // that follows is drawn for exactly this size.
+                    if Self.isLaidOut(terminal) { sessions.resize(id, cols: terminal.cols, rows: terminal.rows) }
                     try await sessions.attach(id, handler: self)
-                    sessions.resize(id, cols: terminal.cols, rows: terminal.rows)
                     view.window?.makeFirstResponder(view)
                 } catch {
                     view.feed(text: "\r\n\u{1B}[31mNo se pudo abrir la terminal: \(error.localizedDescription)\u{1B}[0m\r\n")
@@ -56,8 +65,29 @@ struct TerminalPane: NSViewRepresentable {
             }
         }
 
+        private var stopped = false
+
         func stop() {
+            stopped = true
+            pendingResize?.cancel()
             if let sessionID { sessions.detach(sessionID, handler: self) }
+        }
+
+        /// SwiftTerm's size before the view has one (its minimum) is 2×1: that one is never real.
+        static func isLaidOut(_ terminal: Terminal) -> Bool { terminal.cols > 2 || terminal.rows > 1 }
+
+        private var pendingResize: Task<Void, Never>?
+
+        /// Each size the agent hears it redraws for (Claude Code: its whole conversation), so only
+        /// the one the layout settles on goes, not every step of a sidebar or split animating.
+        private func resizeSoon() {
+            pendingResize?.cancel()
+            pendingResize = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled, let self, let sessionID = self.sessionID,
+                      let terminal = self.view?.getTerminal(), Self.isLaidOut(terminal) else { return }
+                self.sessions.resize(sessionID, cols: terminal.cols, rows: terminal.rows)
+            }
         }
 
         // MARK: SessionOutputHandler
@@ -85,7 +115,7 @@ struct TerminalPane: NSViewRepresentable {
 
         nonisolated func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
             MainActor.assumeIsolated {
-                if let sessionID { sessions.resize(sessionID, cols: newCols, rows: newRows) }
+                resizeSoon()
             }
         }
 
