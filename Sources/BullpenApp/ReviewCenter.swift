@@ -66,10 +66,23 @@ final class ReviewCenter {
             } else if let asked = info.summaryRequestedAt, activity.at > asked, let text = activity.summary {
                 info.summary = text
                 info.approved = ReviewInfo.verdict(in: text)
+                info.verdictAt = activity.at
                 info.phase = .done
                 try? await Self.save(info, for: reviewer, in: workspace)
                 announce(reviewer, info: info)
             }
+        }
+
+        // Put to work again from its terminal (asked to re-check, to fix something): its verdict
+        // no longer holds, so it is reviewing again, and when it stops it is asked for a new one
+        // the same way as the first time (the banner stops showing the old one meanwhile).
+        for reviewer in reviewers {
+            guard var info = reviewer.review, info.phase == .done || info.phase == .applied,
+                  let state = attention.statuses[reviewer.id]?.state, state == .working || state == .thinking,
+                  let activity = sessions.infos[SessionManager.sessionID(for: reviewer)]?.agentActivity,
+                  activity.at > (info.verdictAt ?? info.summaryRequestedAt ?? .distantFuture) else { continue }
+            info.phase = .reviewing
+            try? await Self.save(info, for: reviewer, in: workspace)
         }
 
         // New reviews for work that has just finished, once its PR is open.

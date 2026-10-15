@@ -147,6 +147,9 @@ public struct ReviewInfo: Hashable, Codable, Sendable {
     /// Can it go up? nil until the reviewer says.
     public var approved: Bool?
     public var summary: String?
+    /// When the agent gave the verdict in `summary`: a later turn with a new verdict (the user
+    /// asked it to check again) replaces it.
+    public var verdictAt: Date?
     /// The commit pushed with the accepted fixes (not reviewed again because of them).
     public var appliedCommit: String?
 
