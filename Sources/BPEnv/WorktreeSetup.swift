@@ -117,7 +117,7 @@ public enum CommandRunner {
             process.standardOutput = pipe
             process.standardError = pipe
             process.standardInput = FileHandle.nullDevice
-            let output = Task.detached { pipe.fileHandleForReading.readDataToEndOfFile() }
+            let output = Task { await offPool { pipe.fileHandleForReading.readDataToEndOfFile() } }
             nonisolated(unsafe) let timer = DispatchWorkItem { if process.isRunning { process.terminate() } }
             process.terminationHandler = { process in
                 timer.cancel()

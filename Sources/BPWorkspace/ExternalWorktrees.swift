@@ -1,4 +1,5 @@
 import BPCore
+import BPEnv
 import BPGit
 import Foundation
 
@@ -25,7 +26,7 @@ public struct OrcaWorktree: Equatable, Sendable {
     /// Orca's worktrees, or none if Orca is not installed or doesn't answer.
     public static func list() async -> [OrcaWorktree] {
         guard let orca = locate() else { return [] }
-        let output = await Task.detached { () -> Data? in
+        let output = await offPool { () -> Data? in
             let process = Process()
             process.executableURL = orca
             process.arguments = ["worktree", "list", "--json"]
@@ -36,7 +37,7 @@ public struct OrcaWorktree: Equatable, Sendable {
             let data = out.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
             return process.terminationStatus == 0 ? data : nil
-        }.value
+        }
         return output.map(parse) ?? []
     }
 
@@ -44,7 +45,7 @@ public struct OrcaWorktree: Equatable, Sendable {
     /// isn't left pointing at a missing folder. `force` also drops uncommitted changes.
     public static func remove(path: String, force: Bool) async throws {
         guard let orca = locate() else { throw WorkspaceError(message: "No se encuentra el comando orca.") }
-        let (status, output) = await Task.detached { () -> (Int32, String) in
+        let (status, output) = await offPool { () -> (Int32, String) in
             let process = Process()
             process.executableURL = orca
             process.arguments = ["worktree", "rm", "--worktree", "path:\(path)", "--json"] + (force ? ["--force"] : [])
@@ -55,7 +56,7 @@ public struct OrcaWorktree: Equatable, Sendable {
             let data = out.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
             return (process.terminationStatus, String(decoding: data, as: UTF8.self))
-        }.value
+        }
         guard status == 0 else {
             let message = (try? JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
                 .flatMap { ($0["error"] as? [String: Any])?["message"] as? String ?? $0["error"] as? String }
@@ -123,7 +124,7 @@ public struct OrcaActivity: Equatable, Sendable {
 
     public static func list() async -> [OrcaActivity] {
         guard let orca = OrcaWorktree.locate() else { return [] }
-        let output = await Task.detached { () -> Data? in
+        let output = await offPool { () -> Data? in
             let process = Process()
             process.executableURL = orca
             process.arguments = ["worktree", "ps", "--json"]
@@ -134,7 +135,7 @@ public struct OrcaActivity: Equatable, Sendable {
             let data = out.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
             return process.terminationStatus == 0 ? data : nil
-        }.value
+        }
         return output.map(parse) ?? []
     }
 

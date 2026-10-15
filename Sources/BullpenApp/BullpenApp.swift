@@ -35,6 +35,7 @@ struct BullpenApp: App {
                 .environment(orca)
                 .environment(reviews)
                 .task { browsers.start() }
+                .task { HangReporter.start() }
                 .task {
                     attention.orca = orca
                     summaries.orca = orca

@@ -68,6 +68,39 @@ func makeRepo() async throws -> (Repository, URL) {
         #expect(try await repo.worktrees().count == 1)
     }
 
+    @Test func removesInBackgroundWithTheSameGuards() async throws {
+        let (repo, dir) = try await makeRepo()
+        let git = Git()
+        let wt = dir.deletingLastPathComponent().appendingPathComponent("wt-\(UUID().uuidString)/bg")
+        try await repo.addWorktree(branch: "bg", at: wt, baseRef: "main")
+
+        // Untracked file: refused without force, and the folder stays where it was.
+        try "new\n".write(to: wt.appendingPathComponent("new.txt"), atomically: true, encoding: .utf8)
+        await #expect(throws: GitError.self) { try await repo.removeWorktree(at: wt, force: false, deleteInBackground: true) }
+        #expect(FileManager.default.fileExists(atPath: wt.appendingPathComponent("new.txt").path))
+
+        // Locked: git refuses even with the folder set aside, and it comes back.
+        try FileManager.default.removeItem(at: wt.appendingPathComponent("new.txt"))
+        try await git.run(["worktree", "lock", wt.path], in: repo.root)
+        await #expect(throws: GitError.self) { try await repo.removeWorktree(at: wt, force: false, deleteInBackground: true) }
+        #expect(FileManager.default.fileExists(atPath: wt.appendingPathComponent("README.md").path))
+        try await git.run(["worktree", "unlock", wt.path], in: repo.root)
+
+        // Clean: gone from git and from its place at once; the branch stays.
+        try await repo.removeWorktree(at: wt, force: false, deleteInBackground: true)
+        #expect(!FileManager.default.fileExists(atPath: wt.path))
+        #expect(try await repo.worktrees().count == 1)
+        #expect(await repo.branchExists("bg"))
+
+        // Forced with changes: also gone.
+        let dirty = dir.deletingLastPathComponent().appendingPathComponent("wt-\(UUID().uuidString)/dirty")
+        try await repo.addWorktree(branch: "dirty", at: dirty, baseRef: "main")
+        try "dirty\n".write(to: dirty.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+        try await repo.removeWorktree(at: dirty, force: true, deleteInBackground: true)
+        #expect(!FileManager.default.fileExists(atPath: dirty.path))
+        #expect(try await repo.worktrees().count == 1)
+    }
+
     @Test func validatesBranchNames() async throws {
         let (repo, _) = try await makeRepo()
         #expect(await repo.isValidBranchName("luis/fix-login"))

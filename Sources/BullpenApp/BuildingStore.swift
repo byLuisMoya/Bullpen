@@ -32,6 +32,8 @@ final class BuildingStore {
     /// Review checkouts no reviewer points at that still have changes: the user decides.
     var orphanReviews: [URL] = []
     private var database: AppDatabase?
+    /// Counts the observation's deliveries, so a slower re-read can't put an older building back.
+    @ObservationIgnored private var observedVersion = 0
     private let log = Logger.bullpen("store")
 
     func start() async {
@@ -39,6 +41,7 @@ final class BuildingStore {
             let database = try AppDatabase.onDisk()
             self.database = database
             workspace = Workspace(database: database, connect: connectToDaemon, hooks: hooks)
+            workspace?.deletesInBackground = true
             // The Reviews office is always there.
             do { try workspace?.ensureReviewsProject() } catch { report(error, "Reviews office failed") }
             // Worktrees made with Orca (or plain git) in these projects show up here too.
@@ -52,12 +55,18 @@ final class BuildingStore {
             Task { [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(3))
-                    guard let self, let fresh = try? database.offices(), fresh != self.offices else { continue }
+                    // Read off the main thread: a write in progress (or a busy disk) must not stall the UI.
+                    guard let version = self?.observedVersion else { return }
+                    let fresh = await offPool { try? database.offices() }
+                    // The observation may have brought something newer meanwhile: that one wins. (One
+                    // committed during the read but not delivered yet still lands right after.)
+                    guard let self, version == self.observedVersion, let fresh, fresh != self.offices else { continue }
                     self.offices = fresh
                 }
             }
-            for try await offices in database.observeOffices() where offices != self.offices {
-                self.offices = offices
+            for try await offices in database.observeOffices() {
+                observedVersion += 1
+                if offices != self.offices { self.offices = offices }
             }
         } catch {
             report(error, "Database failed")

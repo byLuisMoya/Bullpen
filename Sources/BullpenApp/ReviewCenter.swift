@@ -1,5 +1,6 @@
 import BPAgents
 import BPCore
+import BPEnv
 import BPWorkspace
 import Foundation
 import Observation
@@ -59,7 +60,7 @@ final class ReviewCenter {
                     try await sessions.sendMessage(Self.verdictRequest, to: reviewer)
                     info.phase = .summarizing
                     info.summaryRequestedAt = Date()
-                    try workspace.saveReview(info, for: reviewer)
+                    try await Self.save(info, for: reviewer, in: workspace)
                 } catch {
                     continue
                 }
@@ -67,7 +68,7 @@ final class ReviewCenter {
                 info.summary = text
                 info.approved = ReviewInfo.verdict(in: text)
                 info.phase = .done
-                try? workspace.saveReview(info, for: reviewer)
+                try? await Self.save(info, for: reviewer, in: workspace)
                 announce(reviewer, info: info)
             }
         }
@@ -85,6 +86,12 @@ final class ReviewCenter {
         }
     }
 
+    /// Database writes off the main thread: with the disk busy (a worktree being deleted, an
+    /// agent installing) a write can wait, and the UI must not wait with it.
+    private static func save(_ info: ReviewInfo, for reviewer: Worktree, in workspace: Workspace) async throws {
+        try await offPool { Result { try workspace.saveReview(info, for: reviewer) } }.get()
+    }
+
     /// Starts a review of `worktree`. `kind` nil picks it by the project's rule (changed files).
     func review(_ worktree: Worktree, in project: Project, kind: ReviewInfo.Kind?, pullRequest: Int?,
                 store: BuildingStore, automatic: Bool = false) async {
@@ -95,7 +102,7 @@ final class ReviewCenter {
             let head = try await workspace.headCommit(of: worktree)
             let reviewers = store.offices.flatMap(\.worktrees).compactMap(\.review).filter { $0.of == worktree.id }
             if automatic {
-                if try workspace.wasReviewed(worktree, at: head) { return }
+                if try await offPool { Result { try workspace.wasReviewed(worktree, at: head) } }.get() { return }
                 if reviewers.contains(where: { $0.phase == .reviewing || $0.phase == .summarizing }) { return }
             }
             var chosen = kind ?? .quick

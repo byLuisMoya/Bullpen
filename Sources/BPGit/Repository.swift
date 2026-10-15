@@ -116,7 +116,33 @@ public struct Repository: Sendable {
 
     /// Removes the worktree directory. Keeps the branch so work can be recovered.
     /// `force` is required when there are uncommitted changes or the worktree is locked.
-    public func removeWorktree(at path: URL, force: Bool) async throws {
+    /// `deleteInBackground`: the folder (with its dependencies, tens of thousands of files and
+    /// several seconds of disk work) is set aside at once and deleted afterwards at background
+    /// priority, so git forgets it in a moment. Only for a process that stays alive (the app).
+    public func removeWorktree(at path: URL, force: Bool, deleteInBackground: Bool = false) async throws {
+        // Without force, git checks the folder: with it gone, check the same first…
+        let clean = deleteInBackground && !force ? await isClean(path) : false
+        if deleteInBackground, force || clean, let aside = Self.setAside(path) {
+            // …and again once nothing can reach it by its path, for whatever was written in between
+            // (submodules can't be read there: their links are relative; the first check covers them).
+            // Something new: back in place, and git decides as usual.
+            if !force {
+                let late = try? await git.run(["status", "--porcelain", "--ignore-submodules=all"], in: aside)
+                if late?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != true {
+                    try Self.putBack(aside, at: path)
+                    return try await removeWorktree(at: path, force: false)
+                }
+            }
+            do {
+                try await git.run(["worktree", "remove"] + (force ? ["--force", "--force"] : []) + [path.path], in: root)
+            } catch {
+                // Locked, say: the folder goes back where it was.
+                try Self.putBack(aside, at: path)
+                throw error
+            }
+            Self.deleteLater(aside.deletingLastPathComponent())
+            return
+        }
         var args = ["worktree", "remove"]
         if force { args += ["--force", "--force"] }
         args.append(path.path)
@@ -126,11 +152,52 @@ public struct Repository: Sendable {
             // Git won't remove a worktree with submodules without --force, clean or not. Their
             // repositories go with it, so force only when no submodule has uncommitted changes
             // or commits that aren't on a remote.
-            let pending = try? await git.run(["submodule", "foreach", "--recursive", "--quiet",
-                                              "git status --porcelain; git log --oneline -1 HEAD --not --remotes"], in: path)
-            guard let pending, pending.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw error }
+            guard await !submodulesPending(path) else { throw error }
             try await git.run(["worktree", "remove", "--force", path.path], in: root)
         }
+    }
+
+    /// What `git worktree remove` without force lets go: nothing modified or untracked, in the
+    /// worktree or its submodules, and no submodule commit that isn't on a remote.
+    private func isClean(_ path: URL) async -> Bool {
+        guard let status = try? await git.run(["status", "--porcelain", "--ignore-submodules=none"], in: path),
+              status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return await !submodulesPending(path)
+    }
+
+    /// Some submodule has uncommitted changes or commits that aren't on a remote (or can't be read).
+    private func submodulesPending(_ path: URL) async -> Bool {
+        let pending = try? await git.run(["submodule", "foreach", "--recursive", "--quiet",
+                                          "git status --porcelain; git log --oneline -1 HEAD --not --remotes"], in: path)
+        return pending?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != true
+    }
+
+    /// Undoes `setAside`. If it can't (something took its place meanwhile), says where it is
+    /// rather than leaving it, unmentioned, in a folder macOS empties.
+    static func putBack(_ aside: URL, at path: URL) throws {
+        guard Darwin.rename(aside.path, path.path) == 0 else {
+            throw GitError(arguments: ["worktree", "remove"], status: -1,
+                           stderr: "No se pudo devolver el worktree a \(path.path); está en \(aside.path)")
+        }
+        try? FileManager.default.removeItem(at: aside.deletingLastPathComponent())
+    }
+
+    /// Moves the folder into a temporary one of its own volume (a rename: instant, never a copy).
+    /// Returns its new place, or nil if it couldn't be moved.
+    static func setAside(_ path: URL) -> URL? {
+        guard let dir = try? FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                                     appropriateFor: path, create: true) else { return nil }
+        let aside = dir.appendingPathComponent(path.lastPathComponent, isDirectory: true)
+        guard Darwin.rename(path.path, aside.path) == 0 else {
+            try? FileManager.default.removeItem(at: dir)
+            return nil
+        }
+        return aside
+    }
+
+    /// Background QoS: its disk work is throttled, so the rest of the app (and the Mac) keeps its pace.
+    static func deleteLater(_ dir: URL) {
+        DispatchQueue.global(qos: .background).async { try? FileManager.default.removeItem(at: dir) }
     }
 
     static func parseWorktrees(_ output: String) -> [GitWorktree] {

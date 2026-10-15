@@ -50,6 +50,9 @@ public struct Workspace: Sendable {
     public var worktreeRoot: URL
     /// nil skips Claude trust handling (tests).
     public var claudeTrust: ClaudeTrust?
+    /// Removed worktrees' folders are deleted after git forgets them, not before (the app; the CLI
+    /// exits right away and would leave them half deleted).
+    public var deletesInBackground = false
     private let log = Logger(subsystem: "com.byluismoya.Bullpen", category: "workspace")
 
     public init(database: AppDatabase, connect: @escaping @Sendable () async throws -> SessionClient, hooks: AgentHooks,
@@ -231,8 +234,9 @@ public struct Workspace: Sendable {
         let path = URL(fileURLWithPath: worktree.path)
         // A reviewer: its detached checkout belongs to the reviewed project's repository.
         if let review = worktree.review {
-            if FileManager.default.fileExists(atPath: path.path) {
-                _ = try? await Git().run(["worktree", "remove", "--force", "--force", path.path], in: URL(fileURLWithPath: review.repoPath))
+            if FileManager.default.fileExists(atPath: path.path),
+               let repo = try? await Repository.open(at: URL(fileURLWithPath: review.repoPath)) {
+                try? await repo.removeWorktree(at: path, force: true, deleteInBackground: deletesInBackground)
             }
             var archived = worktree
             archived.archivedAt = Date()
@@ -269,7 +273,7 @@ public struct Workspace: Sendable {
                 }
             }
             let repo = try await Repository.open(at: URL(fileURLWithPath: project.path))
-            try await repo.removeWorktree(at: path, force: force)
+            try await repo.removeWorktree(at: path, force: force, deleteInBackground: deletesInBackground)
             try? await repo.deleteCheckpoints(of: worktree.id)
             // Don't leave ~/Bullpen/worktrees/<project>/ behind once its last worktree is gone.
             let parent = path.deletingLastPathComponent()
