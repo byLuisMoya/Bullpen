@@ -2,14 +2,14 @@ import AppKit
 import Foundation
 import os
 
-/// Watches the main thread from a thread of its own. When it stops answering for over a second
-/// while the app is in front, samples the app (`/usr/bin/sample`) into ~/Library/Logs/Bullpen/,
-/// so the cause of an occasional freeze can be read afterwards. One report every 10 minutes at most.
+/// Watches the main thread from a thread of its own while the app is in front. Each stall over a
+/// quarter of a second goes to Diagnostics with its length; one still going after `sampleAfter`
+/// is also sampled (`/usr/bin/sample`, 3 s) into ~/Library/Logs/Bullpen/ — a real freeze, caught
+/// while it lasts. One sample every 10 minutes at most, so short stalls don't use it up.
 enum HangReporter {
-    static let threshold: TimeInterval = 1
-    static var directory: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Bullpen", isDirectory: true)
-    }
+    static let threshold: TimeInterval = 0.25
+    static let sampleAfter: TimeInterval = 0.75
+    static var directory: URL { Diagnostics.directory }
 
     private static let log = Logger.bullpen("hangs")
     private static let active = OSAllocatedUnfairLock(initialState: false)
@@ -37,16 +37,25 @@ enum HangReporter {
             // In the background the system may hold the app back on purpose (App Nap): not a hang.
             guard active.withLock({ $0 }) else { continue }
             let answered = DispatchSemaphore(value: 0)
+            // When the main thread got to it: the sample below must not count as part of the stall.
+            let answeredAt = OSAllocatedUnfairLock<UInt64?>(initialState: nil)
             let sent = DispatchTime.now()
-            DispatchQueue.main.async { answered.signal() }
+            DispatchQueue.main.async {
+                answeredAt.withLock { $0 = DispatchTime.now().uptimeNanoseconds }
+                answered.signal()
+            }
             guard answered.wait(timeout: sent + threshold) == .timedOut else { continue }
             var file: URL?
-            if Date().timeIntervalSince(lastReport) > 600 {
-                lastReport = Date()
-                file = sample()
+            if answered.wait(timeout: sent + sampleAfter) == .timedOut {
+                if Date().timeIntervalSince(lastReport) > 600 {
+                    lastReport = Date()
+                    file = sample()
+                }
+                answered.wait()
             }
-            answered.wait()
-            let seconds = Double(DispatchTime.now().uptimeNanoseconds - sent.uptimeNanoseconds) / 1e9
+            let end = answeredAt.withLock { $0 } ?? DispatchTime.now().uptimeNanoseconds
+            let seconds = Double(end - sent.uptimeNanoseconds) / 1e9
+            Diagnostics.note(String(format: "hang: main thread blocked %.2f s", seconds) + (file.map { ", sample \($0.lastPathComponent)" } ?? ""))
             log.warning("Main thread blocked for \(seconds, format: .fixed(precision: 1), privacy: .public) s\(file.map { ", sample in \($0.path)" } ?? "", privacy: .public)")
         }
     }
