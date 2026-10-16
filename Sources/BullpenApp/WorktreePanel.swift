@@ -33,6 +33,9 @@ struct WorktreePanel: View {
                     if let runID = worktree.runID { RunCompareView(runID: runID, project: project) } else { ReviewView(worktree: worktree, project: project) }
                 }
             }
+            // The panel stays across a change of worktree; what each tab holds (selection, drafts,
+            // results) is the old worktree's and starts over.
+            .id(worktree.id)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color(nsColor: .windowBackgroundColor))
