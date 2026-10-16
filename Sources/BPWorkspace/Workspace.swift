@@ -118,21 +118,39 @@ public struct Workspace: Sendable {
                                                 baseRef: request.baseRef, path: path.path, task: request.task)
         )
 
+        let newBranch = !(await repo.branchExists(request.branch))
         try await repo.addWorktree(branch: request.branch, at: path, baseRef: request.baseRef)
-        let taken = Set(try database.offices().flatMap(\.worktrees).flatMap { Array(($0.ports ?? [:]).values) })
-        // Without `[browser] url`, the worktree still gets a port of its own for its browser tab.
-        let ports = PortAllocator.allocate(names: config.portNames + (config.browserURL == nil ? ["preview"] : []), taken: taken)
-        let worktree = Worktree(
-            projectID: request.project.id, branch: request.branch, path: path.path, baseRef: request.baseRef,
-            agentProfileID: request.agent?.id, agentModel: request.model?.nilIfBlank,
-            taskDescription: request.task?.nilIfBlank, ports: ports.isEmpty ? nil : ports, runID: request.runID,
-            ticket: request.ticket
-        )
-        let report = try WorktreeSetup.prepare(config: config, from: projectURL, to: path)
-        if !report.missing.isEmpty {
-            log.info("Setup skipped missing paths: \(report.missing.joined(separator: ", "), privacy: .public)")
+        let worktree: Worktree
+        do {
+            let taken = Set(try database.offices().flatMap(\.worktrees).flatMap { Array(($0.ports ?? [:]).values) })
+            // Without `[browser] url`, the worktree still gets a port of its own for its browser tab.
+            let ports = PortAllocator.allocate(names: config.portNames + (config.browserURL == nil ? ["preview"] : []), taken: taken)
+            worktree = Worktree(
+                projectID: request.project.id, branch: request.branch, path: path.path, baseRef: request.baseRef,
+                agentProfileID: request.agent?.id, agentModel: request.model?.nilIfBlank,
+                taskDescription: request.task?.nilIfBlank, ports: ports.isEmpty ? nil : ports, runID: request.runID,
+                ticket: request.ticket
+            )
+            let report = try WorktreeSetup.prepare(config: config, from: projectURL, to: path)
+            if !report.missing.isEmpty {
+                log.info("Setup skipped missing paths: \(report.missing.joined(separator: ", "), privacy: .public)")
+            }
+            try database.save(worktree)
+        } catch {
+            // Not recorded: undo it, or the folder stays behind, unseen here and in the way of
+            // trying again. A branch made just now goes too (a retry may pick another base).
+            do {
+                try await repo.removeWorktree(at: path, force: true)
+                if newBranch { try await repo.deleteBranch(request.branch) }
+                let parent = path.deletingLastPathComponent()
+                if (try? FileManager.default.contentsOfDirectory(atPath: parent.path))?.isEmpty == true {
+                    try? FileManager.default.removeItem(at: parent)
+                }
+            } catch {
+                log.error("Cannot undo worktree at \(path.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+            throw error
         }
-        try database.save(worktree)
 
         if request.agent?.id == AgentProfile.claude.id, let claudeTrust {
             do { try claudeTrust.trust(path.path) } catch {

@@ -164,12 +164,14 @@ public extension Workspace {
 
     /// Shows worktrees made outside Bullpen (with Orca, or plain git) in their project's office,
     /// for the projects registered here only. Worktrees that disappear from git leave Bullpen;
-    /// one the user removed from Bullpen (an archived record) is not brought back.
+    /// one the user hid from Bullpen (an archived external record) is not brought back. An
+    /// archived worktree of Bullpen's had its folder deleted: one there now is a new one.
     @discardableResult
     func syncExternalWorktrees(orca given: [OrcaWorktree]? = nil) async throws -> (added: Int, gone: Int) {
         // Orca's list (a CLI run) only matters for worktrees not known yet: read it the first time one appears.
         var orcaByPath: [String: OrcaWorktree]? = given.map { Self.byPath($0) }
-        let known = Set(try database.allWorktrees().map { Self.canonical($0.path) })
+        // A reviewer's folder may outlive its record (its removal doesn't stop the archive): not imported.
+        let known = Set(try database.allWorktrees().filter { $0.isActive || $0.external || $0.review != nil }.map { Self.canonical($0.path) })
         var added = 0, gone = 0
         for office in try database.offices() {
             guard let repo = try? await Repository.open(at: URL(fileURLWithPath: office.project.path)) else { continue }

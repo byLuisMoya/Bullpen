@@ -42,6 +42,18 @@ import Testing
         #expect(wt.agentProfileID == "claude" && wt.agentModel == "opus" && wt.taskDescription == "Arregla el login")
     }
 
+    @Test func aPathIsOneActiveWorktreesButArchivedOnesDontHoldIt() throws {
+        let db = try AppDatabase.inMemory()
+        let p = Project(name: "a", path: "/tmp/a")
+        try db.save(p)
+        try db.save(Worktree(projectID: p.id, branch: "x", path: "/tmp/wt/x", baseRef: "main", archivedAt: Date()))
+        try db.save(Worktree(projectID: p.id, branch: "x", path: "/tmp/wt/x", baseRef: "main"))
+        #expect(try db.offices().first?.worktrees.map(\.path) == ["/tmp/wt/x"])
+        #expect(throws: (any Error).self) {
+            try db.save(Worktree(projectID: p.id, branch: "y", path: "/tmp/wt/x", baseRef: "main"))
+        }
+    }
+
     @Test func initialPromptRoundTrips() throws {
         let db = try AppDatabase.inMemory()
         try db.save(Project(name: "a", path: "/tmp/a", initialPrompt: "Lee CLAUDE.md"))

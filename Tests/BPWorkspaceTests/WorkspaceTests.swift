@@ -124,6 +124,43 @@ struct Fixture {
         client.close()
     }
 
+    @Test func aRemovedWorktreeCanBeCreatedAgainAtTheSamePath() async throws {
+        let f = try await Fixture.make(config: Self.config)
+        defer { f.server.stop() }
+        let first = try await f.workspace.createWorktree(WorktreeRequest(project: f.project, branch: "again", baseRef: "main"))
+        try await f.workspace.removeWorktree(first, in: f.project, force: true)
+        let second = try await f.workspace.createWorktree(WorktreeRequest(project: f.project, branch: "again", baseRef: "main"))
+        #expect(second.path == first.path && second.id != first.id)
+        #expect(try f.workspace.database.offices().first?.worktrees.map(\.id) == [second.id])
+    }
+
+    @Test func aFolderMadeWithGitWhereARemovedWorktreeWasIsImported() async throws {
+        let f = try await Fixture.make(config: Self.config)
+        defer { f.server.stop() }
+        let old = try await f.workspace.createWorktree(WorktreeRequest(project: f.project, branch: "back", baseRef: "main"))
+        try await f.workspace.removeWorktree(old, in: f.project, force: true)
+        try await Git().run(["worktree", "add", old.path, "back"], in: URL(fileURLWithPath: f.project.path))
+        let result = try await f.workspace.syncExternalWorktrees(orca: [])
+        #expect(result.added == 1)
+        #expect(try f.workspace.database.offices().first?.worktrees.map(\.branch) == ["back"])
+    }
+
+    @Test func aWorktreeThatCantBeRecordedIsUndone() async throws {
+        let f = try await Fixture.make(config: Self.config)
+        defer { f.server.stop() }
+        let request = WorktreeRequest(project: f.project, branch: "taken", baseRef: "main")
+        // Its path already belongs to an active record (the folder isn't there): saving fails after git.
+        try f.workspace.database.save(Worktree(projectID: f.project.id, branch: "other", path: f.workspace.path(for: request).path, baseRef: "main"))
+        await #expect(throws: (any Error).self) { try await f.workspace.createWorktree(request) }
+        #expect(!FileManager.default.fileExists(atPath: f.workspace.path(for: request).path))
+        // Nothing in the way of trying again once the path is free: no worktree, no branch made for it.
+        let repo = try await Repository.open(at: URL(fileURLWithPath: f.project.path))
+        let path = f.workspace.path(for: request).resolvingSymlinksInPath().path
+        #expect(try await repo.worktrees().count == 1)
+        #expect(!(try await repo.worktrees().contains { URL(fileURLWithPath: $0.path).resolvingSymlinksInPath().path == path }))
+        #expect(!(await repo.branchExists("taken")))
+    }
+
     @Test func invalidInputLeavesNothingBehind() async throws {
         let f = try await Fixture.make(config: "[env]\nX = \"{{nope}}\"\n[prompt]\ndefault = \"{{ticket.id}}\"")
         defer { f.server.stop() }
@@ -308,8 +345,7 @@ let fakeB = AgentProfile(id: "fake-b", name: "Fake B", executable: "/bin/echo")
         #expect(try f.workspace.database.offices().first { $0.project.isReviews }?.worktrees.isEmpty == true)
     }
 
-    /// A closed reviewer keeps its path in the database after its folder goes: reviewing the same
-    /// commit again gets another folder instead of failing on the unique path (and leaving a checkout).
+    /// Reviewing the same commit again after the reviewer closed gets another folder, not the old one.
     @Test func reviewingAClosedReviewsCommitAgainGetsAnotherFolder() async throws {
         let f = try await Fixture.make(config: "")
         defer { f.server.stop() }

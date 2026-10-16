@@ -89,6 +89,11 @@ public struct Repository: Sendable {
         }
     }
 
+    /// Deletes a local branch, merged or not.
+    public func deleteBranch(_ name: String) async throws {
+        try await git.run(["branch", "-D", name], in: root)
+    }
+
     /// What would be lost by removing the worktree at `path`.
     public func removalGuards(for path: URL, baseRef: String) async throws -> [RemovalGuard] {
         var guards: [RemovalGuard] = []
