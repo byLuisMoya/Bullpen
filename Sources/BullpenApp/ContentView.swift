@@ -159,8 +159,10 @@ struct ContentView: View {
             }
             Group {
             if let (worktree, project) = selectedWorktree {
+                // Not `.id(worktree.id)`: rebuilding the whole detail (toolbar, inspector) on every
+                // selection made SwiftUI ask WindowServer for new surfaces and wait on it, with the
+                // terminal left black meanwhile. What belongs to one worktree is keyed by it inside.
                 WorktreeDetail(worktree: worktree, project: project) { isImporting = true }
-                    .id(worktree.id)
                     .navigationTitle(worktree.branch)
                     .navigationSubtitle(worktree.path)
             } else if store.offices.isEmpty {
@@ -353,11 +355,28 @@ private struct WorktreeDetail: View {
     @Environment(SessionManager.self) private var sessions
     @Environment(BuildingStore.self) private var store
     @Environment(AttentionCenter.self) private var attention
-    @State private var restarting = false
-    /// Asked the agent to catch up with the base (until the PR stops reporting conflicts).
-    @State private var catchUpAsked = false
-    /// The terminal tab shown: nil is the agent's, otherwise an extra terminal's session id.
-    @State private var terminalTab: String?
+    // This view outlives a change of worktree: its state says which worktree it is about.
+    /// Worktrees whose agent is restarting.
+    @State private var restartingWorktrees: Set<UUID> = []
+    /// Asked their agent to catch up with the base (until their PR stops reporting conflicts).
+    @State private var catchUpAskedWorktrees: Set<UUID> = []
+    /// The terminal tab shown: nil is the agent's, otherwise an extra terminal's session id. For
+    /// another worktree it reads as nil, as in a fresh view.
+    @State private var shownTab: (worktree: UUID, tab: String)?
+
+    private var restarting: Bool { restartingWorktrees.contains(worktree.id) }
+    private var catchUpAsked: Bool { catchUpAskedWorktrees.contains(worktree.id) }
+    /// Worktrees whose PR has conflicts now, whichever is shown.
+    private var conflicted: Set<UUID> {
+        Set(repoStatus.pullRequests.filter { $0.value.hasConflicts && ($0.value.state == .open || $0.value.state == .draft) }.keys)
+    }
+    private var terminalTab: String? {
+        get { shownTab?.worktree == worktree.id ? shownTab?.tab : nil }
+        nonmutating set { shownTab = newValue.map { (worktree.id, $0) } }
+    }
+    private var terminalTabBinding: Binding<String?> {
+        Binding(get: { terminalTab }, set: { terminalTab = $0 })
+    }
     // BULLPEN_SNAPSHOT_TAB=changes opens the panel on that tab (for DebugSnapshots).
     @AppStorage("worktreePanel.shown") private var panelShown = ProcessInfo.processInfo.environment["BULLPEN_SNAPSHOT_TAB"] != nil
 
@@ -382,6 +401,7 @@ private struct WorktreeDetail: View {
             VStack(spacing: 0) {
                 if let review = worktree.review {
                     ReviewBanner(reviewer: worktree, review: review)
+                        .id(worktree.id)
                 }
                 if let inOrca = agentInOrca {
                     HStack(spacing: 10) {
@@ -467,12 +487,13 @@ private struct WorktreeDetail: View {
                     .background(.bar)
                     .overlay(alignment: .bottom) { Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1) }
                 }
-                TerminalTabs(worktree: worktree, selection: $terminalTab) { Task { await openTab() } }
-                    // Another worktree, or the conflicts are gone: the next ones can be asked about again.
-                    .onChange(of: worktree.id) { catchUpAsked = false }
-                    .onChange(of: conflictingPR == nil) { _, resolved in if resolved { catchUpAsked = false } }
+                TerminalTabs(worktree: worktree, selection: terminalTabBinding) { Task { await openTab() } }
+                    .id(worktree.id)
+                    // A worktree's conflicts are gone: the next ones can be asked about again.
+                    .onChange(of: conflicted) { _, now in catchUpAskedWorktrees.formIntersection(now) }
                 if terminalTab == TerminalTabs.browser, browsers.open.contains(worktree.id) {
                     BrowserPane(worktree: worktree, home: browserHome)
+                        .id(worktree.id)
                 } else {
                     TerminalPane(worktree: worktree, environment: terminalEnvironment, tab: terminalTab)
                         .id(terminalTab ?? "main")
@@ -481,6 +502,8 @@ private struct WorktreeDetail: View {
                                 sessions.typeText(text, into: terminalTab ?? SessionManager.sessionID(for: worktree), submit: submit)
                             }
                         }
+                        // A terminal (and a dictation under way) belongs to one worktree.
+                        .id(worktree.id)
                 }
             }
         }
@@ -508,7 +531,7 @@ private struct WorktreeDetail: View {
                     Button("Abrir en Terminal") { AppActions.openInTerminal(worktree) }
                     Button("Mostrar en Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: worktree.path) }
                 } label: {
-                    Label("Agente", systemImage: "person.crop.circle.badge.gearshape")
+                    Label("Agente", systemImage: "person.crop.circle")
                         .labelStyle(.titleAndIcon)
                 }
                 .fixedSize()
@@ -540,7 +563,10 @@ private struct WorktreeDetail: View {
     }
 
     private func openTab() async {
-        do { terminalTab = try await sessions.openTab(for: worktree, environment: terminalEnvironment) } catch {
+        do {
+            let tab = try await sessions.openTab(for: worktree, environment: terminalEnvironment)
+            shownTab = (worktree.id, tab)
+        } catch {
             store.errorMessage = "No se pudo abrir otra terminal: \(error.localizedDescription)"
         }
     }
@@ -574,15 +600,15 @@ private struct WorktreeDetail: View {
                 try store.workspace?.database.save(AgentMessage(projectID: project.id, toWorktree: worktree.id, fromWorktree: nil,
                                                                 fromLabel: "Tú", text: text))
             }
-            catchUpAsked = true
+            catchUpAskedWorktrees.insert(worktree.id)
         } catch {
             store.errorMessage = "No se pudo pedir al agente que se ponga al día: \(error.localizedDescription)"
         }
     }
 
     private func restartAgent() async {
-        restarting = true
-        defer { restarting = false }
+        restartingWorktrees.insert(worktree.id)
+        defer { restartingWorktrees.remove(worktree.id) }
         do {
             let env = (try? WorktreeEnvironment.load(project: project, worktree: worktree))?.environment ?? [:]
             try await sessions.restartAgent(worktree, environment: env)
