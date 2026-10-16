@@ -45,7 +45,8 @@ public extension Workspace {
         let commit = try await headCommit(of: worktree)
         let name = "\(WorktreeLocation.slug(project.name))-\(WorktreeLocation.slug(worktree.branch))-\(commit.prefix(7))"
         var path = worktreeRoot.appendingPathComponent("Reviews", isDirectory: true).appendingPathComponent(name, isDirectory: true)
-        // Archived reviewers keep their (unique) path in the database after their folder is gone.
+        // A path once used, by an archived reviewer too, isn't reused: each review gets a folder of
+        // its own (an agent may keep what it knows per folder).
         let recorded = Set(try database.allWorktrees().map(\.path))
         if FileManager.default.fileExists(atPath: path.path) || recorded.contains(path.path) {
             path = path.deletingLastPathComponent().appendingPathComponent("\(name)-\(Int(Date().timeIntervalSince1970))", isDirectory: true)

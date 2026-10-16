@@ -132,6 +132,28 @@ public final class AppDatabase: Sendable {
                 t.uniqueKey(["projectID", "number"])
             }
         }
+        migrator.registerMigration("v13-worktree-path-unique-while-active") { db in
+            // A path is one active worktree's; an archived one keeps its record (runs, history)
+            // without blocking a new worktree at the same place. SQLite can't drop a column's
+            // UNIQUE: the table is rebuilt (nothing references it by key).
+            try db.execute(sql: """
+                CREATE TABLE "worktree_v13" ("id" BLOB PRIMARY KEY NOT NULL,
+                    "projectID" BLOB NOT NULL REFERENCES "project"("id") ON DELETE CASCADE,
+                    "branch" TEXT NOT NULL, "path" TEXT NOT NULL, "baseRef" TEXT NOT NULL,
+                    "createdAt" DATETIME NOT NULL, "archivedAt" DATETIME, "agentProfileID" TEXT,
+                    "agentModel" TEXT, "taskDescription" TEXT, "ports" TEXT, "runID" BLOB, "ticket" TEXT,
+                    "external" BOOLEAN NOT NULL DEFAULT 0, "review" TEXT);
+                INSERT INTO "worktree_v13" ("id", "projectID", "branch", "path", "baseRef", "createdAt", "archivedAt",
+                    "agentProfileID", "agentModel", "taskDescription", "ports", "runID", "ticket", "external", "review")
+                    SELECT "id", "projectID", "branch", "path", "baseRef", "createdAt", "archivedAt",
+                    "agentProfileID", "agentModel", "taskDescription", "ports", "runID", "ticket", "external", "review"
+                    FROM "worktree";
+                DROP TABLE "worktree";
+                ALTER TABLE "worktree_v13" RENAME TO "worktree";
+                CREATE INDEX "worktree_on_projectID" ON "worktree"("projectID");
+                CREATE UNIQUE INDEX "worktree_active_path" ON "worktree"("path") WHERE "archivedAt" IS NULL;
+                """)
+        }
         return migrator
     }
 }
