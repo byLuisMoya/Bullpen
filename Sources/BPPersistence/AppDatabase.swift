@@ -244,6 +244,19 @@ public extension AppDatabase {
         _ = try writer.write { try Project.deleteOne($0, key: id) }
     }
 
+    /// Puts the offices in this order; projects left out keep their place after them.
+    func reorderProjects(_ ids: [UUID]) throws {
+        try writer.write { db in
+            for (index, id) in ids.enumerated() {
+                try Project.filter(key: id).updateAll(db, Column("sortIndex").set(to: index))
+            }
+            let rest = try Project.filter(!ids.contains(Column("id"))).order(Column("sortIndex"), Column("createdAt")).fetchAll(db)
+            for (offset, project) in rest.enumerated() {
+                try Project.filter(key: project.id).updateAll(db, Column("sortIndex").set(to: ids.count + offset))
+            }
+        }
+    }
+
     // MARK: Coordination
 
     func save(_ message: AgentMessage) throws {

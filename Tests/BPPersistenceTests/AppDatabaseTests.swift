@@ -22,6 +22,19 @@ import Testing
         #expect(offices[1].lighting == .off)
     }
 
+    @Test func reorderingProjectsChangesBuildingOrder() throws {
+        let db = try AppDatabase.inMemory()
+        let a = Project(name: "a", path: "/tmp/a", sortIndex: 0)
+        let b = Project(name: "b", path: "/tmp/b", sortIndex: 1)
+        let c = Project(name: "c", path: "/tmp/c", sortIndex: 2)
+        for p in [a, b, c] { try db.save(p) }
+        try db.reorderProjects([c.id, a.id, b.id])
+        #expect(try db.offices().map(\.project.name) == ["c", "a", "b"])
+        // One left out (added meanwhile) goes after the ones given.
+        try db.reorderProjects([b.id, c.id])
+        #expect(try db.offices().map(\.project.name) == ["b", "c", "a"])
+    }
+
     @Test func deletingProjectRemovesItsWorktrees() throws {
         let db = try AppDatabase.inMemory()
         let p = Project(name: "a", path: "/tmp/a")
