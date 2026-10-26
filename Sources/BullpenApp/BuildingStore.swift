@@ -131,6 +131,40 @@ final class BuildingStore {
         }
     }
 
+    /// Moves an office to where `target` is in the building (and the sidebar), pushing the rest along.
+    func moveProject(_ id: UUID, to target: UUID) {
+        var ids = offices.map(\.project.id)
+        guard id != target, let from = ids.firstIndex(of: id), let to = ids.firstIndex(of: target) else { return }
+        ids.remove(at: from)
+        ids.insert(id, at: to)
+        reorder(ids)
+    }
+
+    /// Moves an office one floor up (negative) or down (positive).
+    func moveProject(_ id: UUID, by offset: Int) {
+        var ids = offices.map(\.project.id)
+        guard let from = ids.firstIndex(of: id), ids.indices.contains(from + offset) else { return }
+        ids.swapAt(from, from + offset)
+        reorder(ids)
+    }
+
+    private func reorder(_ ids: [UUID]) {
+        // Right away here; the database observation then brings the same order back.
+        // Counted as observed, so a re-read already under way (the old order) doesn't put it back.
+        observedVersion += 1
+        let byID = Dictionary(uniqueKeysWithValues: offices.map { ($0.project.id, $0) })
+        offices = ids.enumerated().compactMap { index, id in
+            guard var office = byID[id] else { return nil }
+            office.project.sortIndex = index
+            return office
+        }
+        do {
+            try database?.reorderProjects(ids)
+        } catch {
+            report(error, "Reorder projects failed")
+        }
+    }
+
     // MARK: Automations
 
     private(set) var automations: [Automation] = []

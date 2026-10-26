@@ -18,6 +18,7 @@ struct TerminalPane: NSViewRepresentable {
         view.getTerminal().changeHistorySize(2_000)
         view.terminalDelegate = context.coordinator
         context.coordinator.start(view: view, worktree: worktree, environment: environment, tab: tab)
+        context.coordinator.wheel = WheelForwarder(view: view)
         return view
     }
 
@@ -32,6 +33,9 @@ struct TerminalPane: NSViewRepresentable {
         private let sessions: SessionManager
         private weak var view: TerminalView?
         private var sessionID: String?
+
+        /// Scrolling inside full-screen agents (Claude Code), which SwiftTerm doesn't do on its own.
+        var wheel: WheelForwarder?
 
         init(sessions: SessionManager) { self.sessions = sessions }
 
@@ -101,6 +105,7 @@ struct TerminalPane: NSViewRepresentable {
         func stop() {
             stopped = true
             typedAt = nil
+            wheel = nil
             pendingResize?.cancel()
             if let sessionID { sessions.detach(sessionID, handler: self) }
         }
@@ -203,5 +208,79 @@ struct TerminalPane: NSViewRepresentable {
                 NSPasteboard.general.setData(content, forType: .string)
             }
         }
+    }
+}
+
+/// SwiftTerm's scroll wheel only moves its own history, and a full-screen app (Claude Code draws
+/// on the alternate screen and asks for the mouse) has none: the wheel did nothing and a long
+/// answer couldn't be read back. Like Terminal or iTerm, the wheel goes to the app instead — as
+/// wheel clicks when it asks for the mouse, as arrow keys on the alternate screen otherwise.
+/// SwiftTerm's `scrollWheel` can't be overridden from here, hence the event monitor.
+@MainActor
+final class WheelForwarder {
+    private weak var view: TerminalView?
+    nonisolated(unsafe) private var monitor: Any?
+    /// Trackpad points not yet worth a whole line.
+    private var pending: CGFloat = 0
+
+    init(view: TerminalView) {
+        self.view = view
+        // Local monitors run on the main thread.
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            nonisolated(unsafe) let event = event
+            let forwarded = MainActor.assumeIsolated { self?.forward(event) == true }
+            return forwarded ? nil : event
+        }
+    }
+
+    deinit {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+    }
+
+    /// True when the event went to the app; false leaves it to SwiftTerm (or whatever is under the pointer).
+    private func forward(_ event: NSEvent) -> Bool {
+        guard let view, let window = view.window, event.window === window else { return false }
+        let point = view.convert(event.locationInWindow, from: nil)
+        guard view.bounds.contains(point), window.contentView?.hitTest(event.locationInWindow).map({ $0.isDescendant(of: view) }) == true
+        else { return false }
+        let terminal = view.getTerminal()
+        let mouse = view.allowMouseReporting && terminal.mouseMode != .off
+        guard mouse || terminal.isCurrentBufferAlternate else { return false }
+
+        // SwiftTerm's own cell (its `cellDimension` isn't public): the bounds also hold its scroller.
+        let font = view.font
+        let cellHeight = ceil(CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font))
+        let cellWidth = font.advancement(forGlyph: font.glyph(withName: "W")).width
+        guard cellHeight > 0, cellWidth > 0 else { return false }
+        let lines: Int
+        if event.hasPreciseScrollingDeltas {
+            // A new gesture, or one turning back, doesn't inherit what the last one left over.
+            if event.phase == .began || (pending != 0 && (pending > 0) != (event.scrollingDeltaY > 0)) { pending = 0 }
+            pending += event.scrollingDeltaY
+            lines = Int(pending / cellHeight)
+            pending -= CGFloat(lines) * cellHeight
+        } else {
+            pending = 0
+            lines = event.deltaY == 0 ? 0 : Int(event.deltaY.rounded(.awayFromZero))
+        }
+        // Sideways scrolls and a gesture's empty begin/end events aren't the app's.
+        if lines == 0 { return event.scrollingDeltaY != 0 }
+        let up = lines > 0
+        let count = min(abs(lines), 3 * terminal.rows)
+
+        if mouse {
+            // Capped at 222: SwiftTerm's x10 encoding (the default) traps past one byte.
+            let col = min(max(Int(point.x / cellWidth), 0), terminal.cols - 1, 222)
+            let row = min(max(Int((view.bounds.height - point.y) / cellHeight), 0), terminal.rows - 1, 222)
+            let flags = event.modifierFlags
+            let button = terminal.encodeButton(button: up ? 4 : 5, release: false, shift: flags.contains(.shift),
+                                               meta: flags.contains(.option), control: flags.contains(.control))
+            let pixelX = Int(max(point.x, 0)), pixelY = Int(max(view.bounds.height - point.y, 0))
+            for _ in 0..<count { terminal.sendEvent(buttonFlags: button, x: col, y: row, pixelX: pixelX, pixelY: pixelY) }
+        } else {
+            let key: [UInt8] = terminal.applicationCursor ? [0x1B, 0x4F, up ? 0x41 : 0x42] : [0x1B, 0x5B, up ? 0x41 : 0x42]
+            view.send(data: ArraySlice(Array((0..<count).map { _ in key }.joined())))
+        }
+        return true
     }
 }

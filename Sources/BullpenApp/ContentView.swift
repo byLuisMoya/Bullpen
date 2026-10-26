@@ -23,6 +23,8 @@ struct ContentView: View {
     @AppStorage("collapsedProjects") private var collapsedRaw = ""
     /// Kept in @State (animated transactions) and mirrored to the stored list.
     @State private var collapsedProjects: Set<UUID> = []
+    /// The office header a dragged office is over (it would take that one's place).
+    @State private var dropTarget: UUID?
     @State private var pendingRemoval: PendingRemoval?
 
     private var selection: UUID? {
@@ -51,6 +53,7 @@ struct ContentView: View {
                             }
                         )) { newWorktreeFor = office.project }
                             .contextMenu {
+                                OfficeMoveButtons(office: office)
                                 if !office.project.isReviews {
                                     Button("Nuevo worktree…") { newWorktreeFor = office.project }
                                     Button("Prompt inicial…") { editingPromptFor = office.project }
@@ -65,6 +68,7 @@ struct ContentView: View {
                                         .help(office.worktrees.isEmpty ? "Deja de mostrarlo (no borra nada del disco)" : "Elimina antes sus worktrees")
                                 }
                             }
+                        .modifier(OfficeReordering(office: office, dropTarget: $dropTarget))
                         .padding(.horizontal, 8)
                         .padding(.top, 10)
                         .padding(.bottom, 2)
@@ -294,6 +298,46 @@ private struct PendingRemoval {
         if lines.isEmpty { return "Se borra la carpeta del worktree. La rama se conserva." }
         return "Atención:\n" + lines.joined(separator: "\n")
             + "\n\nLa rama se conserva" + (guards.isEmpty ? "." : ", pero los cambios sin commitear se pierden.")
+    }
+}
+
+/// "Subir" and "Bajar" in an office header's context menu.
+private struct OfficeMoveButtons: View {
+    let office: Office
+    @Environment(BuildingStore.self) private var store
+
+    var body: some View {
+        Button("Subir") { withAnimation(.easeInOut(duration: 0.25)) { store.moveProject(office.id, by: -1) } }
+            .disabled(office.id == store.offices.first?.id)
+        Button("Bajar") { withAnimation(.easeInOut(duration: 0.25)) { store.moveProject(office.id, by: 1) } }
+            .disabled(office.id == store.offices.last?.id)
+        Divider()
+    }
+}
+
+/// Drag an office's header onto another's to put the office in that one's place.
+private struct OfficeReordering: ViewModifier {
+    let office: Office
+    @Binding var dropTarget: UUID?
+    @Environment(BuildingStore.self) private var store
+
+    func body(content: Content) -> some View {
+        content
+            // The whole header, the blank between name and buttons included.
+            .contentShape(Rectangle())
+            .draggable(office.id.uuidString)
+            .dropDestination(for: String.self) { items, _ in
+                guard let id = items.first.flatMap(UUID.init(uuidString:)),
+                      store.offices.contains(where: { $0.id == id }) else { return false }
+                withAnimation(.easeInOut(duration: 0.25)) { store.moveProject(id, to: office.id) }
+                return true
+            } isTargeted: { over in
+                if over { dropTarget = office.id } else if dropTarget == office.id { dropTarget = nil }
+            }
+            .background {
+                RoundedRectangle(cornerRadius: 4).fill(Color.accentColor.opacity(0.25)).padding(-3)
+                    .opacity(dropTarget == office.id ? 1 : 0)
+            }
     }
 }
 
